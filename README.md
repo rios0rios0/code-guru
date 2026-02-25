@@ -8,6 +8,8 @@
         <img src="https://img.shields.io/sonar/coverage/rios0rios0_code-guru?server=https%3A%2F%2Fsonarcloud.io&style=for-the-badge&logo=sonarqubecloud" alt="Coverage"/></a>
     <a href="https://sonarcloud.io/summary/overall?id=rios0rios0_code-guru">
         <img src="https://img.shields.io/sonar/quality_gate/rios0rios0_code-guru?server=https%3A%2F%2Fsonarcloud.io&style=for-the-badge&logo=sonarqubecloud" alt="Quality Gate"/></a>
+    <a href="https://www.bestpractices.dev/projects/12023">
+        <img src="https://img.shields.io/cii/level/12023?style=for-the-badge&logo=opensourceinitiative" alt="OpenSSF Best Practices"/></a>
 </p>
 
 A Go tool that leverages the OpenAI API to automatically review code changes in GitLab merge requests and post helpful suggestions as discussion comments.
