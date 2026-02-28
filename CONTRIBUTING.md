@@ -8,6 +8,7 @@ development practices, refer to the **[Development Guide](https://github.com/rio
 ## Prerequisites
 
 - [Go](https://go.dev/dl/) 1.26+
+- [Git](https://git-scm.com/) 2.0+
 
 ## Development Workflow
 
@@ -17,21 +18,31 @@ development practices, refer to the **[Development Guide](https://github.com/rio
    ```bash
    go mod download
    ```
-4. Build the binary:
+4. Build the project:
    ```bash
-   go build -o bin/code-guru .
+   go build -o codeguru main.go
    ```
-5. Make your changes
-6. Run tests:
+5. Set up environment variables:
+   ```bash
+   export GITLAB_API_TOKEN="your-gitlab-api-token"
+   export GITLAB_PROJECT_ID="your-gitlab-project-id"
+   export OPENAI_API_KEY="your-openai-api-key"
+   ```
+6. Run the application:
+   ```bash
+   ./codeguru
+   ```
+7. Run tests:
    ```bash
    go test ./...
    ```
-7. Commit following the [commit conventions](https://github.com/rios0rios0/guide/wiki/Life-Cycle/Git-Flow)
-8. Open a pull request against `main`
+8. Commit following the [commit conventions](https://github.com/rios0rios0/guide/wiki/Life-Cycle/Git-Flow)
+9. Open a pull request against `main`
 
 ## Local Environment
 
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `GITLAB_API_TOKEN` | GitLab personal access token | Yes |
+| `GITLAB_PROJECT_ID` | GitLab project ID to review | Yes |
 | `OPENAI_API_KEY` | OpenAI API key for code review | Yes |
