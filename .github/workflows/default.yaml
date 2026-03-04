@@ -12,9 +12,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  checks: 'write'
-  security-events: 'write'
-  contents: 'write'
+  checks: 'write' # code_check-style_golangci_lint
+  security-events: 'write' # security-sast_codeql
+  contents: 'write' # delivery-release
 
 jobs:
   default:
