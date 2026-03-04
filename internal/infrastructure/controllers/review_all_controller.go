@@ -8,7 +8,7 @@ import (
 	logger "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"github.com/rios0rios0/gitforge/infrastructure/registry"
+	registry "github.com/rios0rios0/gitforge/pkg/registry/infrastructure"
 
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
