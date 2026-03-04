@@ -6,8 +6,8 @@ import (
 
 	logger "github.com/sirupsen/logrus"
 
-	forgeRepos "github.com/rios0rios0/gitforge/domain/repositories"
-	"github.com/rios0rios0/gitforge/infrastructure/registry"
+	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
+	registry "github.com/rios0rios0/gitforge/pkg/registry/infrastructure"
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 )
@@ -71,7 +71,7 @@ func (c *ReviewAllCommand) Execute(
 
 func (c *ReviewAllCommand) processOrganization(
 	ctx context.Context,
-	provider forgeRepos.ReviewProvider,
+	provider forgeEntities.ReviewProvider,
 	org string,
 	opts ReviewOptions,
 ) ([]entities.ReviewResult, int) {

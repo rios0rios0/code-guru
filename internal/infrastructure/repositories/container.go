@@ -6,9 +6,9 @@ import (
 	claudeRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/claude"
 	openaiRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/openai"
 	rulesRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/rules"
-	"github.com/rios0rios0/gitforge/infrastructure/providers/azuredevops"
-	"github.com/rios0rios0/gitforge/infrastructure/providers/github"
-	"github.com/rios0rios0/gitforge/infrastructure/registry"
+	"github.com/rios0rios0/gitforge/pkg/providers/infrastructure/azuredevops"
+	"github.com/rios0rios0/gitforge/pkg/providers/infrastructure/github"
+	registry "github.com/rios0rios0/gitforge/pkg/registry/infrastructure"
 	"go.uber.org/dig"
 )
 
