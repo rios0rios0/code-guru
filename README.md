@@ -14,53 +14,129 @@
         <img src="https://img.shields.io/cii/level/12023?style=for-the-badge&logo=opensourceinitiative" alt="OpenSSF Best Practices"/></a>
 </p>
 
-A Go tool that leverages the OpenAI API to automatically review code changes in GitLab merge requests and post helpful suggestions as discussion comments.
+A CLI tool that leverages AI (Claude Code CLI or OpenAI API) to automatically review pull requests across GitHub and Azure DevOps, enforcing coding standards from configurable rule files.
 
 ## Features
 
-- Fetches open merge requests from a specified GitLab repository
-- Reviews code diffs using OpenAI's GPT model
-- Posts AI-generated review comments as merge request discussions
-- Skips files with no detected issues
-
-## Dependencies
-
-- `github.com/xanzy/go-gitlab`
-- `github.com/sashabaranov/go-openai`
+- Multi-provider support via [gitforge](https://github.com/rios0rios0/gitforge): GitHub and Azure DevOps
+- Dual AI backend: Claude Code CLI (`claude --print`) or OpenAI Chat Completions API
+- Rule-based reviews using Markdown files from [guide](https://github.com/rios0rios0/guide) (or any directory)
+- YAML `frontmatter` in rules for file-glob-based filtering (e.g., `paths: ["**/*.go"]`)
+- Inline and general PR comments posted back via gitforge
+- Three modes: single PR review, batch review-all, and discover (list open PRs)
 
 ## Installation
 
 ```bash
+go install github.com/rios0rios0/codeguru/cmd/code-guru@latest
+```
+
+Or build from source:
+
+```bash
 git clone https://github.com/rios0rios0/code-guru.git
 cd code-guru
-go get github.com/xanzy/go-gitlab
-go get github.com/sashabaranov/go-openai
-go build -o codeguru main.go
+go build -o code-guru ./cmd/code-guru/
 ```
 
 ## Configuration
 
-Set your GitLab API token and OpenAI API key as environment variables:
+Create a `.code-guru.yaml` file (searched in `.`, `.config`, `configs`, `~`, `~/.config`):
 
-```bash
-export GITLAB_API_TOKEN="your-gitlab-api-token"
-export GITLAB_PROJECT_ID="your-gitlab-project-id"
-export OPENAI_API_KEY="your-openai-api-key"
+```yaml
+providers:
+  - type: 'github'
+    token: '${GITHUB_TOKEN}'
+    organizations:
+      - 'rios0rios0'
+  - type: 'azuredevops'
+    token: '${AZURE_DEVOPS_PAT}'
+    organizations:
+      - 'MyOrg'
+
+ai:
+  backend: 'claude'
+  claude:
+    binary_path: 'claude'
+    model: 'sonnet'
+    max_turns: 1
+  openai:
+    api_key: '${OPENAI_API_KEY}'
+    model: 'gpt-4o'
+
+rules:
+  path: '${HOME}/Development/github.com/rios0rios0/guide/.ai/claude/rules'
+  categories: []
 ```
+
+### Token Resolution
+
+Tokens support three resolution strategies:
+1. **Environment variable**: `${GITHUB_TOKEN}` expands from the environment
+2. **File path**: if the resolved string is a file path, its contents are read
+3. **Inline**: literal token string
 
 ## Usage
 
-Run the built executable:
+### Discover open PRs
 
 ```bash
-./codeguru
+code-guru discover -c .code-guru.yaml
 ```
 
-The tool will fetch merge requests from the specified GitLab repository, review the code changes using the OpenAI API, and post the generated suggestions as comments on the merge requests.
+### Review all open PRs (batch mode)
 
-**Notes:**
-- You may need to adjust the OpenAI API call parameters for better results
-- Handle API rate limits accordingly to prevent errors and ensure smooth operation
+```bash
+code-guru review-all -c .code-guru.yaml --dry-run
+code-guru review-all -c .code-guru.yaml
+```
+
+### Review a single PR
+
+```bash
+code-guru review https://github.com/org/repo/pull/123
+code-guru review https://dev.azure.com/org/project/_git/repo/pullrequest/456
+```
+
+### Flags
+
+| Flag            | Description                                  |
+|-----------------|----------------------------------------------|
+| `-c, --config`  | Path to config file (default: auto-discover) |
+| `--dry-run`     | Run review without posting comments          |
+| `-v, --verbose` | Enable debug logging                         |
+
+## Supported Providers
+
+| Provider     | Type Key      | PR Comments | Inline Comments |
+|--------------|---------------|-------------|-----------------|
+| GitHub       | `github`      | Yes         | Yes             |
+| Azure DevOps | `azuredevops` | Yes         | Yes             |
+
+## AI Backends
+
+| Backend     | Key      | How It Works                                             |
+|-------------|----------|----------------------------------------------------------|
+| Claude Code | `claude` | Invokes `claude --print` CLI as a subprocess             |
+| OpenAI      | `openai` | Calls the Chat Completions API with JSON response format |
+
+## Rules
+
+Rules are Markdown files loaded from the configured `rules.path`. Each file represents a rule category (e.g., `security.md`, `golang.md`, `testing.md`).
+
+Rules can include YAML `frontmatter` with `paths` globs for file-specific filtering:
+
+```markdown
+---
+paths:
+  - "**/*.go"
+---
+# Go Conventions
+
+Use `gofmt` for formatting...
+```
+
+Universal categories (always included): `architecture`, `ci-cd`, `code-style`, `design-patterns`, `documentation`, `git-flow`, `security`, `testing`.
 
 ## Contributing
 

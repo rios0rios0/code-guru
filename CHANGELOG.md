@@ -19,3 +19,21 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 ### Added
 
 - added GitHub Actions workflow for CI/CD pipeline
+- added Claude Code CLI as an AI backend (alongside OpenAI) with configurable `max_turns`
+- added YAML frontmatter stripping from rule files to extract `paths` globs
+- added glob-based rule matching for precise language/file filtering
+- added diff fallback in review command for providers without per-file patches (e.g. Azure DevOps)
+- added `SplitUnifiedDiff` utility for splitting multi-file diffs into per-file chunks
+- added `DiscoverCommand` in domain layer to separate business logic from controller
+- added `end_line` and `suggestion` fields to `ReviewComment` for multi-line and code suggestion support
+- added unit tests for prompt builder, file classifier, URL parser, diff splitter, rules repository, and response parsing
+
+### Changed
+
+- changed Claude CLI backend to pass user prompt via stdin instead of CLI argument to avoid OS argument length limits
+- changed Claude CLI response parsing to handle JSON wrapped in markdown code fences
+- changed OpenAI backend to enforce JSON response format via `ResponseFormat` parameter
+- changed OpenAI response parsing to handle markdown-wrapped JSON as a fallback
+- changed system prompt to include strict JSON-only instructions, line number rules, and severity definitions
+- changed `DiscoverController` to delegate to `DiscoverCommand` following Clean Architecture
+- changed `AIReviewerFactory` to pass `MaxTurns` config to Claude backend constructor
