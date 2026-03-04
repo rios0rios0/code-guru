@@ -31,7 +31,7 @@ development practices, refer to the **[Development Guide](https://github.com/rio
 
 ## Local Environment
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `GITLAB_API_TOKEN` | GitLab personal access token | Yes |
-| `OPENAI_API_KEY` | OpenAI API key for code review | Yes |
+| Variable           | Description                    | Required |
+|--------------------|--------------------------------|----------|
+| `GITLAB_API_TOKEN` | GitLab personal access token   | Yes      |
+| `OPENAI_API_KEY`   | OpenAI API key for code review | Yes      |
