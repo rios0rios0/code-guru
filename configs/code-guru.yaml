@@ -1,0 +1,22 @@
+providers:
+  - type: 'github'
+    token: '${GITHUB_TOKEN}'
+    organizations:
+      - 'rios0rios0'
+  # - type: 'azuredevops'
+  #   token: '${ADO_PAT}'
+  #   organizations:
+  #     - 'ZestSecurity'
+
+ai:
+  backend: 'claude'
+  openai:
+    api_key: '${OPENAI_API_KEY}'
+    model: 'gpt-4o'
+  claude:
+    binary_path: 'claude'
+    model: 'sonnet'
+
+rules:
+  path: '${HOME}/Development/github.com/rios0rios0/guide/.ai/claude/rules'
+  categories: []
