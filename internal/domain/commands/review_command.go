@@ -6,8 +6,7 @@ import (
 
 	logger "github.com/sirupsen/logrus"
 
-	forgeEntities "github.com/rios0rios0/gitforge/domain/entities"
-	forgeRepos "github.com/rios0rios0/gitforge/domain/repositories"
+	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
@@ -18,7 +17,7 @@ import (
 type Review interface {
 	Execute(
 		ctx context.Context,
-		provider forgeRepos.ReviewProvider,
+		provider forgeEntities.ReviewProvider,
 		repo forgeEntities.Repository,
 		pr forgeEntities.PullRequestDetail,
 		opts ReviewOptions,
@@ -51,7 +50,7 @@ func NewReviewCommand(
 // Execute performs a review of a single pull request.
 func (c *ReviewCommand) Execute(
 	ctx context.Context,
-	provider forgeRepos.ReviewProvider,
+	provider forgeEntities.ReviewProvider,
 	repo forgeEntities.Repository,
 	pr forgeEntities.PullRequestDetail,
 	opts ReviewOptions,
@@ -130,7 +129,7 @@ func (c *ReviewCommand) Execute(
 
 func (c *ReviewCommand) postComments(
 	ctx context.Context,
-	provider forgeRepos.ReviewProvider,
+	provider forgeEntities.ReviewProvider,
 	repo forgeEntities.Repository,
 	prID int,
 	result *entities.ReviewResult,
