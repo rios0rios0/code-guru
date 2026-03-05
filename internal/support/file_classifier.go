@@ -8,13 +8,16 @@ import (
 //
 //nolint:gochecknoglobals // read-only lookup table used as a constant
 var languageToRuleCategory = map[entities.Language]string{
-	entities.LanguageGo:        "golang",
-	entities.LanguageNode:      "javascript",
-	entities.LanguagePython:    "python",
-	entities.LanguageJava:      "java",
-	entities.LanguageCSharp:    "csharp",
-	entities.LanguageTerraform: "terraform",
-	entities.LanguageYAML:      "yaml",
+	entities.LanguageGo:         "golang",
+	entities.LanguageNode:       "javascript",
+	entities.LanguagePython:     "python",
+	entities.LanguageJava:       "java",
+	entities.LanguageJavaGradle: "java",
+	entities.LanguageJavaMaven:  "java",
+	entities.LanguageCSharp:     "csharp",
+	entities.LanguageTerraform:  "terraform",
+	entities.LanguageYAML:       "yaml",
+	entities.LanguageUnknown:    "",
 }
 
 // ClassifyFile returns the rule category for a file path based on its extension.
