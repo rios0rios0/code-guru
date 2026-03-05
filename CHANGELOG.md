@@ -30,6 +30,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Changed
 
+- replaced inline `parseGitHubURL` and `parseAzureDevOpsURL` PR URL parsing with gitforge's `ParsePullRequestURL` to consolidate duplicated code
 - changed Claude CLI backend to pass user prompt via stdin instead of CLI argument to avoid OS argument length limits
 - changed Claude CLI response parsing to handle JSON wrapped in markdown code fences
 - changed OpenAI backend to enforce JSON response format via `ResponseFormat` parameter

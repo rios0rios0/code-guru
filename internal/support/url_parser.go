@@ -1,11 +1,10 @@
 package support
 
 import (
-	"errors"
 	"fmt"
-	"net/url"
-	"strconv"
-	"strings"
+
+	gitInfra "github.com/rios0rios0/gitforge/pkg/git/infrastructure"
+	globalEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
 )
 
 // ParsedPRURL holds the components extracted from a pull request URL.
@@ -17,66 +16,31 @@ type ParsedPRURL struct {
 	PRID         int
 }
 
+// serviceTypeToProvider maps gitforge ServiceType to the provider name strings used by code-guru.
+var serviceTypeToProvider = map[globalEntities.ServiceType]string{
+	globalEntities.GITHUB:      "github",
+	globalEntities.AZUREDEVOPS: "azuredevops",
+	globalEntities.GITLAB:      "gitlab",
+}
+
 // ParsePullRequestURL extracts provider, org, repo, and PR ID from a pull request URL.
-// Supported formats:
-//   - https://github.com/{org}/{repo}/pull/{id}
-//   - https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{id}
+// Delegates to gitforge's ParsePullRequestURL and converts the result to code-guru's ParsedPRURL.
 func ParsePullRequestURL(rawURL string) (*ParsedPRURL, error) {
-	parsed, err := url.Parse(rawURL)
+	parsed, err := gitInfra.ParsePullRequestURL(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid URL: %w", err)
+		return nil, err
 	}
 
-	host := strings.ToLower(parsed.Host)
-	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-
-	switch {
-	case strings.Contains(host, "github.com"):
-		return parseGitHubURL(segments)
-	case strings.Contains(host, "dev.azure.com"):
-		return parseAzureDevOpsURL(segments)
-	default:
-		return nil, fmt.Errorf("unsupported provider host: %q", host)
-	}
-}
-
-func parseGitHubURL(segments []string) (*ParsedPRURL, error) {
-	// Expected: {org}/{repo}/pull/{id}
-	if len(segments) < 4 || segments[2] != "pull" {
-		return nil, errors.New("invalid GitHub PR URL format, expected: /{org}/{repo}/pull/{id}")
-	}
-
-	prID, err := strconv.Atoi(segments[3])
-	if err != nil {
-		return nil, fmt.Errorf("invalid PR ID %q: %w", segments[3], err)
+	providerName, ok := serviceTypeToProvider[parsed.ServiceType]
+	if !ok {
+		return nil, fmt.Errorf("unsupported provider type for URL: %s", rawURL)
 	}
 
 	return &ParsedPRURL{
-		ProviderType: "github",
-		Organization: segments[0],
-		RepoName:     segments[1],
-		PRID:         prID,
-	}, nil
-}
-
-func parseAzureDevOpsURL(segments []string) (*ParsedPRURL, error) {
-	// Expected: {org}/{project}/_git/{repo}/pullrequest/{id}
-	if len(segments) < 6 || segments[2] != "_git" || segments[4] != "pullrequest" {
-		return nil, errors.New(
-			"invalid Azure DevOps PR URL format, expected: /{org}/{project}/_git/{repo}/pullrequest/{id}",
-		)
-	}
-
-	prID, err := strconv.Atoi(segments[5])
-	if err != nil {
-		return nil, fmt.Errorf("invalid PR ID %q: %w", segments[5], err)
-	}
-
-	return &ParsedPRURL{
-		ProviderType: "azuredevops",
-		Organization: segments[0],
-		Project:      segments[1],
-		RepoName:     segments[3],
-		PRID:         prID,
+		ProviderType: providerName,
+		Organization: parsed.Organization,
+		Project:      parsed.Project,
+		RepoName:     parsed.RepoName,
+		PRID:         parsed.PRID,
 	}, nil
 }
