@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 
+	configHelpers "github.com/rios0rios0/gitforge/pkg/config/domain/helpers"
+	registry "github.com/rios0rios0/gitforge/pkg/registry/infrastructure"
 	logger "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-
-	registry "github.com/rios0rios0/gitforge/pkg/registry/infrastructure"
 
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
@@ -63,7 +63,7 @@ func (c *ReviewAllController) Execute(cmd *cobra.Command, _ []string) {
 	cfgPath := configPath
 	if cfgPath == "" {
 		var err error
-		cfgPath, err = entities.FindConfigFile()
+		cfgPath, err = configHelpers.FindConfigFile("code-guru")
 		if err != nil {
 			logger.Errorf(
 				"no config file found: %v\nSpecify one with --config or create .code-guru.yaml",
