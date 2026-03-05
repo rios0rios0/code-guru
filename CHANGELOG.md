@@ -38,3 +38,4 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - changed system prompt to include strict JSON-only instructions, line number rules, and severity definitions
 - changed `DiscoverController` to delegate to `DiscoverCommand` following Clean Architecture
 - changed `AIReviewerFactory` to pass `MaxTurns` config to Claude backend constructor
+- changed the Go module dependencies to their latest versions
