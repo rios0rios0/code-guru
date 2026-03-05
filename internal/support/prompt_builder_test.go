@@ -10,6 +10,7 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/support"
+	entitybuilders "github.com/rios0rios0/codeguru/test/domain/entitybuilders"
 )
 
 func TestBuildSystemPrompt(t *testing.T) {
@@ -18,8 +19,8 @@ func TestBuildSystemPrompt(t *testing.T) {
 	t.Run("should include all rule names and content", func(t *testing.T) {
 		// given
 		rules := []entities.Rule{
-			{Name: "security", Content: "never expose secrets"},
-			{Name: "golang", Content: "use gofmt"},
+			entitybuilders.NewRuleBuilder().WithName("security").WithContent("never expose secrets").BuildRule(),
+			entitybuilders.NewRuleBuilder().WithName("golang").WithContent("use gofmt").BuildRule(),
 		}
 
 		// when
@@ -34,7 +35,9 @@ func TestBuildSystemPrompt(t *testing.T) {
 
 	t.Run("should include JSON response instructions", func(t *testing.T) {
 		// given
-		rules := []entities.Rule{{Name: "test", Content: "test content"}}
+		rules := []entities.Rule{
+			entitybuilders.NewRuleBuilder().WithName("test").WithContent("test content").BuildRule(),
+		}
 
 		// when
 		result := support.BuildSystemPrompt(rules)
@@ -63,8 +66,8 @@ func TestBuildUserPrompt(t *testing.T) {
 	t.Run("should include PR metadata and diffs", func(t *testing.T) {
 		// given
 		diffs := []entities.FileDiff{
-			{Path: "main.go", Diff: "+fmt.Println(\"hello\")", Language: "golang"},
-			{Path: "README.md", Diff: "+# Title", Language: ""},
+			entitybuilders.NewFileDiffBuilder().WithPath("main.go").WithDiff("+fmt.Println(\"hello\")").WithLanguage("golang").BuildFileDiff(),
+			entitybuilders.NewFileDiffBuilder().WithPath("README.md").WithDiff("+# Title").WithLanguage("").BuildFileDiff(),
 		}
 
 		// when
@@ -83,7 +86,7 @@ func TestBuildUserPrompt(t *testing.T) {
 	t.Run("should wrap diffs in code fences", func(t *testing.T) {
 		// given
 		diffs := []entities.FileDiff{
-			{Path: "app.go", Diff: "+line1\n-line2", Language: "golang"},
+			entitybuilders.NewFileDiffBuilder().WithPath("app.go").WithDiff("+line1\n-line2").WithLanguage("golang").BuildFileDiff(),
 		}
 
 		// when
