@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"os"
 
-	logger "github.com/sirupsen/logrus"
-	"github.com/spf13/cobra"
-
+	configHelpers "github.com/rios0rios0/gitforge/pkg/config/domain/helpers"
 	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
 	registry "github.com/rios0rios0/gitforge/pkg/registry/infrastructure"
+	logger "github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
 
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
@@ -160,7 +160,7 @@ func (c *ReviewController) resolveSettings(configPath string) (*entities.Setting
 		return entities.NewSettings(configPath)
 	}
 
-	cfgPath, _ := entities.FindConfigFile()
+	cfgPath, _ := configHelpers.FindConfigFile("code-guru")
 	if cfgPath == "" {
 		// no config file; use defaults
 		return &entities.Settings{
