@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/rios0rios0/gitforge v0.0.0-20260305015253-f03ae21140bf
+	github.com/rios0rios0/testkit v0.0.0-20260305013341-7c23bf17b0cc
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
