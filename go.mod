@@ -3,7 +3,7 @@ module github.com/rios0rios0/codeguru
 go 1.26.0
 
 require (
-	github.com/rios0rios0/gitforge v0.0.0
+	github.com/rios0rios0/gitforge v0.0.0-20260305000405-c53112cb56de
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
@@ -33,5 +33,3 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
-
-replace github.com/rios0rios0/gitforge => ../gitforge
