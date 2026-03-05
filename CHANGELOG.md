@@ -42,3 +42,8 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - changed `DiscoverController` to delegate to `DiscoverCommand` following Clean Architecture
 - changed `AIReviewerFactory` to pass `MaxTurns` config to Claude backend constructor
 - changed the Go module dependencies to their latest versions
+
+### Fixed
+
+- fixed `exhaustive` findings by adding missing `Language` and `ServiceType` keys to classifier and URL parser maps
+
