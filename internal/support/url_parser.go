@@ -17,10 +17,15 @@ type ParsedPRURL struct {
 }
 
 // serviceTypeToProvider maps gitforge ServiceType to the provider name strings used by code-guru.
+//
+//nolint:gochecknoglobals // read-only lookup table used as a constant
 var serviceTypeToProvider = map[globalEntities.ServiceType]string{
+	globalEntities.UNKNOWN:     "",
 	globalEntities.GITHUB:      "github",
-	globalEntities.AZUREDEVOPS: "azuredevops",
 	globalEntities.GITLAB:      "gitlab",
+	globalEntities.AZUREDEVOPS: "azuredevops",
+	globalEntities.BITBUCKET:   "",
+	globalEntities.CODECOMMIT:  "",
 }
 
 // ParsePullRequestURL extracts provider, org, repo, and PR ID from a pull request URL.
