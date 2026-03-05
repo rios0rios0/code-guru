@@ -11,6 +11,7 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	claude "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/claude"
+	entitybuilders "github.com/rios0rios0/codeguru/test/domain/entitybuilders"
 )
 
 func TestParseClaudeResponse(t *testing.T) {
@@ -18,10 +19,17 @@ func TestParseClaudeResponse(t *testing.T) {
 
 	t.Run("should parse direct JSON from CLI output", func(t *testing.T) {
 		// given
-		review := entities.ReviewResult{
-			Summary:  "looks good",
-			Comments: []entities.ReviewComment{{FilePath: "main.go", Line: 10, Body: "fix this", Severity: "error"}},
-		}
+		review := entitybuilders.NewReviewResultBuilder().
+			WithSummary("looks good").
+			WithComments([]entities.ReviewComment{
+				entitybuilders.NewReviewCommentBuilder().
+					WithFilePath("main.go").
+					WithLine(10).
+					WithBody("fix this").
+					WithSeverity("error").
+					BuildReviewComment(),
+			}).
+			BuildReviewResult()
 		innerJSON, _ := json.Marshal(review)
 		cliResp := map[string]string{"result": string(innerJSON)}
 		output, _ := json.Marshal(cliResp)
@@ -69,12 +77,17 @@ func TestParseClaudeResponse(t *testing.T) {
 
 	t.Run("should handle raw JSON output without CLI wrapper", func(t *testing.T) {
 		// given
-		review := entities.ReviewResult{
-			Summary: "raw output",
-			Comments: []entities.ReviewComment{
-				{FilePath: "test.go", Line: 5, Body: "nit", Severity: "info"},
-			},
-		}
+		review := entitybuilders.NewReviewResultBuilder().
+			WithSummary("raw output").
+			WithComments([]entities.ReviewComment{
+				entitybuilders.NewReviewCommentBuilder().
+					WithFilePath("test.go").
+					WithLine(5).
+					WithBody("nit").
+					WithSeverity("info").
+					BuildReviewComment(),
+			}).
+			BuildReviewResult()
 		output, _ := json.Marshal(review)
 
 		// when
