@@ -4,11 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
 
-	logger "github.com/sirupsen/logrus"
+	configEntities "github.com/rios0rios0/gitforge/pkg/config/domain/entities"
 	"gopkg.in/yaml.v3"
 )
 
@@ -19,12 +16,8 @@ type Settings struct {
 	Rules     RulesConfig      `yaml:"rules"`
 }
 
-// ProviderConfig describes a single Git hosting provider instance.
-type ProviderConfig struct {
-	Type          string   `yaml:"type"`
-	Token         string   `yaml:"token"`
-	Organizations []string `yaml:"organizations"`
-}
+// ProviderConfig is an alias for gitforge's ProviderConfig to maintain backward compatibility.
+type ProviderConfig = configEntities.ProviderConfig
 
 // AIConfig holds settings for the AI review backend.
 type AIConfig struct {
@@ -52,9 +45,6 @@ type RulesConfig struct {
 	Categories []string `yaml:"categories"`
 }
 
-// envVarPattern matches ${VAR_NAME} placeholders.
-var envVarPattern = regexp.MustCompile(`\$\{([^}]+)}`)
-
 // NewSettings reads and parses a configuration file, expanding environment variables.
 func NewSettings(path string) (*Settings, error) {
 	data, err := os.ReadFile(path)
@@ -68,80 +58,15 @@ func NewSettings(path string) (*Settings, error) {
 	}
 
 	for i := range settings.Providers {
-		settings.Providers[i].Token = resolveToken(settings.Providers[i].Token)
+		settings.Providers[i].Token = settings.Providers[i].ResolveToken()
 	}
-	settings.AI.OpenAI.APIKey = resolveToken(settings.AI.OpenAI.APIKey)
+	settings.AI.OpenAI.APIKey = (&configEntities.ProviderConfig{Token: settings.AI.OpenAI.APIKey}).ResolveToken()
 
 	if validateErr := validateSettings(&settings); validateErr != nil {
 		return nil, validateErr
 	}
 
 	return &settings, nil
-}
-
-// FindConfigFile searches for a configuration file in standard locations.
-func FindConfigFile() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		homeDir = ""
-	}
-
-	locations := []string{
-		".",
-		".config",
-		"configs",
-	}
-	if homeDir != "" {
-		locations = append(
-			locations,
-			homeDir,
-			filepath.Join(homeDir, ".config"),
-		)
-	}
-
-	patterns := []string{
-		".code-guru.yaml",
-		".code-guru.yml",
-		"code-guru.yaml",
-		"code-guru.yml",
-	}
-
-	for _, loc := range locations {
-		for _, pat := range patterns {
-			p := filepath.Join(loc, pat)
-			if _, statErr := os.Stat(p); statErr == nil {
-				return p, nil
-			}
-		}
-	}
-
-	return "", errors.New("config file not found in default locations")
-}
-
-func resolveToken(raw string) string {
-	if raw == "" {
-		return raw
-	}
-
-	resolved := envVarPattern.ReplaceAllStringFunc(raw, func(match string) string {
-		varName := envVarPattern.FindStringSubmatch(match)[1]
-		if val := os.Getenv(varName); val != "" {
-			return val
-		}
-		logger.Warnf("environment variable %q is not set", varName)
-		return ""
-	})
-
-	if _, statErr := os.Stat(resolved); statErr == nil {
-		data, readErr := os.ReadFile(resolved)
-		if readErr != nil {
-			logger.Warnf("failed to read token file: %v", readErr)
-			return resolved
-		}
-		return strings.TrimSpace(string(data))
-	}
-
-	return resolved
 }
 
 func validateSettings(settings *Settings) error {
