@@ -11,12 +11,13 @@ Review rules are loaded from configurable Markdown files with optional YAML fron
 The project follows **Clean Architecture** with strict layer separation:
 
 - **`cmd/code-guru/`** — Application entry point. Builds the DI container, wires Cobra commands, and starts the CLI.
+- **`internal/`** — Internal application wiring (`app.go`, `container.go`) that aggregates controllers.
 - **`internal/domain/`** — Core business logic. Contains entity definitions, repository interfaces, and command implementations. This layer has no infrastructure dependencies.
-  - `entities/` — Domain models (`Review`, `ReviewRequest`, `Rule`, `Settings`, `Controller` interface).
+  - `entities/` — Domain models (`FileDiff`, `ReviewComment`, `ReviewResult`, `ReviewRequest`, `Rule`, `Settings`, `Controller` interface).
   - `repositories/` — Abstract interfaces (`AIReviewerRepository`, `RulesRepository`).
   - `commands/` — Use-case implementations (`ReviewCommand`, `ReviewAllCommand`, `DiscoverCommand`).
 - **`internal/infrastructure/`** — Concrete implementations of domain interfaces.
-  - `repositories/` — AI backend implementations (`openai/`, `claude/`, `rules/`) and factory types.
+  - `repositories/` — AI backend implementations (`openai/`, `claude/`) and rule loading (`rules/`).
   - `controllers/` — Cobra CLI controllers that bridge CLI input to domain commands.
 - **`internal/support/`** — Shared utility functions (URL parsing, diff splitting, file classification, prompt building).
 - **`test/domain/doubles/`** — Test doubles (stubs) for domain repository interfaces.
@@ -63,7 +64,55 @@ Use `github.com/sirupsen/logrus` aliased as `logger`. Use structured log levels:
 
 ## Configuration
 
-Settings are loaded from YAML files (`.code-guru.yaml`). Tokens support environment variable expansion (`${VAR_NAME}`), file path resolution, and inline values. Validate required fields in `validateSettings`.
+Settings are loaded from YAML files discovered automatically by `FindConfigFile`. Searched locations (in order): `.`, `.config`, `configs`, `~`, `~/.config`. Accepted filenames: `.code-guru.yaml`, `.code-guru.yml`, `code-guru.yaml`, `code-guru.yml`. Pass an explicit path with `-c/--config` to override discovery.
+
+Token fields support three resolution strategies in order: **environment variable** (`${VAR_NAME}`), **file path** (contents read if resolved string is a valid file), and **inline** (literal string).
+
+Key config sections:
+
+- `providers[]` — list of Git hosting providers (`type: github|azuredevops`, `token`, `organizations[]`).
+- `ai.backend` — required; `openai` or `claude`.
+- `ai.openai` — `api_key`, `model` (e.g. `gpt-4o`). `api_key` is required when backend is `openai`.
+- `ai.claude` — `binary_path` (default `claude`), `model` (default `sonnet`), `max_turns` (default `1`).
+- `rules.path` — directory containing Markdown rule files (supports `${VAR}` expansion).
+- `rules.categories` — optional allow-list of rule categories to load; empty means load all.
+
+Validate required fields in `validateSettings`.
+
+## Rules
+
+Rules are Markdown files stored in the directory specified by `rules.path`. Each file becomes one rule, using its filename (without `.md`) as both its name and category.
+
+**Frontmatter**: A rule file may start with a YAML frontmatter block delimited by `---`. The only supported frontmatter key is `paths`, a list of glob patterns restricting the rule to specific changed files:
+
+```markdown
+---
+paths:
+  - "**/*.go"
+---
+# Go Conventions
+...
+```
+
+**Category filtering**: `FilesystemRulesRepository.LoadForLanguages` always includes rules in the following *universal* categories regardless of detected languages: `architecture`, `ci-cd`, `code-style`, `design-patterns`, `documentation`, `git-flow`, `security`, `testing`. Language-specific rules are included when their category matches a detected language, or when their `paths` globs match the changed files.
+
+## CLI Usage
+
+Three subcommands are available:
+
+| Command        | Description                                              |
+|----------------|----------------------------------------------------------|
+| `review <url>` | Review a single PR by URL (GitHub or Azure DevOps)       |
+| `review-all`   | Batch-review all open PRs across configured providers    |
+| `discover`     | Discover repos and list open PRs without posting reviews |
+
+Common flags (all commands):
+
+| Flag              | Description                                     |
+|-------------------|-------------------------------------------------|
+| `-c, --config`    | Path to config file (default: auto-discover)    |
+| `-v, --verbose`   | Enable debug logging                            |
+| `--dry-run`       | Perform review without posting comments (`review-all` only) |
 
 ## Build and CI
 
@@ -76,7 +125,7 @@ Settings are loaded from YAML files (`.code-guru.yaml`). Tokens support environm
 
 Only add new dependencies when strictly necessary. Prefer the standard library. Current key dependencies:
 
-- `github.com/rios0rios0/gitforge` — Multi-provider Git abstraction
+- `github.com/rios0rios0/gitforge` — Multi-provider Git abstraction (consumed as a published pseudo-version; no local `replace` directive)
 - `github.com/sashabaranov/go-openai` — OpenAI API client
 - `github.com/sirupsen/logrus` — Structured logging
 - `github.com/spf13/cobra` — CLI framework
