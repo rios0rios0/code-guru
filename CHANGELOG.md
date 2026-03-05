@@ -30,6 +30,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Changed
 
+- replaced local file extension classifier with langforge's `ClassifyFileByExtension` and `ClassifyFilesByExtension` to centralize language abstractions
 - replaced inline `parseGitHubURL` and `parseAzureDevOpsURL` PR URL parsing with gitforge's `ParsePullRequestURL` to consolidate duplicated code
 - replaced raw struct literals in tests with testkit builders for consistent test data construction
 - replaced local `ProviderConfig` struct, `resolveToken()`, and `FindConfigFile()` with gitforge's shared implementations
