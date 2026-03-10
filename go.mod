@@ -1,10 +1,11 @@
 module github.com/rios0rios0/codeguru
 
-go 1.26.0
+go 1.26.1
 
 require (
-	github.com/rios0rios0/gitforge v0.0.0-20260305015253-f03ae21140bf
-	github.com/rios0rios0/testkit v0.0.0-20260305013341-7c23bf17b0cc
+	github.com/rios0rios0/gitforge v0.2.0
+	github.com/rios0rios0/langforge v0.2.0
+	github.com/rios0rios0/testkit v0.1.0
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
@@ -34,7 +35,6 @@ require (
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/pjbgf/sha1cd v0.5.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/rios0rios0/langforge v0.0.0-20260305155120-804f1a070555 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/skeema/knownhosts v1.3.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
@@ -42,6 +42,6 @@ require (
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.51.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
