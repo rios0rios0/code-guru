@@ -16,6 +16,8 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-03-11
+
 ### Added
 
 - added GitHub Actions workflow for CI/CD pipeline
@@ -37,10 +39,8 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - changed Claude CLI backend to pass user prompt via stdin instead of CLI argument to avoid OS argument length limits
 - changed Claude CLI response parsing to handle JSON wrapped in markdown code fences
 - changed OpenAI backend to enforce JSON response format via `ResponseFormat` parameter
-- changed OpenAI response parsing to handle markdown-wrapped JSON as a fallback
 - changed system prompt to include strict JSON-only instructions, line number rules, and severity definitions
 - changed `DiscoverController` to delegate to `DiscoverCommand` following Clean Architecture
-- changed `AIReviewerFactory` to pass `MaxTurns` config to Claude backend constructor
 - changed the Go module dependencies to their latest versions
 
 ### Fixed
