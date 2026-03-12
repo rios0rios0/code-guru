@@ -42,6 +42,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - changed `DiscoverController` to delegate to `DiscoverCommand` following Clean Architecture
 - changed `AIReviewerFactory` to pass `MaxTurns` config to Claude backend constructor
 - changed the Go module dependencies to their latest versions
+- changed the Go version to `1.26.1` and updated all module dependencies
 
 ### Fixed
 
