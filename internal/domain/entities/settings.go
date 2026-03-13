@@ -28,7 +28,7 @@ type AIConfig struct {
 
 // OpenAIConfig holds OpenAI-specific settings.
 type OpenAIConfig struct {
-	APIKey string `yaml:"api_key"` //nolint:gosec // G117: field name matches secret pattern but this is a config struct, not a secret value
+	APIKey string `yaml:"api_key"`
 	Model  string `yaml:"model"`
 }
 
