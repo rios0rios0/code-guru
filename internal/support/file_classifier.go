@@ -17,6 +17,8 @@ var languageToRuleCategory = map[entities.Language]string{
 	entities.LanguageCSharp:     "csharp",
 	entities.LanguageTerraform:  "terraform",
 	entities.LanguageYAML:       "yaml",
+	entities.LanguagePipeline:   "ci-cd",
+	entities.LanguageDockerfile: "dockerfile",
 	entities.LanguageUnknown:    "",
 }
 

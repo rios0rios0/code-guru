@@ -101,7 +101,7 @@ func (c *ReviewAllController) Execute(cmd *cobra.Command, _ []string) {
 		totalComments += len(r.Comments)
 	}
 
-	fmt.Fprintf(os.Stdout,
+	_, _ = fmt.Fprintf(os.Stdout,
 		"\nBatch review complete: %d PRs reviewed, %d comments\n",
 		len(results),
 		totalComments,

@@ -69,13 +69,13 @@ func (c *DiscoverController) Execute(cmd *cobra.Command, _ []string) {
 	totalPRs := 0
 	for _, result := range results {
 		for _, repoResult := range result.Repositories {
-			fmt.Fprintf(os.Stdout, "\n%s/%s (%d open PRs):\n",
+			_, _ = fmt.Fprintf(os.Stdout, "\n%s/%s (%d open PRs):\n",
 				repoResult.Repository.Organization,
 				repoResult.Repository.Name,
 				len(repoResult.PullRequests),
 			)
 			for _, pr := range repoResult.PullRequests {
-				fmt.Fprintf(os.Stdout, "  #%d %s (%s -> %s) by %s\n",
+				_, _ = fmt.Fprintf(os.Stdout, "  #%d %s (%s -> %s) by %s\n",
 					pr.ID, pr.Title, pr.SourceBranch, pr.TargetBranch, pr.Author,
 				)
 				totalPRs++
@@ -83,5 +83,5 @@ func (c *DiscoverController) Execute(cmd *cobra.Command, _ []string) {
 		}
 	}
 
-	fmt.Fprintf(os.Stdout, "\nTotal: %d open PRs found\n", totalPRs)
+	_, _ = fmt.Fprintf(os.Stdout, "\nTotal: %d open PRs found\n", totalPRs)
 }

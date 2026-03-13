@@ -182,24 +182,24 @@ func (c *ReviewController) findToken(settings *entities.Settings, providerType s
 
 func (c *ReviewController) printResult(result *entities.ReviewResult, dryRun bool) {
 	if dryRun {
-		fmt.Fprintln(os.Stdout, "--- DRY RUN (comments not posted) ---")
+		_, _ = fmt.Fprintln(os.Stdout, "--- DRY RUN (comments not posted) ---")
 	}
 
 	if result.Summary != "" {
-		fmt.Fprintf(os.Stdout, "\nSummary: %s\n", result.Summary)
+		_, _ = fmt.Fprintf(os.Stdout, "\nSummary: %s\n", result.Summary)
 	}
 
 	if len(result.Comments) == 0 {
-		fmt.Fprintln(os.Stdout, "\nNo issues found.")
+		_, _ = fmt.Fprintln(os.Stdout, "\nNo issues found.")
 		return
 	}
 
-	fmt.Fprintf(os.Stdout, "\nFound %d comments:\n", len(result.Comments))
+	_, _ = fmt.Fprintf(os.Stdout, "\nFound %d comments:\n", len(result.Comments))
 	for _, comment := range result.Comments {
-		fmt.Fprintf(os.Stdout, "  [%s] %s", comment.Severity, comment.FilePath)
+		_, _ = fmt.Fprintf(os.Stdout, "  [%s] %s", comment.Severity, comment.FilePath)
 		if comment.Line > 0 {
-			fmt.Fprintf(os.Stdout, ":%d", comment.Line)
+			_, _ = fmt.Fprintf(os.Stdout, ":%d", comment.Line)
 		}
-		fmt.Fprintf(os.Stdout, " - %s\n", comment.Body)
+		_, _ = fmt.Fprintf(os.Stdout, " - %s\n", comment.Body)
 	}
 }
