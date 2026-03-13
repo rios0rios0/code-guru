@@ -16,36 +16,33 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-03-12
+
 ### Added
 
-- added GitHub Actions workflow for CI/CD pipeline
 - added Claude Code CLI as an AI backend (alongside OpenAI) with configurable `max_turns`
-- added YAML frontmatter stripping from rule files to extract `paths` globs
-- added glob-based rule matching for precise language/file filtering
-- added diff fallback in review command for providers without per-file patches (e.g. Azure DevOps)
-- added `SplitUnifiedDiff` utility for splitting multi-file diffs into per-file chunks
+- added GitHub Actions workflow for CI/CD pipeline
+- added YAML `frontmatter` stripping from rule files to extract `paths` globs
 - added `DiscoverCommand` in domain layer to separate business logic from controller
+- added `SplitUnifiedDiff` utility for splitting multi-file diffs into per-file chunks
 - added `end_line` and `suggestion` fields to `ReviewComment` for multi-line and code suggestion support
+- added diff fallback in review command for providers without per-file patches (e.g. Azure DevOps)
+- added glob-based rule matching for precise language/file filtering
 - added unit tests for prompt builder, file classifier, URL parser, diff splitter, rules repository, and response parsing
 
 ### Changed
 
-- replaced local file extension classifier with langforge's `ClassifyFileByExtension` and `ClassifyFilesByExtension` to centralize language abstractions
-- replaced inline `parseGitHubURL` and `parseAzureDevOpsURL` PR URL parsing with gitforge's `ParsePullRequestURL` to consolidate duplicated code
-- replaced raw struct literals in tests with testkit builders for consistent test data construction
-- replaced local `ProviderConfig` struct, `resolveToken()`, and `FindConfigFile()` with gitforge's shared implementations
 - changed Claude CLI backend to pass user prompt via stdin instead of CLI argument to avoid OS argument length limits
-- changed Claude CLI response parsing to handle JSON wrapped in markdown code fences
+- changed Claude CLI response parsing to handle JSON wrapped in Markdown code fences
 - changed OpenAI backend to enforce JSON response format via `ResponseFormat` parameter
-- changed OpenAI response parsing to handle markdown-wrapped JSON as a fallback
-- changed system prompt to include strict JSON-only instructions, line number rules, and severity definitions
 - changed `DiscoverController` to delegate to `DiscoverCommand` following Clean Architecture
-- changed `AIReviewerFactory` to pass `MaxTurns` config to Claude backend constructor
-- changed the Go module dependencies to their latest versions
+- changed system prompt to include strict JSON-only instructions, line number rules, and severity definitions
 - changed the Go version to `1.26.1` and updated all module dependencies
-- changed the Go module dependencies to their latest versions
+- replaced inline `parseGitHubURL` and `parseAzureDevOpsURL` PR URL parsing with `gitforge`'s `ParsePullRequestURL` to consolidate duplicated code
+- replaced local `ProviderConfig` struct, `resolveToken()`, and `FindConfigFile()` with `gitforge`'s shared implementations
+- replaced local file extension classifier with `langforge`'s `ClassifyFileByExtension` and `ClassifyFilesByExtension` to centralize language abstractions
+- replaced raw struct literals in tests with testkit builders for consistent test data construction
 
 ### Fixed
 
 - fixed `exhaustive` findings by adding missing `Language` and `ServiceType` keys to classifier and URL parser maps
-
