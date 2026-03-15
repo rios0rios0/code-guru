@@ -3,6 +3,7 @@ module github.com/rios0rios0/codeguru
 go 1.26.1
 
 require (
+	github.com/anthropics/anthropic-sdk-go v0.2.0-beta.3
 	github.com/rios0rios0/gitforge v0.4.0
 	github.com/rios0rios0/langforge v0.3.0
 	github.com/rios0rios0/testkit v0.1.1

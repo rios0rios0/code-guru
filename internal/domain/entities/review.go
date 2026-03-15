@@ -22,6 +22,7 @@ type ReviewComment struct {
 // ReviewResult aggregates all review output for a single PR.
 type ReviewResult struct {
 	PullRequestURL string          `json:"pull_request_url,omitempty"`
+	Verdict        string          `json:"verdict,omitempty"`
 	Comments       []ReviewComment `json:"comments"`
 	Summary        string          `json:"summary"`
 }
