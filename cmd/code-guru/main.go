@@ -36,7 +36,7 @@ Usage modes:
 	}
 
 	cmd.PersistentFlags().StringP("config", "c", "", "path to config file")
-	cmd.PersistentFlags().String("backend", "", "AI backend: openai or claude")
+	cmd.PersistentFlags().String("backend", "", "AI backend: openai, claude, or anthropic")
 	cmd.PersistentFlags().String("rules-path", "", "path to rules directory")
 	cmd.PersistentFlags().Bool("dry-run", false, "show review without posting comments")
 	cmd.PersistentFlags().BoolP("verbose", "v", false, "enable verbose output")

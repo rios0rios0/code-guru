@@ -10,6 +10,7 @@ import (
 type ReviewResultBuilder struct {
 	*testkit.BaseBuilder
 	pullRequestURL string
+	verdict        string
 	comments       []entities.ReviewComment
 	summary        string
 }
@@ -18,6 +19,7 @@ func NewReviewResultBuilder() *ReviewResultBuilder {
 	return &ReviewResultBuilder{
 		BaseBuilder:    testkit.NewBaseBuilder(),
 		pullRequestURL: "",
+		verdict:        "comment",
 		comments:       nil,
 		summary:        "No issues found.",
 	}
@@ -25,6 +27,11 @@ func NewReviewResultBuilder() *ReviewResultBuilder {
 
 func (b *ReviewResultBuilder) WithPullRequestURL(pullRequestURL string) *ReviewResultBuilder {
 	b.pullRequestURL = pullRequestURL
+	return b
+}
+
+func (b *ReviewResultBuilder) WithVerdict(verdict string) *ReviewResultBuilder {
+	b.verdict = verdict
 	return b
 }
 
@@ -45,6 +52,7 @@ func (b *ReviewResultBuilder) Build() interface{} {
 func (b *ReviewResultBuilder) BuildReviewResult() entities.ReviewResult {
 	return entities.ReviewResult{
 		PullRequestURL: b.pullRequestURL,
+		Verdict:        b.verdict,
 		Comments:       b.comments,
 		Summary:        b.summary,
 	}
@@ -53,6 +61,7 @@ func (b *ReviewResultBuilder) BuildReviewResult() entities.ReviewResult {
 func (b *ReviewResultBuilder) Reset() testkit.Builder {
 	b.BaseBuilder.Reset()
 	b.pullRequestURL = ""
+	b.verdict = "comment"
 	b.comments = nil
 	b.summary = "No issues found."
 	return b
@@ -62,6 +71,7 @@ func (b *ReviewResultBuilder) Clone() testkit.Builder {
 	clone := &ReviewResultBuilder{
 		BaseBuilder:    b.BaseBuilder.Clone().(*testkit.BaseBuilder),
 		pullRequestURL: b.pullRequestURL,
+		verdict:        b.verdict,
 		summary:        b.summary,
 	}
 	if b.comments != nil {

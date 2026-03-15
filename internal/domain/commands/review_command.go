@@ -10,6 +10,7 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
+	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
 	"github.com/rios0rios0/codeguru/internal/support"
 )
 
@@ -26,24 +27,28 @@ type Review interface {
 
 // ReviewOptions holds runtime options for a single review.
 type ReviewOptions struct {
-	DryRun  bool
-	Verbose bool
+	DryRun   bool
+	Verbose  bool
+	CIPassed bool
 }
 
 // ReviewCommand orchestrates a single PR review.
 type ReviewCommand struct {
-	aiReviewer repositories.AIReviewerRepository
-	rulesRepo  repositories.RulesRepository
+	aiReviewer       repositories.AIReviewerRepository
+	rulesRepo        repositories.RulesRepository
+	detectorRegistry *trivial.DetectorRegistry
 }
 
 // NewReviewCommand creates a new ReviewCommand.
 func NewReviewCommand(
 	aiReviewer repositories.AIReviewerRepository,
 	rulesRepo repositories.RulesRepository,
+	detectorRegistry *trivial.DetectorRegistry,
 ) *ReviewCommand {
 	return &ReviewCommand{
-		aiReviewer: aiReviewer,
-		rulesRepo:  rulesRepo,
+		aiReviewer:       aiReviewer,
+		rulesRepo:        rulesRepo,
+		detectorRegistry: detectorRegistry,
 	}
 }
 
@@ -65,14 +70,35 @@ func (c *ReviewCommand) Execute(
 
 	if len(files) == 0 {
 		logger.Infof("PR #%d has no changed files, skipping", pr.ID)
-		return &entities.ReviewResult{PullRequestURL: pr.URL, Summary: "no files changed"}, nil
+		return &entities.ReviewResult{PullRequestURL: pr.URL, Verdict: "comment", Summary: "no files changed"}, nil
+	}
+
+	// collect file paths
+	var paths []string
+	for _, f := range files {
+		paths = append(paths, f.Path)
+	}
+
+	// check trivial PR detection (no LLM call needed)
+	if c.detectorRegistry != nil && opts.CIPassed {
+		if detector, found := c.detectorRegistry.Detect(paths); found {
+			logger.Infof("PR #%d detected as trivial by %q adapter, skipping LLM review", pr.ID, detector.Name())
+			summary := detector.Summary(paths)
+			result := &entities.ReviewResult{
+				PullRequestURL: pr.URL,
+				Verdict:        "approve",
+				Summary:        summary,
+			}
+			if !opts.DryRun {
+				c.postApprovalComment(ctx, provider, repo, pr.ID, summary)
+			}
+			return result, nil
+		}
 	}
 
 	// classify languages and build diffs
-	var paths []string
 	var diffs []entities.FileDiff
 	for _, f := range files {
-		paths = append(paths, f.Path)
 		diffs = append(diffs, entities.FileDiff{
 			Path:     f.Path,
 			Diff:     f.Patch,
@@ -125,6 +151,19 @@ func (c *ReviewCommand) Execute(
 	}
 
 	return result, nil
+}
+
+func (c *ReviewCommand) postApprovalComment(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+	summary string,
+) {
+	body := fmt.Sprintf("**[Auto-Approved]** %s", summary)
+	if err := provider.PostPullRequestComment(ctx, repo, prID, body); err != nil {
+		logger.Errorf("failed to post approval comment: %v", err)
+	}
 }
 
 func (c *ReviewCommand) postComments(
