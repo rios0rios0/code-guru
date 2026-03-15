@@ -16,6 +16,22 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added Anthropic API backend using the official Go SDK (`github.com/anthropics/anthropic-sdk-go`)
+- added AI verdict system (`approve`, `request_changes`, `comment`) to review response for merge decisions
+- added trivial PR detection with built-in adapters (`bump-go`, `bump-node`, `bump-python`, `docs-only`) that skip the LLM
+- added automatic CI status checking via gitforge provider (no manual flag needed)
+- added environment variable configuration fallback (`CODE_GURU_*`) for CI/CD environments
+- added shared response parser (`support.ParseReviewResponse`) to eliminate duplicate parsing logic across backends
+
+### Changed
+
+- changed `ReviewResult` entity to include a `Verdict` field for merge eligibility decisions
+- changed `ReviewCommand` to accept a `DetectorRegistry` for trivial PR detection
+- changed `ReviewController` to fall back to environment variables when no config file is found
+- changed AI system prompt to include verdict instructions and JSON schema
+
 ## [0.1.0] - 2026-03-12
 
 ### Added

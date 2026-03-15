@@ -1,0 +1,47 @@
+# Example Azure DevOps pipeline for Code Guru PR review.
+# Add this as a separate pipeline in your Azure DevOps project.
+#
+# This is the pipeline-based approach (alternative to the webhook server).
+# It triggers on PR events and reviews the PR after CI completes.
+
+trigger: 'none'
+
+pr:
+  branches:
+    include:
+      - 'main'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - name: 'CODE_GURU_VERSION'
+    value: '0.1.0'
+
+stages:
+  - stage: 'review'
+    displayName: 'Code Guru Review'
+    jobs:
+      - job: 'review'
+        displayName: 'Review PR'
+        steps:
+          - script: |
+              curl -sSL "https://github.com/rios0rios0/code-guru/releases/download/$(CODE_GURU_VERSION)/code-guru_linux_amd64" -o code-guru
+              chmod +x code-guru
+              sudo mv code-guru /usr/local/bin/
+            displayName: 'Download code-guru'
+
+          - script: |
+              git clone --depth 1 https://github.com/rios0rios0/guide.git /tmp/rules
+            displayName: 'Clone rules repository'
+
+          - script: |
+              PR_URL="$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_git/$(Build.Repository.Name)/pullrequest/$(System.PullRequest.PullRequestId)"
+              code-guru review "$PR_URL"
+            displayName: 'Run code-guru review'
+            env:
+              CODE_GURU_BACKEND: 'openai'
+              CODE_GURU_OPENAI_API_KEY: '$(OPENAI_API_KEY)'
+              CODE_GURU_RULES_PATH: '/tmp/rules/.ai/claude/rules'
+              CODE_GURU_PROVIDER_TOKEN: '$(System.AccessToken)'
+              CODE_GURU_TRIVIAL_ADAPTERS: 'bump-go,docs-only'
