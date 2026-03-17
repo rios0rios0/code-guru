@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 
 	logger "github.com/sirupsen/logrus"
@@ -26,7 +27,7 @@ func (c *AuthCommand) Login() error {
 	// 3. Start local HTTP server to receive callback
 	// 4. Exchange authorization code for tokens
 	// 5. Store tokens via TokenRepository
-	return fmt.Errorf("OAuth login not yet implemented -- use API key via CODE_GURU_ANTHROPIC_API_KEY")
+	return errors.New("OAuth login not yet implemented -- use API key via CODE_GURU_ANTHROPIC_API_KEY")
 }
 
 // Logout clears the stored OAuth token.

@@ -108,7 +108,11 @@ func NewSettingsFromEnv() (*Settings, error) {
 
 	var adapters []string
 	if raw := os.Getenv("CODE_GURU_TRIVIAL_ADAPTERS"); raw != "" {
-		adapters = strings.Split(raw, ",")
+		for a := range strings.SplitSeq(raw, ",") {
+			if trimmed := strings.TrimSpace(a); trimmed != "" {
+				adapters = append(adapters, trimmed)
+			}
+		}
 	}
 
 	settings := &Settings{
@@ -159,6 +163,15 @@ func NewSettingsFromEnv() (*Settings, error) {
 func validateSettings(settings *Settings) error {
 	if settings.AI.Backend == "" {
 		return errors.New("ai.backend is required (openai, claude, or anthropic)")
+	}
+
+	validBackends := map[string]bool{
+		"openai":    true,
+		"claude":    true,
+		"anthropic": true,
+	}
+	if !validBackends[settings.AI.Backend] {
+		return fmt.Errorf("ai.backend %q is not supported (valid: openai, claude, anthropic)", settings.AI.Backend)
 	}
 
 	if settings.AI.Backend == "openai" && settings.AI.OpenAI.APIKey == "" {

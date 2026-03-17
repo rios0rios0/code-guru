@@ -12,8 +12,6 @@ import (
 )
 
 func TestNewSettingsFromEnv(t *testing.T) {
-	t.Parallel()
-
 	t.Run("should build settings with openai defaults when backend env is set", func(t *testing.T) {
 		// given
 		t.Setenv("CODE_GURU_BACKEND", "openai")

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 )
 
+//nolint:gochecknoglobals // constant lookup map
 var bumpGoAllowed = map[string]bool{
 	"go.mod":       true,
 	"go.sum":       true,
@@ -34,5 +35,5 @@ func (d *BumpGoDetector) IsTrivial(files []string) bool {
 
 // Summary returns a description for the auto-approval comment.
 func (d *BumpGoDetector) Summary(files []string) string {
-	return fmt.Sprintf("Go dependency bump detected (%d files: go.mod, go.sum). Auto-approved by trivial PR policy.", len(files))
+	return fmt.Sprintf("Go dependency bump detected (%d files). Auto-approved by trivial PR policy.", len(files))
 }

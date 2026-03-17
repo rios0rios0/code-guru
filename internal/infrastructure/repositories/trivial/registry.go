@@ -3,6 +3,8 @@ package trivial
 import "github.com/rios0rios0/codeguru/internal/domain/repositories"
 
 // allDetectors contains all built-in trivial PR detectors keyed by name.
+//
+//nolint:gochecknoglobals // constant lookup map
 var allDetectors = map[string]repositories.TrivialDetector{
 	"bump-go":     &BumpGoDetector{},
 	"bump-node":   &BumpNodeDetector{},
