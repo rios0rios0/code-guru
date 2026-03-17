@@ -18,6 +18,7 @@ CRITICAL: Respond with ONLY a valid JSON object. Do NOT wrap it in markdown code
 
 Response schema:
 {
+  "verdict": "approve",
   "summary": "Brief overall assessment of the PR",
   "comments": [
     {
@@ -30,6 +31,11 @@ Response schema:
     }
   ]
 }
+
+Verdict rules:
+- "approve": no blocking issues found, the PR is safe to merge as-is
+- "request_changes": there are error-level issues that must be fixed before merging
+- "comment": there are warnings or informational observations but nothing blocking
 
 Line number rules:
 - "line" MUST be a line number in the NEW version of the file (right side of the diff)

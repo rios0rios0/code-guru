@@ -2,10 +2,8 @@ package openai
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 
 	oai "github.com/sashabaranov/go-openai"
 	logger "github.com/sirupsen/logrus"
@@ -13,9 +11,6 @@ import (
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/support"
 )
-
-// jsonCodeBlockPattern matches JSON content inside markdown code fences.
-var jsonCodeBlockPattern = regexp.MustCompile("(?s)```(?:json)?\\s*\\n(\\{.*?})\\s*\\n```")
 
 const (
 	backendName        = "openai"
@@ -81,28 +76,5 @@ func (r *AIReviewerRepository) ReviewDiff(
 	}
 
 	content := resp.Choices[0].Message.Content
-	return ParseReviewResponse(content)
-}
-
-// ParseReviewResponse parses an AI response string into a ReviewResult.
-func ParseReviewResponse(content string) (*entities.ReviewResult, error) {
-	// try direct JSON parsing first
-	var result entities.ReviewResult
-	if err := json.Unmarshal([]byte(content), &result); err == nil {
-		return &result, nil
-	}
-
-	// try extracting JSON from markdown code fences (```json ... ```)
-	if matches := jsonCodeBlockPattern.FindStringSubmatch(content); len(matches) > 1 {
-		var fencedResult entities.ReviewResult
-		if err := json.Unmarshal([]byte(matches[1]), &fencedResult); err == nil {
-			return &fencedResult, nil
-		}
-	}
-
-	// final fallback: treat entire response as a summary
-	logger.Warnf("failed to parse OpenAI response as JSON, treating as plain text")
-	return &entities.ReviewResult{
-		Summary: content,
-	}, nil
+	return support.ParseReviewResponse(content)
 }

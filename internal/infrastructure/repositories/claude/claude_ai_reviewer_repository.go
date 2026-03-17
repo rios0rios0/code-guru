@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -22,9 +21,6 @@ const (
 	defaultModel    = "sonnet"
 	defaultMaxTurns = 1
 )
-
-// jsonCodeBlockPattern matches JSON content inside markdown code fences.
-var jsonCodeBlockPattern = regexp.MustCompile("(?s)```(?:json)?\\s*\\n(\\{.*?})\\s*\\n```")
 
 // AIReviewerRepository implements the AI reviewer using the Claude Code CLI.
 type AIReviewerRepository struct {
@@ -102,31 +98,9 @@ func ParseClaudeResponse(output []byte) (*entities.ReviewResult, error) {
 		Result string `json:"result"`
 	}
 	if err := json.Unmarshal(output, &cliResponse); err == nil && cliResponse.Result != "" {
-		return parseReviewContent(cliResponse.Result)
+		return support.ParseReviewResponse(cliResponse.Result)
 	}
 
 	// fallback: try parsing the raw output directly
-	return parseReviewContent(string(output))
-}
-
-func parseReviewContent(content string) (*entities.ReviewResult, error) {
-	// try direct JSON parsing first
-	var result entities.ReviewResult
-	if err := json.Unmarshal([]byte(content), &result); err == nil {
-		return &result, nil
-	}
-
-	// try extracting JSON from markdown code fences (```json ... ```)
-	if matches := jsonCodeBlockPattern.FindStringSubmatch(content); len(matches) > 1 {
-		var fencedResult entities.ReviewResult
-		if err := json.Unmarshal([]byte(matches[1]), &fencedResult); err == nil {
-			return &fencedResult, nil
-		}
-	}
-
-	// final fallback: treat entire response as a summary
-	logger.Warnf("failed to parse Claude response as JSON, treating as plain text")
-	return &entities.ReviewResult{
-		Summary: content,
-	}, nil
+	return support.ParseReviewResponse(string(output))
 }
