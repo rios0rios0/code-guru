@@ -3,6 +3,7 @@ package controllers
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	logger "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -50,7 +51,16 @@ func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
 	addr := fmt.Sprintf(":%d", port)
 	logger.Infof("starting webhook server on %s", addr)
 
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	const timeout = 30 * time.Second
+
+	//nolint:exhaustruct // only setting required server fields
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: timeout,
+	}
+
+	if err := server.ListenAndServe(); err != nil {
 		logger.Fatalf("server failed: %v", err)
 	}
 }

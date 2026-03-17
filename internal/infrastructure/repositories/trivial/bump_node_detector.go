@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 )
 
+//nolint:gochecknoglobals // constant lookup map
 var bumpNodeAllowed = map[string]bool{
 	"package.json":      true,
 	"package-lock.json": true,

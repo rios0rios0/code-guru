@@ -17,11 +17,14 @@ type FilesystemTokenRepository struct {
 }
 
 // NewFilesystemTokenRepository creates a new filesystem-backed token repository.
-func NewFilesystemTokenRepository() *FilesystemTokenRepository {
-	home, _ := os.UserHomeDir()
+func NewFilesystemTokenRepository() (*FilesystemTokenRepository, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve home directory: %w", err)
+	}
 	return &FilesystemTokenRepository{
 		configDir: filepath.Join(home, ".config", "code-guru"),
-	}
+	}, nil
 }
 
 // SaveToken persists an OAuth token to the filesystem.
@@ -30,7 +33,11 @@ func (r *FilesystemTokenRepository) SaveToken(token entities.AuthToken) error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	data, err := json.MarshalIndent(token, "", "  ")
+	data, err := json.MarshalIndent(
+		token,
+		"",
+		"  ",
+	) //nolint:gosec // intentionally serializing auth token for local storage
 	if err != nil {
 		return fmt.Errorf("failed to marshal token: %w", err)
 	}
@@ -50,7 +57,7 @@ func (r *FilesystemTokenRepository) LoadToken() (*entities.AuthToken, error) {
 	data, err := os.ReadFile(tokenPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, nil //nolint:nilnil // nil token signals "not found" per TokenRepository contract
 		}
 		return nil, fmt.Errorf("failed to read token file: %w", err)
 	}

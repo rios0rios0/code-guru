@@ -10,15 +10,15 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
+	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 	infraRepos "github.com/rios0rios0/codeguru/internal/infrastructure/repositories"
-	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
 )
 
 // Dispatcher bridges webhook events to the domain review logic.
 type Dispatcher struct {
 	aiFactory        *infraRepos.AIReviewerFactory
 	rulesFactory     *infraRepos.RulesRepositoryFactory
-	detectorRegistry *trivial.DetectorRegistry
+	detectorRegistry repositories.TrivialDetectorRegistry
 	settings         *entities.Settings
 }
 
@@ -26,7 +26,7 @@ type Dispatcher struct {
 func NewDispatcher(
 	aiFactory *infraRepos.AIReviewerFactory,
 	rulesFactory *infraRepos.RulesRepositoryFactory,
-	detectorRegistry *trivial.DetectorRegistry,
+	detectorRegistry repositories.TrivialDetectorRegistry,
 	settings *entities.Settings,
 ) *Dispatcher {
 	return &Dispatcher{
@@ -38,7 +38,7 @@ func NewDispatcher(
 }
 
 // HandleGitHub processes GitHub App webhook events.
-func (d *Dispatcher) HandleGitHub(w http.ResponseWriter, r *http.Request) {
+func (d *Dispatcher) HandleGitHub(w http.ResponseWriter, _ *http.Request) {
 	// TODO: implement GitHub webhook handling:
 	// 1. Verify HMAC-SHA256 signature from X-Hub-Signature-256 header
 	// 2. Parse check_suite.completed event payload
@@ -53,7 +53,7 @@ func (d *Dispatcher) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleAzureDevOps processes Azure DevOps Service Hook events.
-func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
+func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, _ *http.Request) {
 	// TODO: implement Azure DevOps webhook handling:
 	// 1. Parse build.complete event payload
 	// 2. Extract repo, project, build result, associated PR
