@@ -33,11 +33,8 @@ func (r *FilesystemTokenRepository) SaveToken(token entities.AuthToken) error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	data, err := json.MarshalIndent(
-		token,
-		"",
-		"  ",
-	) //nolint:gosec // intentionally serializing auth token for local storage
+	//nolint:gosec // intentionally serializing auth token for local storage
+	data, err := json.MarshalIndent(token, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal token: %w", err)
 	}
