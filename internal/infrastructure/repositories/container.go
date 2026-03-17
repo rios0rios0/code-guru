@@ -37,7 +37,7 @@ func RegisterProviders(container *dig.Container) error {
 	}
 
 	// register a default empty trivial detector registry (overridden at controller level when enabled)
-	if err := container.Provide(func() *trivial.DetectorRegistry {
+	if err := container.Provide(func() repositories.TrivialDetectorRegistry {
 		return trivial.NewDetectorRegistry(nil)
 	}); err != nil {
 		return err

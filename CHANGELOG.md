@@ -21,7 +21,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - added Anthropic API backend using the official Go SDK (`github.com/anthropics/anthropic-sdk-go`)
 - added AI verdict system (`approve`, `request_changes`, `comment`) to review response for merge decisions
 - added trivial PR detection with built-in adapters (`bump-go`, `bump-node`, `bump-python`, `docs-only`) that skip the LLM
-- added automatic CI status checking via gitforge provider (no manual flag needed)
+- added trivial PR detection that skips LLM when CI passes (CI status provided by webhook events; CLI auto-detection pending gitforge support)
 - added environment variable configuration fallback (`CODE_GURU_*`) for CI/CD environments
 - added shared response parser (`support.ParseReviewResponse`) to eliminate duplicate parsing logic across backends
 

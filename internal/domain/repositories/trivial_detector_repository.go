@@ -12,3 +12,9 @@ type TrivialDetector interface {
 	// Summary returns a human-readable summary for the approval comment.
 	Summary(files []string) string
 }
+
+// TrivialDetectorRegistry checks a list of files against enabled trivial detectors.
+type TrivialDetectorRegistry interface {
+	// Detect returns the first matching detector and true, or nil and false if none match.
+	Detect(files []string) (TrivialDetector, bool)
+}

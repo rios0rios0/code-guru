@@ -9,8 +9,8 @@ import (
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 )
 
-// jsonCodeBlockPattern matches JSON content inside markdown code fences.
-var jsonCodeBlockPattern = regexp.MustCompile("(?s)```(?:json)?\\s*\\n(\\{.*?})\\s*\\n```")
+// jsonCodeBlockPattern matches content inside markdown code fences.
+var jsonCodeBlockPattern = regexp.MustCompile("(?s)```(?:json)?\\s*\\n(.+?)\\n```")
 
 const defaultVerdict = "comment"
 

@@ -28,5 +28,8 @@ func (d *DocsOnlyDetector) IsTrivial(files []string) bool {
 
 // Summary returns a description for the auto-approval comment.
 func (d *DocsOnlyDetector) Summary(files []string) string {
-	return fmt.Sprintf("Documentation-only change detected (%d markdown files). Auto-approved by trivial PR policy.", len(files))
+	return fmt.Sprintf(
+		"Documentation-only change detected (%d markdown files). Auto-approved by trivial PR policy.",
+		len(files),
+	)
 }

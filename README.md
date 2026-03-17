@@ -137,7 +137,7 @@ The verdict is printed as `VERDICT:<value>` for machine parsing.
 
 ## Trivial PR Auto-Approval
 
-When `--ci-passed` is set and trivial detection is enabled, PRs matching built-in adapters are auto-approved **without calling the LLM**, saving tokens.
+When trivial detection is enabled and CI has passed, PRs matching built-in adapters are auto-approved **without calling the LLM**, saving tokens. In webhook mode, CI status is provided by the webhook event. In CLI mode, CI status detection is planned via gitforge's `GetPullRequestCheckStatus()` (not yet available).
 
 | Adapter        | Matches When                                                    |
 |----------------|-----------------------------------------------------------------|

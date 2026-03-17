@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
@@ -20,7 +21,7 @@ const (
 
 // AIReviewerRepository implements the AI reviewer using the Anthropic Messages API.
 type AIReviewerRepository struct {
-	client *anthropicSDK.Client
+	client anthropicSDK.Client
 	model  string
 }
 
@@ -60,18 +61,18 @@ func (r *AIReviewerRepository) ReviewDiff(
 		Model:     r.model,
 		MaxTokens: maxTokens,
 		System: []anthropicSDK.TextBlockParam{
-			anthropicSDK.NewTextBlock(systemPrompt),
+			{Text: systemPrompt},
 		},
 		Messages: []anthropicSDK.MessageParam{
 			anthropicSDK.NewUserMessage(anthropicSDK.NewTextBlock(userPrompt)),
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Anthropic message creation failed: %w", err)
+		return nil, fmt.Errorf("anthropic message creation failed: %w", err)
 	}
 
 	if len(message.Content) == 0 {
-		return nil, fmt.Errorf("Anthropic returned no content")
+		return nil, errors.New("anthropic returned no content")
 	}
 
 	content := message.Content[0].Text

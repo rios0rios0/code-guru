@@ -10,7 +10,6 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
-	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
 	"github.com/rios0rios0/codeguru/internal/support"
 )
 
@@ -36,14 +35,14 @@ type ReviewOptions struct {
 type ReviewCommand struct {
 	aiReviewer       repositories.AIReviewerRepository
 	rulesRepo        repositories.RulesRepository
-	detectorRegistry *trivial.DetectorRegistry
+	detectorRegistry repositories.TrivialDetectorRegistry
 }
 
 // NewReviewCommand creates a new ReviewCommand.
 func NewReviewCommand(
 	aiReviewer repositories.AIReviewerRepository,
 	rulesRepo repositories.RulesRepository,
-	detectorRegistry *trivial.DetectorRegistry,
+	detectorRegistry repositories.TrivialDetectorRegistry,
 ) *ReviewCommand {
 	return &ReviewCommand{
 		aiReviewer:       aiReviewer,
@@ -96,30 +95,10 @@ func (c *ReviewCommand) Execute(
 		}
 	}
 
-	// classify languages and build diffs
-	var diffs []entities.FileDiff
-	for _, f := range files {
-		diffs = append(diffs, entities.FileDiff{
-			Path:     f.Path,
-			Diff:     f.Patch,
-			Language: support.ClassifyFile(f.Path),
-		})
-	}
-
-	// fallback: if all patches are empty (e.g. Azure DevOps), fetch the full unified diff
-	if allDiffsEmpty(diffs) {
-		logger.Debugf("no per-file patches available, fetching full unified diff for PR #%d", pr.ID)
-		fullDiff, diffErr := provider.GetPullRequestDiff(ctx, repo, pr.ID)
-		if diffErr != nil {
-			return nil, fmt.Errorf("failed to get PR diff: %w", diffErr)
-		}
-
-		chunks := support.SplitUnifiedDiff(fullDiff)
-		for i := range diffs {
-			if chunk, ok := chunks[diffs[i].Path]; ok {
-				diffs[i].Diff = chunk
-			}
-		}
+	// build diffs and run AI review
+	diffs, err := c.buildDiffs(ctx, provider, repo, pr.ID, files)
+	if err != nil {
+		return nil, err
 	}
 
 	// load rules for detected languages
@@ -151,6 +130,41 @@ func (c *ReviewCommand) Execute(
 	}
 
 	return result, nil
+}
+
+func (c *ReviewCommand) buildDiffs(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+	files []forgeEntities.PullRequestFile,
+) ([]entities.FileDiff, error) {
+	var diffs []entities.FileDiff
+	for _, f := range files {
+		diffs = append(diffs, entities.FileDiff{
+			Path:     f.Path,
+			Diff:     f.Patch,
+			Language: support.ClassifyFile(f.Path),
+		})
+	}
+
+	// fallback: if all patches are empty (e.g. Azure DevOps), fetch the full unified diff
+	if allDiffsEmpty(diffs) {
+		logger.Debugf("no per-file patches available, fetching full unified diff for PR #%d", prID)
+		fullDiff, err := provider.GetPullRequestDiff(ctx, repo, prID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get PR diff: %w", err)
+		}
+
+		chunks := support.SplitUnifiedDiff(fullDiff)
+		for i := range diffs {
+			if chunk, ok := chunks[diffs[i].Path]; ok {
+				diffs[i].Diff = chunk
+			}
+		}
+	}
+
+	return diffs, nil
 }
 
 func (c *ReviewCommand) postApprovalComment(

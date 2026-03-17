@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+//nolint:gochecknoglobals // constant lookup map
 var bumpPythonExact = map[string]bool{
 	"pyproject.toml": true,
 	"CHANGELOG.md":   true,
@@ -26,7 +27,7 @@ func (d *BumpPythonDetector) IsTrivial(files []string) bool {
 	}
 	for _, f := range files {
 		base := filepath.Base(f)
-		if bumpPythonExact[base] || strings.HasPrefix(base, "requirements") && strings.HasSuffix(base, ".txt") {
+		if bumpPythonExact[base] || (strings.HasPrefix(base, "requirements") && strings.HasSuffix(base, ".txt")) {
 			continue
 		}
 		return false
