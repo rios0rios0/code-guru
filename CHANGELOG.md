@@ -16,21 +16,23 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-17
+
 ### Added
 
-- added Anthropic API backend using the official Go SDK (`github.com/anthropics/anthropic-sdk-go`)
 - added AI verdict system (`approve`, `request_changes`, `comment`) to review response for merge decisions
-- added trivial PR detection with built-in adapters (`bump-go`, `bump-node`, `bump-python`, `docs-only`) that skip the LLM
-- added trivial PR detection that skips LLM when CI passes (CI status provided by webhook events; CLI auto-detection pending gitforge support)
+- added Anthropic API backend using the official Go SDK (`github.com/anthropics/anthropic-sdk-go`)
 - added environment variable configuration fallback (`CODE_GURU_*`) for CI/CD environments
 - added shared response parser (`support.ParseReviewResponse`) to eliminate duplicate parsing logic across backends
+- added trivial PR detection that skips LLM when CI passes (CI status provided by webhook events; CLI auto-detection pending `gitforge` support)
+- added trivial PR detection with built-in adapters (`bump-go`, `bump-node`, `bump-python`, `docs-only`) that skip the LLM
 
 ### Changed
 
-- changed `ReviewResult` entity to include a `Verdict` field for merge eligibility decisions
+- changed AI system prompt to include verdict instructions and JSON schema
 - changed `ReviewCommand` to accept a `DetectorRegistry` for trivial PR detection
 - changed `ReviewController` to fall back to environment variables when no config file is found
-- changed AI system prompt to include verdict instructions and JSON schema
+- changed `ReviewResult` entity to include a `Verdict` field for merge eligibility decisions
 
 ## [0.1.0] - 2026-03-12
 
@@ -57,7 +59,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - replaced inline `parseGitHubURL` and `parseAzureDevOpsURL` PR URL parsing with `gitforge`'s `ParsePullRequestURL` to consolidate duplicated code
 - replaced local `ProviderConfig` struct, `resolveToken()`, and `FindConfigFile()` with `gitforge`'s shared implementations
 - replaced local file extension classifier with `langforge`'s `ClassifyFileByExtension` and `ClassifyFilesByExtension` to centralize language abstractions
-- replaced raw struct literals in tests with testkit builders for consistent test data construction
+- replaced raw struct literals in tests with `testkit` builders for consistent test data construction
 
 ### Fixed
 
