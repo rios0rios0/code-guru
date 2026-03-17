@@ -100,11 +100,13 @@ code-guru review https://dev.azure.com/org/project/_git/repo/pullrequest/456
 
 ### Flags
 
-| Flag            | Description                                  |
-|-----------------|----------------------------------------------|
-| `-c, --config`  | Path to config file (default: auto-discover) |
-| `--dry-run`     | Run review without posting comments          |
-| `-v, --verbose` | Enable debug logging                         |
+| Flag            | Description                                    |
+|-----------------|------------------------------------------------|
+| `-c, --config`  | Path to config file (default: auto-discover)   |
+| `--backend`     | AI backend: `openai`, `claude`, or `anthropic` |
+| `--rules-path`  | Path to rules directory                        |
+| `--dry-run`     | Run review without posting comments            |
+| `-v, --verbose` | Enable debug logging                           |
 
 ## Supported Providers
 
@@ -115,10 +117,59 @@ code-guru review https://dev.azure.com/org/project/_git/repo/pullrequest/456
 
 ## AI Backends
 
-| Backend     | Key      | How It Works                                             |
-|-------------|----------|----------------------------------------------------------|
-| Claude Code | `claude` | Invokes `claude --print` CLI as a subprocess             |
-| OpenAI      | `openai` | Calls the Chat Completions API with JSON response format |
+| Backend     | Key         | How It Works                                             |
+|-------------|-------------|----------------------------------------------------------|
+| Anthropic   | `anthropic` | Calls the Anthropic Messages API directly via Go SDK     |
+| Claude Code | `claude`    | Invokes `claude --print` CLI as a subprocess             |
+| OpenAI      | `openai`    | Calls the Chat Completions API with JSON response format |
+
+## AI Verdict
+
+Each review returns a verdict alongside comments:
+
+| Verdict            | Meaning                                        |
+|--------------------|------------------------------------------------|
+| `approve`          | No blocking issues, safe to merge              |
+| `request_changes`  | Error-level issues that must be fixed          |
+| `comment`          | Informational feedback only, not blocking      |
+
+The verdict is printed as `VERDICT:<value>` for machine parsing.
+
+## Trivial PR Auto-Approval
+
+When trivial detection is enabled and CI has passed, PRs matching built-in adapters are auto-approved **without calling the LLM**, saving tokens. In webhook mode, CI status is provided by the webhook event. In CLI mode, CI status detection is planned via gitforge's `GetPullRequestCheckStatus()` (not yet available).
+
+| Adapter        | Matches When                                                    |
+|----------------|-----------------------------------------------------------------|
+| `bump-go`      | Only `go.mod`, `go.sum`, `CHANGELOG.md` changed                |
+| `bump-node`    | Only `package.json`, lock files, `CHANGELOG.md` changed        |
+| `bump-python`  | Only `pyproject.toml`, `requirements*.txt`, `CHANGELOG.md`     |
+| `docs-only`    | Only `*.md` files changed                                      |
+
+Configure in `.code-guru.yaml`:
+
+```yaml
+trivial:
+  enabled: true
+  adapters:
+    - 'bump-go'
+    - 'docs-only'
+```
+
+Or via environment variables: `CODE_GURU_TRIVIAL_ADAPTERS=bump-go,docs-only`
+
+## Environment Variable Configuration
+
+For CI/CD environments without a config file, all settings can be provided via `CODE_GURU_*` environment variables:
+
+| Variable                       | Description                       | Default              |
+|--------------------------------|-----------------------------------|----------------------|
+| `CODE_GURU_BACKEND`           | AI backend                         | `openai`             |
+| `CODE_GURU_OPENAI_API_KEY`    | OpenAI API key                     |                      |
+| `CODE_GURU_ANTHROPIC_API_KEY` | Anthropic API key                  |                      |
+| `CODE_GURU_RULES_PATH`        | Path to rules directory            |                      |
+| `CODE_GURU_PROVIDER_TOKEN`    | Git provider token                 |                      |
+| `CODE_GURU_TRIVIAL_ADAPTERS`  | Comma-separated adapter names      |                      |
 
 ## Rules
 

@@ -3,6 +3,7 @@ module github.com/rios0rios0/codeguru
 go 1.26.1
 
 require (
+	github.com/anthropics/anthropic-sdk-go v0.2.0-beta.3
 	github.com/rios0rios0/gitforge v0.4.0
 	github.com/rios0rios0/langforge v0.3.0
 	github.com/rios0rios0/testkit v0.1.1
@@ -38,6 +39,10 @@ require (
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/skeema/knownhosts v1.3.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/tidwall/gjson v1.14.4 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/mod v0.34.0 // indirect

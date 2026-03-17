@@ -3,9 +3,11 @@ package repositories
 import (
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
+	anthropicRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/anthropic"
 	claudeRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/claude"
 	openaiRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/openai"
 	rulesRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/rules"
+	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
 	"github.com/rios0rios0/gitforge/pkg/providers/infrastructure/azuredevops"
 	"github.com/rios0rios0/gitforge/pkg/providers/infrastructure/github"
 	registry "github.com/rios0rios0/gitforge/pkg/registry/infrastructure"
@@ -34,6 +36,13 @@ func RegisterProviders(container *dig.Container) error {
 		return err
 	}
 
+	// register a default empty trivial detector registry (overridden at controller level when enabled)
+	if err := container.Provide(func() repositories.TrivialDetectorRegistry {
+		return trivial.NewDetectorRegistry(nil)
+	}); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -50,6 +59,8 @@ func (f *AIReviewerFactory) Create(settings *entities.Settings) repositories.AIR
 	switch settings.AI.Backend {
 	case "openai":
 		return openaiRepo.NewAIReviewerRepository(settings.AI.OpenAI.APIKey, settings.AI.OpenAI.Model)
+	case "anthropic":
+		return anthropicRepo.NewAIReviewerRepository(settings.AI.Anthropic.APIKey, settings.AI.Anthropic.Model)
 	case "claude":
 		return claudeRepo.NewAIReviewerRepository(
 			settings.AI.Claude.BinaryPath, settings.AI.Claude.Model, settings.AI.Claude.MaxTurns,

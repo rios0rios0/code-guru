@@ -31,7 +31,31 @@ development practices, refer to the **[Development Guide](https://github.com/rio
 
 ## Local Environment
 
-| Variable           | Description                    | Required |
-|--------------------|--------------------------------|----------|
-| `GITLAB_API_TOKEN` | GitLab personal access token   | Yes      |
-| `OPENAI_API_KEY`   | OpenAI API key for code review | Yes      |
+| Variable                       | Description                    | Required           |
+|--------------------------------|--------------------------------|--------------------|
+| `GITHUB_TOKEN`                 | GitHub personal access token   | For GitHub PRs     |
+| `OPENAI_API_KEY`               | OpenAI API key                 | For OpenAI backend |
+| `CODE_GURU_ANTHROPIC_API_KEY`  | Anthropic API key              | For Anthropic backend |
+
+## Adding a New Trivial Adapter
+
+Trivial adapters detect PRs that can be auto-approved without calling the LLM (e.g., dependency bumps, docs-only changes).
+
+1. Create a new file in `internal/infrastructure/repositories/trivial/` (e.g., `bump_java_detector.go`)
+2. Implement the `TrivialDetector` interface from `internal/domain/repositories/trivial_detector_repository.go`:
+   ```go
+   type TrivialDetector interface {
+       Name() string
+       IsTrivial(files []string) bool
+       Summary(files []string) string
+   }
+   ```
+3. Register your adapter in `internal/infrastructure/repositories/trivial/registry.go` by adding an entry to the `allDetectors` map:
+   ```go
+   var allDetectors = map[string]repositories.TrivialDetector{
+       // ... existing adapters ...
+       "bump-java": &BumpJavaDetector{},
+   }
+   ```
+4. Add unit tests following BDD structure (`// given`, `// when`, `// then`) with `t.Parallel()` and `t.Run()`
+5. Update `CHANGELOG.md` under `[Unreleased] > Added`

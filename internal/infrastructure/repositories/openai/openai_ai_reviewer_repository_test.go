@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	openaiRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/openai"
+	"github.com/rios0rios0/codeguru/internal/support"
 )
 
 func TestParseReviewResponse(t *testing.T) {
@@ -19,7 +19,7 @@ func TestParseReviewResponse(t *testing.T) {
 		content := `{"summary": "no issues", "comments": [{"file": "app.go", "line": 3, "body": "test", "severity": "info"}]}`
 
 		// when
-		result, err := openaiRepo.ParseReviewResponse(content)
+		result, err := support.ParseReviewResponse(content)
 
 		// then
 		require.NoError(t, err)
@@ -33,7 +33,7 @@ func TestParseReviewResponse(t *testing.T) {
 		content := "```json\n{\"summary\": \"fenced\", \"comments\": []}\n```"
 
 		// when
-		result, err := openaiRepo.ParseReviewResponse(content)
+		result, err := support.ParseReviewResponse(content)
 
 		// then
 		require.NoError(t, err)
@@ -45,7 +45,7 @@ func TestParseReviewResponse(t *testing.T) {
 		content := "This PR looks fine to me."
 
 		// when
-		result, err := openaiRepo.ParseReviewResponse(content)
+		result, err := support.ParseReviewResponse(content)
 
 		// then
 		require.NoError(t, err)
