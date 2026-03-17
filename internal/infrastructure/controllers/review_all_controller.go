@@ -84,7 +84,7 @@ func (c *ReviewAllController) Execute(cmd *cobra.Command, _ []string) {
 	// create dependencies from settings
 	aiReviewer := c.aiReviewerFactory.Create(settings)
 	rulesRepo := c.rulesRepoFactory.Create(settings)
-	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo)
+	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, nil)
 	reviewAllCmd := commands.NewReviewAllCommand(c.providerRegistry, reviewCmd)
 
 	results, err := reviewAllCmd.Execute(ctx, settings, commands.ReviewOptions{

@@ -13,7 +13,9 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
+	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 	infraRepos "github.com/rios0rios0/codeguru/internal/infrastructure/repositories"
+	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
 	"github.com/rios0rios0/codeguru/internal/support"
 )
 
@@ -117,14 +119,24 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	// build trivial detector registry if enabled
+	var detectorRegistry repositories.TrivialDetectorRegistry
+	if settings.Trivial.Enabled && len(settings.Trivial.Adapters) > 0 {
+		detectorRegistry = trivial.NewDetectorRegistry(settings.Trivial.Adapters)
+	}
+
 	// create the review command with settings-based dependencies
 	aiReviewer := c.aiReviewerFactory.Create(settings)
 	rulesRepo := c.rulesRepoFactory.Create(settings)
-	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo)
+	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, detectorRegistry)
+
+	// TODO: query CI status automatically via provider.GetPullRequestCheckStatus() once gitforge adds this method
+	ciPassed := false
 
 	result, err := reviewCmd.Execute(ctx, reviewProvider, repo, *targetPR, commands.ReviewOptions{
-		DryRun:  dryRun,
-		Verbose: verbose,
+		DryRun:   dryRun,
+		Verbose:  verbose,
+		CIPassed: ciPassed,
 	})
 	if err != nil {
 		logger.Errorf("review failed: %v", err)
@@ -162,10 +174,8 @@ func (c *ReviewController) resolveSettings(configPath string) (*entities.Setting
 
 	cfgPath, _ := configHelpers.FindConfigFile("code-guru")
 	if cfgPath == "" {
-		// no config file; use defaults
-		return &entities.Settings{
-			AI: entities.AIConfig{Backend: "claude"},
-		}, nil
+		// no config file; try environment variables
+		return entities.NewSettingsFromEnv()
 	}
 
 	return entities.NewSettings(cfgPath)
@@ -177,6 +187,10 @@ func (c *ReviewController) findToken(settings *entities.Settings, providerType s
 			return p.Token
 		}
 	}
+	// fallback to environment variable
+	if token := os.Getenv("CODE_GURU_PROVIDER_TOKEN"); token != "" {
+		return token
+	}
 	return ""
 }
 
@@ -184,6 +198,9 @@ func (c *ReviewController) printResult(result *entities.ReviewResult, dryRun boo
 	if dryRun {
 		_, _ = fmt.Fprintln(os.Stdout, "--- DRY RUN (comments not posted) ---")
 	}
+
+	// emit verdict for machine parsing
+	_, _ = fmt.Fprintf(os.Stdout, "VERDICT:%s\n", result.Verdict)
 
 	if result.Summary != "" {
 		_, _ = fmt.Fprintf(os.Stdout, "\nSummary: %s\n", result.Summary)
