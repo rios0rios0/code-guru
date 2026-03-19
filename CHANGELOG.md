@@ -16,6 +16,11 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added version ldflags injection at build time via `make build` and `make install` targets
+- added `--version` flag to the CLI using Cobra's built-in version support
+
 ## [0.2.1] - 2026-03-19
 
 ### Changed
