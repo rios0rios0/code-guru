@@ -10,11 +10,18 @@ import (
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers"
 )
 
+// version is set at build time via -ldflags.
+// During development, it defaults to "dev".
+//
+
+var version = "dev"
+
 func buildRootCommand(reviewController *controllers.ReviewController) *cobra.Command {
 	//nolint:exhaustruct // minimal Command initialization with required fields only
 	cmd := &cobra.Command{
-		Use:   "code-guru [pr-url]",
-		Short: "AI-powered code review tool",
+		Use:     "code-guru [pr-url]",
+		Short:   "AI-powered code review tool",
+		Version: version,
 		Long: `Code Guru automatically reviews pull requests using AI (OpenAI or Claude Code).
 It analyzes code diffs against configurable review rules and posts
 comments directly on the pull request.
