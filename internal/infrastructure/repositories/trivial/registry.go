@@ -1,15 +1,22 @@
 package trivial
 
-import "github.com/rios0rios0/codeguru/internal/domain/repositories"
+import (
+	"context"
+
+	"github.com/rios0rios0/codeguru/internal/domain/repositories"
+)
 
 // allDetectors contains all built-in trivial PR detectors keyed by name.
 //
 //nolint:gochecknoglobals // constant lookup map
 var allDetectors = map[string]repositories.TrivialDetector{
-	"bump-go":     &BumpGoDetector{},
-	"bump-node":   &BumpNodeDetector{},
-	"bump-python": &BumpPythonDetector{},
-	"docs-only":   &DocsOnlyDetector{},
+	"update-go":     &UpdateGoDetector{},
+	"update-node":   &UpdateNodeDetector{},
+	"update-python": &UpdatePythonDetector{},
+	"bump-go":       &BumpGoDetector{},
+	"bump-node":     &BumpNodeDetector{},
+	"bump-python":   &BumpPythonDetector{},
+	"docs-only":     &DocsOnlyDetector{},
 }
 
 // DetectorRegistry holds the enabled trivial PR detectors.
@@ -30,14 +37,19 @@ func NewDetectorRegistry(enabled []string) *DetectorRegistry {
 }
 
 // Detect checks the file list against all enabled detectors.
-// Returns the first matching detector and true, or nil and false if none match.
-func (r *DetectorRegistry) Detect(files []string) (repositories.TrivialDetector, bool) {
+// Returns the first matching detector, its result, and true;
+// or nil, empty result, and false if none match.
+func (r *DetectorRegistry) Detect(
+	ctx context.Context,
+	dctx repositories.DetectionContext,
+) (repositories.TrivialDetector, repositories.DetectionResult, bool) {
 	for _, d := range r.detectors {
-		if d.IsTrivial(files) {
-			return d, true
+		result := d.Detect(ctx, dctx)
+		if result.Detected {
+			return d, result, true
 		}
 	}
-	return nil, false
+	return nil, repositories.DetectionResult{}, false
 }
 
 // AvailableDetectors returns the names of all built-in detectors.

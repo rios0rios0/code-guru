@@ -20,6 +20,14 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 - added version ldflags injection at build time via `make build` and `make install` targets
 - added `--version` flag to the CLI using Cobra's built-in version support
+- added `update-go`, `update-node`, `update-python` trivial adapters for dependency update PRs
+- added `.autobump.yaml` validation for bump-* trivial adapters to verify version files are present
+
+### Changed
+
+- **BREAKING CHANGE:** changed `bump-go`, `bump-node`, `bump-python` trivial adapters to detect version bump (release ceremony) PRs instead of dependency updates; users who configured these for dependency updates must switch to `update-go`, `update-node`, `update-python`
+- changed `TrivialDetector` interface to use `Detect(ctx, DetectionContext) DetectionResult` instead of `IsTrivial(files) bool` + `Summary(files) string`, enabling three-way verdicts (approve/reject/not-detected)
+- changed `TrivialDetectorRegistry.Detect` to return a `DetectionResult` with verdict, enabling bump PR rejection when `.autobump.yaml` validation fails
 
 ## [0.2.1] - 2026-03-19
 

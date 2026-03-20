@@ -1,18 +1,19 @@
 package trivial
 
 import (
-	"fmt"
-	"path/filepath"
+	"context"
+
+	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 )
 
 //nolint:gochecknoglobals // constant lookup map
 var bumpGoAllowed = map[string]bool{
-	"go.mod":       true,
-	"go.sum":       true,
 	"CHANGELOG.md": true,
 }
 
-// BumpGoDetector detects Go dependency bump PRs.
+// BumpGoDetector detects Go version bump (release ceremony) PRs.
+// Default expected files: CHANGELOG.md only (Go uses git tags for versioning).
+// When .autobump.yaml exists, the expected set is expanded with its version_files.
 type BumpGoDetector struct{}
 
 // Name returns the adapter identifier.
@@ -20,20 +21,7 @@ func (d *BumpGoDetector) Name() string {
 	return "bump-go"
 }
 
-// IsTrivial returns true if all changed files are Go dependency files.
-func (d *BumpGoDetector) IsTrivial(files []string) bool {
-	if len(files) == 0 {
-		return false
-	}
-	for _, f := range files {
-		if !bumpGoAllowed[filepath.Base(f)] {
-			return false
-		}
-	}
-	return true
-}
-
-// Summary returns a description for the auto-approval comment.
-func (d *BumpGoDetector) Summary(files []string) string {
-	return fmt.Sprintf("Go dependency bump detected (%d files). Auto-approved by trivial PR policy.", len(files))
+// Detect checks whether the PR matches a Go version bump pattern.
+func (d *BumpGoDetector) Detect(ctx context.Context, dctx repositories.DetectionContext) repositories.DetectionResult {
+	return detectBump(ctx, dctx, "bump-go", "go", bumpGoAllowed, nil)
 }
