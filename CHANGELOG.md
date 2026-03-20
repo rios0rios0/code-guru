@@ -16,6 +16,8 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-20
+
 ### Added
 
 - added version ldflags injection at build time via `make build` and `make install` targets
