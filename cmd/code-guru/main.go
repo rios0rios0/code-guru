@@ -10,10 +10,10 @@ import (
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers"
 )
 
-// version is set at build time via ldflags by GoReleaser.
+// version is set at build time via -ldflags.
 // During development, it defaults to "dev".
 //
-//nolint:gochecknoglobals // Version set at build time via ldflags
+//nolint:gochecknoglobals // version is intended to be overridden at build time via -ldflags
 var version = "dev"
 
 func buildRootCommand(reviewController *controllers.ReviewController) *cobra.Command {
