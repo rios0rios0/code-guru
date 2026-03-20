@@ -16,9 +16,10 @@ const autobumpConfigPath = ".autobump.yaml"
 
 // detectBump implements the shared bump detection logic used by all bump-* detectors.
 //
-// It first checks whether all PR files fall within the default expected set.
-// If .autobump.yaml exists in the repo, it expands the expected set with
-// version_files and validates that all required files are present.
+// When .autobump.yaml is available, it is loaded first to expand the allowed file set
+// with version_files. The PR files are then validated against the union of defaults
+// and autobump entries. If autobump is active, all version_files must be present
+// or the PR is rejected.
 func detectBump(
 	ctx context.Context,
 	dctx repositories.DetectionContext,
@@ -31,22 +32,22 @@ func detectBump(
 		return repositories.DetectionResult{}
 	}
 
-	// first pass: check all PR files fall within the default allowed set
+	// try to load autobump config first to expand the allowed set
+	autobumpRequired, autobumpActive := loadAutobumpRequired(ctx, dctx, autobumpLangKey)
+
+	// check all PR files fall within the combined allowed set (defaults + autobump)
 	for _, f := range dctx.Files {
 		base := filepath.Base(f)
-		if !defaultAllowed[base] && (defaultAllowedFn == nil || !defaultAllowedFn(f)) {
+		inDefault := defaultAllowed[base] || (defaultAllowedFn != nil && defaultAllowedFn(f))
+		inAutobump := autobumpRequired[f]
+		if !inDefault && !inAutobump {
 			return repositories.DetectionResult{}
 		}
 	}
 
-	// try autobump validation if file content fetcher is available
-	if dctx.FileContentFetcher != nil {
-		result, handled := tryAutobumpValidation(
-			ctx, dctx, detectorName, autobumpLangKey,
-		)
-		if handled {
-			return result
-		}
+	// if autobump is active, check all required files are present
+	if autobumpActive {
+		return validateAutobumpRequired(dctx, detectorName, autobumpRequired)
 	}
 
 	// fallback: all files matched the default set
@@ -60,53 +61,54 @@ func detectBump(
 	}
 }
 
-func tryAutobumpValidation(
+// loadAutobumpRequired attempts to load .autobump.yaml and returns the set of
+// required files (CHANGELOG.md + version_files) and whether autobump is active.
+func loadAutobumpRequired(
 	ctx context.Context,
 	dctx repositories.DetectionContext,
-	detectorName string,
 	autobumpLangKey string,
-) (repositories.DetectionResult, bool) {
-	if !dctx.FileContentFetcher.HasFile(ctx, autobumpConfigPath) {
-		return repositories.DetectionResult{}, false
+) (map[string]bool, bool) {
+	if dctx.FileContentFetcher == nil || !dctx.FileContentFetcher.HasFile(ctx, autobumpConfigPath) {
+		return nil, false
 	}
 
 	content, err := dctx.FileContentFetcher.GetFileContent(ctx, autobumpConfigPath)
 	if err != nil {
 		logger.Warnf("failed to read %s: %v, falling back to default patterns", autobumpConfigPath, err)
-		return repositories.DetectionResult{}, false
+		return nil, false
 	}
 
 	cfg, err := autobump.ParseConfig(content)
 	if err != nil {
 		logger.Warnf("failed to parse %s: %v, falling back to default patterns", autobumpConfigPath, err)
-		return repositories.DetectionResult{}, false
+		return nil, false
 	}
 
 	versionPaths := autobump.ResolveVersionFilePaths(cfg, autobumpLangKey, dctx.RepoName)
 
-	// build the full expected set: CHANGELOG.md + all version file paths
-	expected := map[string]bool{"CHANGELOG.md": true}
+	required := map[string]bool{"CHANGELOG.md": true}
 	for _, p := range versionPaths {
-		expected[p] = true
+		required[p] = true
 	}
 
-	// check all expected files are present in the PR
+	return required, true
+}
+
+// validateAutobumpRequired checks that all required autobump files are present in the PR.
+func validateAutobumpRequired(
+	dctx repositories.DetectionContext,
+	detectorName string,
+	required map[string]bool,
+) repositories.DetectionResult {
 	prFiles := make(map[string]bool, len(dctx.Files))
 	for _, f := range dctx.Files {
 		prFiles[f] = true
 	}
 
 	var missing []string
-	for exp := range expected {
+	for exp := range required {
 		if !prFiles[exp] {
 			missing = append(missing, exp)
-		}
-	}
-
-	// also check PR doesn't have extra files outside the expected set
-	for _, f := range dctx.Files {
-		if !expected[f] {
-			missing = append(missing, fmt.Sprintf("unexpected file: %s", f))
 		}
 	}
 
@@ -118,7 +120,7 @@ func tryAutobumpValidation(
 				"%s version bump is incomplete per .autobump.yaml: %s",
 				detectorName, strings.Join(missing, ", "),
 			),
-		}, true
+		}
 	}
 
 	return repositories.DetectionResult{
@@ -129,5 +131,5 @@ func tryAutobumpValidation(
 			detectorName,
 			len(dctx.Files),
 		),
-	}, true
+	}
 }
