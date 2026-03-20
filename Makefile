@@ -13,13 +13,13 @@ build:
 	go build -ldflags "$(LDFLAGS) -s -w" -o bin/code-guru ./cmd/code-guru
 
 debug:
-	rm -rf bin
+	mkdir -p bin && rm -rf bin/code-guru
 	go build -gcflags "-N -l" -ldflags "$(LDFLAGS)" -o bin/code-guru ./cmd/code-guru
 
 run:
 	go run ./cmd/code-guru
 
 install:
-	make build
+	$(MAKE) build
 	mkdir -p ~/.local/bin
 	cp -v bin/code-guru ~/.local/bin/code-guru
