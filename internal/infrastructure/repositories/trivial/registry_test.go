@@ -273,6 +273,76 @@ func TestDetectorRegistry(t *testing.T) {
 		assert.Equal(t, "approve", result.Verdict)
 	})
 
+	t.Run("should approve bump-node with autobump typescript section", func(t *testing.T) {
+		// given
+		fetcher := &stubFileContentFetcher{
+			files: map[string]string{
+				".autobump.yaml": "languages:\n  typescript:\n    version_files:\n      - path: \"package.json\"\n",
+			},
+		}
+		registry := trivial.NewDetectorRegistry([]string{"bump-node"})
+		dctx := repositories.DetectionContext{
+			Files:              []string{"package.json", "CHANGELOG.md"},
+			RepoName:           "my-app",
+			FileContentFetcher: fetcher,
+		}
+
+		// when
+		detector, result, found := registry.Detect(ctx, dctx)
+
+		// then
+		assert.True(t, found)
+		assert.Equal(t, "bump-node", detector.Name())
+		assert.Equal(t, "approve", result.Verdict)
+		assert.Contains(t, result.Summary, ".autobump.yaml")
+	})
+
+	t.Run("should reject bump-node with autobump when version file from config is missing", func(t *testing.T) {
+		// given
+		fetcher := &stubFileContentFetcher{
+			files: map[string]string{
+				".autobump.yaml": "languages:\n  typescript:\n    version_files:\n      - path: \"package.json\"\n      - path: \"src/version.ts\"\n",
+			},
+		}
+		registry := trivial.NewDetectorRegistry([]string{"bump-node"})
+		dctx := repositories.DetectionContext{
+			Files:              []string{"package.json", "CHANGELOG.md"},
+			RepoName:           "my-app",
+			FileContentFetcher: fetcher,
+		}
+
+		// when
+		_, result, found := registry.Detect(ctx, dctx)
+
+		// then
+		assert.True(t, found)
+		assert.Equal(t, "reject", result.Verdict)
+		assert.Contains(t, result.Summary, "src/version.ts")
+	})
+
+	t.Run("should approve bump-node with autobump when additional version files are present", func(t *testing.T) {
+		// given
+		fetcher := &stubFileContentFetcher{
+			files: map[string]string{
+				".autobump.yaml": "languages:\n  typescript:\n    version_files:\n      - path: \"package.json\"\n      - path: \"src/version.ts\"\n",
+			},
+		}
+		registry := trivial.NewDetectorRegistry([]string{"bump-node"})
+		dctx := repositories.DetectionContext{
+			Files:              []string{"package.json", "CHANGELOG.md", "src/version.ts"},
+			RepoName:           "my-app",
+			FileContentFetcher: fetcher,
+		}
+
+		// when
+		detector, result, found := registry.Detect(ctx, dctx)
+
+		// then
+		assert.True(t, found)
+		assert.Equal(t, "bump-node", detector.Name())
+		assert.Equal(t, "approve", result.Verdict)
+	})
+
 	t.Run("should fall back to default patterns when autobump fetch fails", func(t *testing.T) {
 		// given
 		fetcher := &stubFileContentFetcher{
