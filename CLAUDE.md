@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Does
 
-Code Guru is a Go CLI tool that uses AI (Anthropic API, Claude Code CLI, or OpenAI API) to automatically review pull requests across GitHub and Azure DevOps. It loads review rules from Markdown files, sends PR diffs to an AI backend, and posts review comments back on the PR. It also supports trivial PR detection (dependency bumps, docs-only changes) to auto-approve without calling the LLM.
+Code Guru is a Go CLI tool that uses AI (Anthropic API, Claude Code CLI, or OpenAI API) to automatically review pull requests across GitHub and Azure DevOps. It loads review rules from Markdown files, sends PR diffs to an AI backend, and posts review comments back on the PR. It also supports trivial PR detection (dependency updates, version bumps, docs-only changes) to auto-approve or reject without calling the LLM.
 
 ## Build, Test, and Lint
 
@@ -26,11 +26,11 @@ Clean Architecture with domain/infrastructure separation, using Uber DIG for dep
 
 **Request flow:** CLI input → Controller → Command → Repository (AI backend) → Post comments via gitforge
 
-**Trivial PR flow:** CLI input → Controller → Command → DetectorRegistry (no AI) → Post approval comment via gitforge
+**Trivial PR flow:** CLI input → Controller → Command → DetectorRegistry (no AI) → Post approval/rejection comment via gitforge
 
 ### Domain Layer (`internal/domain/`)
 - `entities/` — Framework-agnostic domain models: `Settings`, `ReviewRequest`, `ReviewResult` (with `Verdict`), `ReviewComment`, `FileDiff`, `Rule`, `Controller` interface
-- `repositories/` — Interfaces only: `AIReviewerRepository` (AI engine contract), `RulesRepository` (rule loading contract), `TrivialDetector` (trivial PR detection contract)
+- `repositories/` — Interfaces only: `AIReviewerRepository` (AI engine contract), `RulesRepository` (rule loading contract), `TrivialDetector` + `TrivialDetectorRegistry` (trivial PR detection contracts with `DetectionContext`/`DetectionResult`)
 - `commands/` — Business logic: `ReviewCommand` (single PR with trivial detection), `ReviewAllCommand` (batch), `DiscoverCommand` (list PRs)
 
 ### Infrastructure Layer (`internal/infrastructure/`)
@@ -39,7 +39,8 @@ Clean Architecture with domain/infrastructure separation, using Uber DIG for dep
 - `repositories/claude/` — Claude Code CLI backend (invokes `claude --print`)
 - `repositories/openai/` — OpenAI Chat Completions API backend
 - `repositories/rules/` — Loads Markdown rule files from filesystem with YAML frontmatter glob filtering
-- `repositories/trivial/` — Built-in trivial PR detectors: `bump-go`, `bump-node`, `bump-python`, `docs-only`
+- `repositories/trivial/` — Built-in trivial PR detectors: `update-go`, `update-node`, `update-python` (dependency updates), `bump-go`, `bump-node`, `bump-python` (version bumps with `.autobump.yaml` validation), `docs-only`
+- `repositories/trivial/autobump/` — Parser for `.autobump.yaml` config files used by bump detectors
 
 ### Support Package (`internal/support/`)
 Shared utilities: `diff_splitter.go` (parse unified diffs), `file_classifier.go` (detect language via langforge), `url_parser.go` (parse PR URLs via gitforge), `prompt_builder.go` (build AI system/user prompts), `response_parser.go` (shared JSON response parsing for all AI backends)

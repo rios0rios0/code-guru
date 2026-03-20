@@ -1,18 +1,21 @@
 package trivial
 
 import (
-	"fmt"
-	"path/filepath"
+	"context"
 	"strings"
+
+	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 )
 
 //nolint:gochecknoglobals // constant lookup map
 var bumpPythonExact = map[string]bool{
-	"pyproject.toml": true,
-	"CHANGELOG.md":   true,
+	"CHANGELOG.md": true,
 }
 
-// BumpPythonDetector detects Python dependency bump PRs.
+// BumpPythonDetector detects Python version bump (release ceremony) PRs.
+// Default expected files: any */__init__.py + CHANGELOG.md.
+// When .autobump.yaml exists, the expected set is expanded with its version_files
+// under the "python" language key.
 type BumpPythonDetector struct{}
 
 // Name returns the adapter identifier.
@@ -20,22 +23,14 @@ func (d *BumpPythonDetector) Name() string {
 	return "bump-python"
 }
 
-// IsTrivial returns true if all changed files are Python dependency files.
-func (d *BumpPythonDetector) IsTrivial(files []string) bool {
-	if len(files) == 0 {
-		return false
-	}
-	for _, f := range files {
-		base := filepath.Base(f)
-		if bumpPythonExact[base] || (strings.HasPrefix(base, "requirements") && strings.HasSuffix(base, ".txt")) {
-			continue
-		}
-		return false
-	}
-	return true
+// Detect checks whether the PR matches a Python version bump pattern.
+func (d *BumpPythonDetector) Detect(
+	ctx context.Context,
+	dctx repositories.DetectionContext,
+) repositories.DetectionResult {
+	return detectBump(ctx, dctx, "bump-python", "python", bumpPythonExact, isPythonInitFile)
 }
 
-// Summary returns a description for the auto-approval comment.
-func (d *BumpPythonDetector) Summary(files []string) string {
-	return fmt.Sprintf("Python dependency bump detected (%d files). Auto-approved by trivial PR policy.", len(files))
+func isPythonInitFile(path string) bool {
+	return strings.HasSuffix(path, "/__init__.py")
 }
