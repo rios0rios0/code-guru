@@ -80,17 +80,7 @@ func (c *ReviewCommand) Execute(
 
 	// check trivial PR detection (no LLM call needed)
 	if c.detectorRegistry != nil && opts.CIPassed {
-		if detector, found := c.detectorRegistry.Detect(paths); found {
-			logger.Infof("PR #%d detected as trivial by %q adapter, skipping LLM review", pr.ID, detector.Name())
-			summary := detector.Summary(paths)
-			result := &entities.ReviewResult{
-				PullRequestURL: pr.URL,
-				Verdict:        "approve",
-				Summary:        summary,
-			}
-			if !opts.DryRun {
-				c.postApprovalComment(ctx, provider, repo, pr.ID, summary)
-			}
+		if result := c.handleTrivialDetection(ctx, provider, repo, pr, paths, opts.DryRun); result != nil {
 			return result, nil
 		}
 	}
@@ -130,6 +120,68 @@ func (c *ReviewCommand) Execute(
 	}
 
 	return result, nil
+}
+
+func (c *ReviewCommand) handleTrivialDetection(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	pr forgeEntities.PullRequestDetail,
+	paths []string,
+	dryRun bool,
+) *entities.ReviewResult {
+	// build detection context with file content fetcher if available
+	dctx := repositories.DetectionContext{
+		Files:    paths,
+		RepoName: repo.Name,
+	}
+	if fap, ok := provider.(forgeEntities.FileAccessProvider); ok {
+		dctx.FileContentFetcher = &forgeFileContentFetcherAdapter{provider: fap, repo: repo}
+	}
+
+	detector, detection, found := c.detectorRegistry.Detect(ctx, dctx)
+	if !found {
+		return nil
+	}
+
+	logger.Infof(
+		"PR #%d detected as trivial by %q adapter (verdict=%s), skipping LLM review",
+		pr.ID, detector.Name(), detection.Verdict,
+	)
+
+	result := &entities.ReviewResult{
+		PullRequestURL: pr.URL,
+		Verdict:        detection.Verdict,
+		Summary:        detection.Summary,
+	}
+
+	if !dryRun {
+		switch detection.Verdict {
+		case "approve":
+			c.postApprovalComment(ctx, provider, repo, pr.ID, detection.Summary)
+		case "reject":
+			c.postRejectionComment(ctx, provider, repo, pr.ID, detection.Summary)
+		}
+	}
+
+	return result
+}
+
+// forgeFileContentFetcherAdapter adapts a ReviewProvider (type-asserted to
+// FileAccessProvider) into the domain FileContentFetcher interface.
+// This lives here in the command layer because it bridges the provider
+// passed to Execute with the domain interface.
+type forgeFileContentFetcherAdapter struct {
+	provider forgeEntities.FileAccessProvider
+	repo     forgeEntities.Repository
+}
+
+func (a *forgeFileContentFetcherAdapter) GetFileContent(ctx context.Context, path string) (string, error) {
+	return a.provider.GetFileContent(ctx, a.repo, path)
+}
+
+func (a *forgeFileContentFetcherAdapter) HasFile(ctx context.Context, path string) bool {
+	return a.provider.HasFile(ctx, a.repo, path)
 }
 
 func (c *ReviewCommand) buildDiffs(
@@ -177,6 +229,19 @@ func (c *ReviewCommand) postApprovalComment(
 	body := fmt.Sprintf("**[Auto-Approved]** %s", summary)
 	if err := provider.PostPullRequestComment(ctx, repo, prID, body); err != nil {
 		logger.Errorf("failed to post approval comment: %v", err)
+	}
+}
+
+func (c *ReviewCommand) postRejectionComment(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+	summary string,
+) {
+	body := fmt.Sprintf("**[Rejected]** %s", summary)
+	if err := provider.PostPullRequestComment(ctx, repo, prID, body); err != nil {
+		logger.Errorf("failed to post rejection comment: %v", err)
 	}
 }
 

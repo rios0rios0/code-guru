@@ -135,16 +135,39 @@ Each review returns a verdict alongside comments:
 
 The verdict is printed as `VERDICT:<value>` for machine parsing.
 
-## Trivial PR Auto-Approval
+## Trivial PR Detection
 
-When trivial detection is enabled and CI has passed, PRs matching built-in adapters are auto-approved **without calling the LLM**, saving tokens. In webhook mode, CI status is provided by the webhook event. In CLI mode, CI status detection is planned via gitforge's `GetPullRequestCheckStatus()` (not yet available).
+When trivial detection is enabled and CI has passed, PRs matching built-in adapters are handled **without calling the LLM**, saving tokens. In webhook mode, CI status is provided by the webhook event. In CLI mode, CI status detection is planned via gitforge's `GetPullRequestCheckStatus()` (not yet available).
+
+There are two categories of trivial adapters:
+
+### Update Adapters (Dependency Updates)
+
+These detect dependency update PRs and auto-approve them.
+
+| Adapter          | Matches When                                                  |
+|------------------|---------------------------------------------------------------|
+| `update-go`      | Only `go.mod`, `go.sum`, `CHANGELOG.md` changed              |
+| `update-node`    | Only `package.json`, lock files, `CHANGELOG.md` changed      |
+| `update-python`  | Only `pyproject.toml`, `requirements*.txt`, `CHANGELOG.md`   |
+
+### Bump Adapters (Version Bumps / Releases)
+
+These detect version bump (release ceremony) PRs. If the repo contains an `.autobump.yaml` config file, the adapter validates that all version files declared in the config are present in the PR. Missing files result in a **reject** verdict.
+
+| Adapter          | Default Files                          | AutoBump Language Key |
+|------------------|----------------------------------------|-----------------------|
+| `bump-go`        | `CHANGELOG.md`                         | `go`                  |
+| `bump-node`      | `package.json`, `CHANGELOG.md`         | `typescript`          |
+| `bump-python`    | `*/__init__.py`, `CHANGELOG.md`        | `python`              |
+
+### Other Adapters
 
 | Adapter        | Matches When                                                    |
 |----------------|-----------------------------------------------------------------|
-| `bump-go`      | Only `go.mod`, `go.sum`, `CHANGELOG.md` changed                |
-| `bump-node`    | Only `package.json`, lock files, `CHANGELOG.md` changed        |
-| `bump-python`  | Only `pyproject.toml`, `requirements*.txt`, `CHANGELOG.md`     |
-| `docs-only`    | Only `*.md` files changed                                      |
+| `docs-only`    | Only `*.md` files changed                                       |
+
+### Configuration
 
 Configure in `.code-guru.yaml`:
 
@@ -152,11 +175,12 @@ Configure in `.code-guru.yaml`:
 trivial:
   enabled: true
   adapters:
+    - 'update-go'
     - 'bump-go'
     - 'docs-only'
 ```
 
-Or via environment variables: `CODE_GURU_TRIVIAL_ADAPTERS=bump-go,docs-only`
+Or via environment variables: `CODE_GURU_TRIVIAL_ADAPTERS=update-go,bump-go,docs-only`
 
 ## Environment Variable Configuration
 
