@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.27.1
-	github.com/rios0rios0/gitforge v0.7.1
+	github.com/rios0rios0/gitforge v0.7.2
 	github.com/rios0rios0/langforge v0.4.0
 	github.com/rios0rios0/testkit v0.1.1
 	github.com/sashabaranov/go-openai v1.41.2
