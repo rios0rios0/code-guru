@@ -16,6 +16,8 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-03-30
+
 ### Changed
 
 - changed the Go module dependencies to their latest versions
@@ -30,10 +32,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Added
 
-- added version ldflags injection at build time via `make build` and `make install` targets
 - added `--version` flag to the CLI using Cobra's built-in version support
-- added `update-go`, `update-node`, `update-python` trivial adapters for dependency update PRs
 - added `.autobump.yaml` validation for bump-* trivial adapters to verify version files are present
+- added `update-go`, `update-node`, `update-python` trivial adapters for dependency update PRs
+- added version ldflags injection at build time via `make build` and `make install` targets
 
 ### Changed
 
@@ -61,31 +63,31 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Changed
 
-- changed AI system prompt to include verdict instructions and JSON schema
 - changed `ReviewCommand` to accept a `DetectorRegistry` for trivial PR detection
 - changed `ReviewController` to fall back to environment variables when no config file is found
 - changed `ReviewResult` entity to include a `Verdict` field for merge eligibility decisions
+- changed AI system prompt to include verdict instructions and JSON schema
 
 ## [0.1.0] - 2026-03-12
 
 ### Added
 
-- added Claude Code CLI as an AI backend (alongside OpenAI) with configurable `max_turns`
-- added GitHub Actions workflow for CI/CD pipeline
-- added YAML `frontmatter` stripping from rule files to extract `paths` globs
 - added `DiscoverCommand` in domain layer to separate business logic from controller
-- added `SplitUnifiedDiff` utility for splitting multi-file diffs into per-file chunks
 - added `end_line` and `suggestion` fields to `ReviewComment` for multi-line and code suggestion support
+- added `SplitUnifiedDiff` utility for splitting multi-file diffs into per-file chunks
+- added Claude Code CLI as an AI backend (alongside OpenAI) with configurable `max_turns`
 - added diff fallback in review command for providers without per-file patches (e.g. Azure DevOps)
+- added GitHub Actions workflow for CI/CD pipeline
 - added glob-based rule matching for precise language/file filtering
 - added unit tests for prompt builder, file classifier, URL parser, diff splitter, rules repository, and response parsing
+- added YAML `frontmatter` stripping from rule files to extract `paths` globs
 
 ### Changed
 
+- changed `DiscoverController` to delegate to `DiscoverCommand` following Clean Architecture
 - changed Claude CLI backend to pass user prompt via stdin instead of CLI argument to avoid OS argument length limits
 - changed Claude CLI response parsing to handle JSON wrapped in Markdown code fences
 - changed OpenAI backend to enforce JSON response format via `ResponseFormat` parameter
-- changed `DiscoverController` to delegate to `DiscoverCommand` following Clean Architecture
 - changed system prompt to include strict JSON-only instructions, line number rules, and severity definitions
 - changed the Go version to `1.26.1` and updated all module dependencies
 - replaced inline `parseGitHubURL` and `parseAzureDevOpsURL` PR URL parsing with `gitforge`'s `ParsePullRequestURL` to consolidate duplicated code
