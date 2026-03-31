@@ -26,6 +26,7 @@ var serviceTypeToProvider = map[globalEntities.ServiceType]string{
 	globalEntities.AZUREDEVOPS: "azuredevops",
 	globalEntities.BITBUCKET:   "",
 	globalEntities.CODECOMMIT:  "",
+	globalEntities.CODEBERG:    "",
 }
 
 // ParsePullRequestURL extracts provider, org, repo, and PR ID from a pull request URL.
