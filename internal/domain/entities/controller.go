@@ -15,3 +15,9 @@ type ControllerBind struct {
 	Short string
 	Long  string
 }
+
+// FlagBinder is an optional interface that controllers can implement
+// to register command-specific flags on their Cobra subcommand.
+type FlagBinder interface {
+	BindFlags(cmd *cobra.Command)
+}

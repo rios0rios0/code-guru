@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rios0rios0/codeguru/internal"
+	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers"
 )
 
@@ -63,6 +64,9 @@ func addSubcommands(rootCmd *cobra.Command, appContext *internal.AppInternal) {
 			Run: func(command *cobra.Command, arguments []string) {
 				ctrl.Execute(command, arguments)
 			},
+		}
+		if binder, ok := ctrl.(entities.FlagBinder); ok {
+			binder.BindFlags(subCmd)
 		}
 		rootCmd.AddCommand(subCmd)
 	}
