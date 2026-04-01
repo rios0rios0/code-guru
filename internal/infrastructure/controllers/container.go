@@ -16,6 +16,12 @@ func RegisterProviders(container *dig.Container) error {
 	if err := container.Provide(NewDiscoverController); err != nil {
 		return err
 	}
+	if err := container.Provide(NewSelfUpdateController); err != nil {
+		return err
+	}
+	if err := container.Provide(NewVersionController); err != nil {
+		return err
+	}
 	if err := container.Provide(NewControllers); err != nil {
 		return err
 	}
@@ -28,10 +34,14 @@ func NewControllers(
 	reviewController *ReviewController,
 	reviewAllController *ReviewAllController,
 	discoverController *DiscoverController,
+	selfUpdateController *SelfUpdateController,
+	versionController *VersionController,
 ) *[]entities.Controller {
 	return &[]entities.Controller{
 		reviewController,
 		reviewAllController,
 		discoverController,
+		selfUpdateController,
+		versionController,
 	}
 }

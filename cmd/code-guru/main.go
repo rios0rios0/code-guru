@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rios0rios0/codeguru/internal"
+	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers"
 )
 
@@ -64,6 +65,9 @@ func addSubcommands(rootCmd *cobra.Command, appContext *internal.AppInternal) {
 				ctrl.Execute(command, arguments)
 			},
 		}
+		if bind.Use == "self-update" {
+			subCmd.Flags().Bool("force", false, "Skip confirmation prompts")
+		}
 		rootCmd.AddCommand(subCmd)
 	}
 }
@@ -77,6 +81,8 @@ func main() {
 	if os.Getenv("DEBUG") == "true" {
 		logger.SetLevel(logger.DebugLevel)
 	}
+
+	commands.CodeGuruVersion = version
 
 	reviewController := injectReviewController()
 	cobraRoot := buildRootCommand(reviewController)
