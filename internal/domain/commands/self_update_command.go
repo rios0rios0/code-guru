@@ -1,17 +1,18 @@
 package commands
 
-import "github.com/rios0rios0/cliforge/selfupdate"
+import "github.com/rios0rios0/codeguru/internal/domain/repositories"
 
 // SelfUpdateCommand runs a self-update of the Code Guru CLI binary.
-type SelfUpdateCommand struct{}
+type SelfUpdateCommand struct {
+	repository repositories.SelfUpdaterRepository
+}
 
 // NewSelfUpdateCommand creates a new SelfUpdateCommand instance.
-func NewSelfUpdateCommand() *SelfUpdateCommand {
-	return &SelfUpdateCommand{}
+func NewSelfUpdateCommand(repository repositories.SelfUpdaterRepository) *SelfUpdateCommand {
+	return &SelfUpdateCommand{repository: repository}
 }
 
 // Execute performs the self-update, honoring dryRun and force flags.
 func (c *SelfUpdateCommand) Execute(dryRun, force bool) error {
-	cmd := selfupdate.NewSelfUpdateCommand("rios0rios0", "code-guru", "code-guru", CodeGuruVersion)
-	return cmd.Execute(dryRun, force)
+	return c.repository.Update(dryRun, force)
 }

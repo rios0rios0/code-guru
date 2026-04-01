@@ -1,12 +1,14 @@
 package repositories
 
 import (
+	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 	anthropicRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/anthropic"
 	claudeRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/claude"
 	openaiRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/openai"
 	rulesRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/rules"
+	selfupdateRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/selfupdate"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
 	"github.com/rios0rios0/gitforge/pkg/providers/infrastructure/azuredevops"
 	"github.com/rios0rios0/gitforge/pkg/providers/infrastructure/github"
@@ -39,6 +41,15 @@ func RegisterProviders(container *dig.Container) error {
 	// register a default empty trivial detector registry (overridden at controller level when enabled)
 	if err := container.Provide(func() repositories.TrivialDetectorRegistry {
 		return trivial.NewDetectorRegistry(nil)
+	}); err != nil {
+		return err
+	}
+
+	// register the self-updater repository
+	if err := container.Provide(func() repositories.SelfUpdaterRepository {
+		return selfupdateRepo.NewCliforgeSelfUpdaterRepository(
+			"rios0rios0", "code-guru", "code-guru", commands.CodeGuruVersion,
+		)
 	}); err != nil {
 		return err
 	}
