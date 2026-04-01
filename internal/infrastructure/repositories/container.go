@@ -7,6 +7,7 @@ import (
 	claudeRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/claude"
 	openaiRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/openai"
 	rulesRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/rules"
+	selfupdateRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/selfupdate"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
 	"github.com/rios0rios0/gitforge/pkg/providers/infrastructure/azuredevops"
 	"github.com/rios0rios0/gitforge/pkg/providers/infrastructure/github"
@@ -39,6 +40,15 @@ func RegisterProviders(container *dig.Container) error {
 	// register a default empty trivial detector registry (overridden at controller level when enabled)
 	if err := container.Provide(func() repositories.TrivialDetectorRegistry {
 		return trivial.NewDetectorRegistry(nil)
+	}); err != nil {
+		return err
+	}
+
+	// register the self-updater repository
+	if err := container.Provide(func(v entities.AppVersion) repositories.SelfUpdaterRepository {
+		return selfupdateRepo.NewCliforgeSelfUpdaterRepository(
+			"rios0rios0", "code-guru", "code-guru", string(v),
+		)
 	}); err != nil {
 		return err
 	}
