@@ -1,7 +1,6 @@
 package repositories
 
 import (
-	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 	anthropicRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/anthropic"
@@ -46,9 +45,9 @@ func RegisterProviders(container *dig.Container) error {
 	}
 
 	// register the self-updater repository
-	if err := container.Provide(func() repositories.SelfUpdaterRepository {
+	if err := container.Provide(func(v entities.AppVersion) repositories.SelfUpdaterRepository {
 		return selfupdateRepo.NewCliforgeSelfUpdaterRepository(
-			"rios0rios0", "code-guru", "code-guru", commands.CodeGuruVersion,
+			"rios0rios0", "code-guru", "code-guru", string(v),
 		)
 	}); err != nil {
 		return err

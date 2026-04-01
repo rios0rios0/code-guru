@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rios0rios0/codeguru/internal"
-	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers"
 )
@@ -82,8 +81,6 @@ func main() {
 	if os.Getenv("DEBUG") == "true" {
 		logger.SetLevel(logger.DebugLevel)
 	}
-
-	commands.CodeGuruVersion = version
 
 	reviewController := injectReviewController()
 	cobraRoot := buildRootCommand(reviewController)
