@@ -7,15 +7,18 @@ import (
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 )
 
+// VersionController handles the "version" subcommand.
 type VersionController struct {
 	command commands.Version
 }
 
+// NewVersionController creates a new VersionController.
 func NewVersionController(command commands.Version) *VersionController {
 	return &VersionController{command: command}
 }
 
-func (it *VersionController) GetBind() entities.ControllerBind {
+// GetBind returns the Cobra command metadata.
+func (c *VersionController) GetBind() entities.ControllerBind {
 	return entities.ControllerBind{
 		Use:   "version",
 		Short: "Show code-guru version",
@@ -23,6 +26,7 @@ func (it *VersionController) GetBind() entities.ControllerBind {
 	}
 }
 
-func (it *VersionController) Execute(_ *cobra.Command, _ []string) {
-	it.command.Execute()
+// Execute prints the current version.
+func (c *VersionController) Execute(_ *cobra.Command, _ []string) {
+	c.command.Execute()
 }
