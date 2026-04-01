@@ -8,6 +8,7 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal"
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
+	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers"
 )
 
@@ -65,8 +66,8 @@ func addSubcommands(rootCmd *cobra.Command, appContext *internal.AppInternal) {
 				ctrl.Execute(command, arguments)
 			},
 		}
-		if bind.Use == "self-update" {
-			subCmd.Flags().Bool("force", false, "Skip confirmation prompts")
+		if binder, ok := ctrl.(entities.FlagBinder); ok {
+			binder.BindFlags(subCmd)
 		}
 		rootCmd.AddCommand(subCmd)
 	}
