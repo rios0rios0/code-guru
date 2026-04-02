@@ -9,8 +9,8 @@ github.com/ProtonMail/go-crypto v1.4.1 h1:9RfcZHqEQUvP8RzecWEUafnZVtEvrBVL9BiF67
 github.com/ProtonMail/go-crypto v1.4.1/go.mod h1:e1OaTyu5SYVrO9gKOEhTc+5UcXtTUa+P3uLudwcgPqo=
 github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be h1:9AeTilPcZAjCFIImctFaOjnTIavg87rW78vTPkQqLI8=
 github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be/go.mod h1:ySMOLuWl6zY27l47sB3qLNK6tF2fkHG55UZxx8oIVo4=
-github.com/anthropics/anthropic-sdk-go v1.28.0 h1:sdDy9ZWoNnTy1+ydSThIm+lB7IDFoC8FwF/r1lDMlPA=
-github.com/anthropics/anthropic-sdk-go v1.28.0/go.mod h1:dSIO7kSrOI7MA4fE6RRVaw8tyWP7HNQU5/H/KS4cax8=
+github.com/anthropics/anthropic-sdk-go v1.29.0 h1:7h1ZyRflhtxyuFkdwkVuJ1LdFAYdmizvgg0gd1uvOfI=
+github.com/anthropics/anthropic-sdk-go v1.29.0/go.mod h1:dSIO7kSrOI7MA4fE6RRVaw8tyWP7HNQU5/H/KS4cax8=
 github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5 h1:0CwZNZbxp69SHPdPJAN/hZIm0C4OItdklCFmMRWYpio=
 github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5/go.mod h1:wHh0iHkYZB8zMSxRWpUBQtwG5a7fFgvEO+odwuTv2gs=
 github.com/cloudflare/circl v1.6.3 h1:9GPOhQGF9MCYUeXyMYlqTR6a5gTrgR/fBLXvUgtVcg8=
@@ -71,8 +71,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/rios0rios0/cliforge v0.1.0 h1:ODRMSp/KiZFH8ODGlWNpqW8ShtXFSaqvYegTWWlYk78=
 github.com/rios0rios0/cliforge v0.1.0/go.mod h1:MmsM3gQkPJiB85tXdcoNfqQIklej8ZDpUN8vWKJzc6w=
-github.com/rios0rios0/gitforge v0.9.0 h1:UULLp+ftO9I6ZmHvihcg9KeSQy5+vsWigQFTupXpHZ8=
-github.com/rios0rios0/gitforge v0.9.0/go.mod h1:0CsTuMUydLjOVAgAV2ZzqLqNPdQ56/m3yCwZk+Ucwp0=
+github.com/rios0rios0/gitforge v0.9.1 h1:HykXcbckOwiMhOKvtJ1ICEry9pEq8/2gMIJcjqjIr6A=
+github.com/rios0rios0/gitforge v0.9.1/go.mod h1:1ts/2K9iVaMYBk4b/XWPN5vfjt7A6ktWxXSgm0ox2FU=
 github.com/rios0rios0/langforge v0.5.0 h1:mRXfvgna9PGc4S2iYBztmYmwTW9o8MHj0Ne1W8pAy80=
 github.com/rios0rios0/langforge v0.5.0/go.mod h1:p7jExZiPGkNmhst2/niCxXw/QofRMW+hp+MA2pn0eYQ=
 github.com/rios0rios0/testkit v0.1.1 h1:EIMz9S2fo+19ESdQ7FL8bUap0Xf7Z2zlbgV6gnuHtd4=
