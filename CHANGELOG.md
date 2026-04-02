@@ -16,16 +16,17 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-04-02
+
 ### Added
 
-- added `version` subcommand to display the current CLI version
-- added `self-update` subcommand to update the CLI binary from GitHub releases
 - added `FlagBinder` optional interface for controllers to register command-specific flags
+- added `self-update` subcommand to update the CLI binary from GitHub releases
 - added `SelfUpdaterRepository` interface and `CliforgeSelfUpdaterRepository` implementation following Clean Architecture
+- added `version` subcommand to display the current CLI version
 
 ### Changed
 
-- changed the Go module dependencies to their latest versions
 - changed the Go module dependencies to their latest versions
 
 ## [1.0.3] - 2026-03-31
