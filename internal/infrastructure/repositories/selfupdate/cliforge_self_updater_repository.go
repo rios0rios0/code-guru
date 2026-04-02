@@ -1,6 +1,6 @@
 package selfupdate
 
-import "github.com/rios0rios0/cliforge/selfupdate"
+import "github.com/rios0rios0/cliforge/pkg/selfupdate"
 
 // CliforgeSelfUpdaterRepository implements SelfUpdaterRepository using the cliforge selfupdate library.
 type CliforgeSelfUpdaterRepository struct {
@@ -22,6 +22,6 @@ func NewCliforgeSelfUpdaterRepository(owner, repo, binaryName, currentVersion st
 
 // Update checks for a newer version and applies the update.
 func (r *CliforgeSelfUpdaterRepository) Update(dryRun, force bool) error {
-	cmd := selfupdate.NewSelfUpdateCommand(r.owner, r.repo, r.binaryName, r.currentVersion)
+	cmd := selfupdate.NewCommand(r.owner, r.repo, r.binaryName, r.currentVersion)
 	return cmd.Execute(dryRun, force)
 }
