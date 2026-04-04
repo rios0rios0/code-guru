@@ -2,10 +2,10 @@ module github.com/rios0rios0/codeguru
 
 go 1.26.1
 
-require github.com/rios0rios0/cliforge v0.1.1-0.20260402173400-cd7225c728db
+require github.com/rios0rios0/cliforge v0.2.0
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.29.0
+	github.com/anthropics/anthropic-sdk-go v1.30.0
 	github.com/rios0rios0/gitforge v0.9.1
 	github.com/rios0rios0/langforge v0.5.0
 	github.com/rios0rios0/testkit v0.1.1
