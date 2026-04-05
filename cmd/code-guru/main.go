@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 
+	"github.com/rios0rios0/cliforge/pkg/selfupdate"
 	logger "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
@@ -87,6 +88,8 @@ func main() {
 
 	appContext := injectAppContext()
 	addSubcommands(cobraRoot, appContext)
+
+	selfupdate.NewCommand("rios0rios0", "code-guru", "code-guru", version).CheckForUpdates()
 
 	if err := cobraRoot.Execute(); err != nil {
 		logger.Fatalf("error executing 'code-guru': %s", err)

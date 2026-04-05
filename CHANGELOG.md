@@ -18,6 +18,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Added
 
+- added automatic version check on CLI startup using `CheckForUpdates`
 - added `version` subcommand to display the current CLI version
 - added `self-update` subcommand to update the CLI binary from GitHub releases
 - added `FlagBinder` optional interface for controllers to register command-specific flags
