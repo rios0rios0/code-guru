@@ -3,12 +3,12 @@ package main
 import (
 	"os"
 
-	"github.com/rios0rios0/cliforge/pkg/selfupdate"
 	logger "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"github.com/rios0rios0/codeguru/internal"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
+	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers"
 )
 
@@ -18,7 +18,23 @@ import (
 
 var version = "dev"
 
-func buildRootCommand(reviewController *controllers.ReviewController) *cobra.Command {
+// runUpdateCheck queries the self-updater for a newer version, skipping local dev
+// builds and the self-update / version subcommands to avoid noisy/meaningless checks.
+func runUpdateCheck(command *cobra.Command, selfUpdater repositories.SelfUpdaterRepository) {
+	if version == "dev" {
+		return
+	}
+	switch command.Name() {
+	case "self-update", "version":
+		return
+	}
+	selfUpdater.CheckForUpdates()
+}
+
+func buildRootCommand(
+	reviewController *controllers.ReviewController,
+	selfUpdater repositories.SelfUpdaterRepository,
+) *cobra.Command {
 	//nolint:exhaustruct // minimal Command initialization with required fields only
 	cmd := &cobra.Command{
 		Use:     "code-guru [pr-url]",
@@ -35,6 +51,9 @@ Usage modes:
   code-guru review-all     Review all open PRs across configured providers
   code-guru discover       List open PRs without reviewing them`,
 		Args: cobra.MaximumNArgs(1),
+		PersistentPreRun: func(command *cobra.Command, _ []string) {
+			runUpdateCheck(command, selfUpdater)
+		},
 		RunE: func(command *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return command.Help()
@@ -84,12 +103,11 @@ func main() {
 	}
 
 	reviewController := injectReviewController()
-	cobraRoot := buildRootCommand(reviewController)
+	selfUpdater := injectSelfUpdater()
+	cobraRoot := buildRootCommand(reviewController, selfUpdater)
 
 	appContext := injectAppContext()
 	addSubcommands(cobraRoot, appContext)
-
-	selfupdate.NewCommand("rios0rios0", "code-guru", "code-guru", version).CheckForUpdates()
 
 	if err := cobraRoot.Execute(); err != nil {
 		logger.Fatalf("error executing 'code-guru': %s", err)

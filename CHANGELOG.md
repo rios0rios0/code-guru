@@ -18,7 +18,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Added
 
-- added automatic version check on CLI startup using `CheckForUpdates`
+- added automatic version check on CLI startup using `CheckForUpdates()`
 
 ### Changed
 
