@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/rios0rios0/codeguru/internal"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
+	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers"
 	"go.uber.org/dig"
 )
@@ -49,4 +50,22 @@ func injectReviewController() *controllers.ReviewController {
 	}
 
 	return reviewController
+}
+
+func injectSelfUpdater() repositories.SelfUpdaterRepository {
+	container := dig.New()
+	provideVersion(container)
+
+	if err := internal.RegisterProviders(container); err != nil {
+		panic(err)
+	}
+
+	var selfUpdater repositories.SelfUpdaterRepository
+	if err := container.Invoke(func(r repositories.SelfUpdaterRepository) {
+		selfUpdater = r
+	}); err != nil {
+		panic(err)
+	}
+
+	return selfUpdater
 }
