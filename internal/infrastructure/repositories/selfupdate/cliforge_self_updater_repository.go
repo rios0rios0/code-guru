@@ -25,3 +25,8 @@ func (r *CliforgeSelfUpdaterRepository) Update(dryRun, force bool) error {
 	cmd := cliforgeSelfupdate.NewCommand(r.owner, r.repo, r.binaryName, r.currentVersion)
 	return cmd.Execute(dryRun, force)
 }
+
+// CheckForUpdates prints a notice when a newer version is available, without applying it.
+func (r *CliforgeSelfUpdaterRepository) CheckForUpdates() {
+	cliforgeSelfupdate.NewCommand(r.owner, r.repo, r.binaryName, r.currentVersion).CheckForUpdates()
+}
