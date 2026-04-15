@@ -22,6 +22,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 - changed the Go version to `1.26.2` and updated all module dependencies
 
+### Fixed
+
+- fixed `exhaustive` lint failure by adding `LanguageRuby` to the `languageToRuleCategory` map in `file_classifier.go` after the `langforge` upgrade introduced the new language constant
+
 ## [1.2.0] - 2026-04-14
 
 ### Added
