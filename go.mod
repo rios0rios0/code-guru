@@ -2,13 +2,13 @@ module github.com/rios0rios0/codeguru
 
 go 1.26.2
 
-require github.com/rios0rios0/cliforge v0.3.0
+require github.com/rios0rios0/cliforge v0.3.1
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.36.0
-	github.com/rios0rios0/gitforge v0.9.1
-	github.com/rios0rios0/langforge v0.6.0
-	github.com/rios0rios0/testkit v0.1.1
+	github.com/rios0rios0/gitforge v0.9.2
+	github.com/rios0rios0/langforge v0.6.1
+	github.com/rios0rios0/testkit v0.1.2
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
