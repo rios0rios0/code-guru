@@ -2,12 +2,12 @@ module github.com/rios0rios0/codeguru
 
 go 1.26.2
 
-require github.com/rios0rios0/cliforge v0.3.1
+require github.com/rios0rios0/cliforge v0.3.2
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.36.0
-	github.com/rios0rios0/gitforge v0.9.2
-	github.com/rios0rios0/langforge v0.6.1
+	github.com/anthropics/anthropic-sdk-go v1.37.0
+	github.com/rios0rios0/gitforge v0.9.3
+	github.com/rios0rios0/langforge v0.6.2
 	github.com/rios0rios0/testkit v0.1.2
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/sirupsen/logrus v1.9.4
@@ -28,7 +28,7 @@ require (
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.8.0 // indirect
-	github.com/go-git/go-git/v5 v5.17.2 // indirect
+	github.com/go-git/go-git/v5 v5.18.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/go-github/v66 v66.0.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
