@@ -6,7 +6,7 @@ require github.com/rios0rios0/cliforge v0.3.2
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.37.0
-	github.com/rios0rios0/gitforge v0.9.3
+	github.com/rios0rios0/gitforge v0.9.4
 	github.com/rios0rios0/langforge v0.6.2
 	github.com/rios0rios0/testkit v0.1.2
 	github.com/sashabaranov/go-openai v1.41.2
