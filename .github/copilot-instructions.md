@@ -3,7 +3,7 @@
 ## Project Overview
 
 Code Guru is an AI-powered CLI tool written in Go that automatically reviews pull requests.
-It supports GitHub and Azure DevOps as Git hosting providers, and Claude Code CLI or OpenAI Chat Completions API as AI backends.
+It supports GitHub and Azure DevOps as Git hosting providers, and Anthropic Messages API, Claude Code CLI, or OpenAI Chat Completions API as AI backends.
 Review rules are loaded from configurable Markdown files with optional YAML frontmatter for file-glob filtering.
 
 ## Architecture
@@ -13,12 +13,13 @@ The project follows **Clean Architecture** with strict layer separation:
 - **`cmd/code-guru/`** — Application entry point. Builds the DI container, wires Cobra commands, and starts the CLI.
 - **`internal/`** — Internal application wiring (`app.go`, `container.go`) that aggregates controllers.
 - **`internal/domain/`** — Core business logic. Contains entity definitions, repository interfaces, and command implementations. This layer has no infrastructure dependencies.
-  - `entities/` — Domain models (`FileDiff`, `ReviewComment`, `ReviewResult`, `ReviewRequest`, `Rule`, `Settings`, `Controller` interface).
-  - `repositories/` — Abstract interfaces (`AIReviewerRepository`, `RulesRepository`).
-  - `commands/` — Use-case implementations (`ReviewCommand`, `ReviewAllCommand`, `DiscoverCommand`).
+  - `entities/` — Domain models (`FileDiff`, `ReviewComment`, `ReviewResult`, `ReviewRequest`, `Rule`, `Settings`, `AuthToken`, `AppVersion`, `Controller`/`FlagBinder` interfaces).
+  - `repositories/` — Abstract interfaces (`AIReviewerRepository`, `RulesRepository`, `TrivialDetector`/`TrivialDetectorRegistry`, `TokenRepository`, `SelfUpdaterRepository`).
+  - `commands/` — Use-case implementations (`ReviewCommand`, `ReviewAllCommand`, `DiscoverCommand`, `AuthCommand`, `SelfUpdateCommand`, `VersionCommand`).
 - **`internal/infrastructure/`** — Concrete implementations of domain interfaces.
-  - `repositories/` — AI backend implementations (`openai/`, `claude/`) and rule loading (`rules/`).
-  - `controllers/` — Cobra CLI controllers that bridge CLI input to domain commands.
+  - `repositories/` — AI backend implementations (`anthropic/`, `claude/`, `openai/`), rule loading (`rules/`), trivial PR detectors (`trivial/`), OAuth token storage (`auth/`), self-updater (`selfupdate/`). A `container.go` at this level provides `AIReviewerFactory` and `RulesRepositoryFactory` for settings-driven backend selection.
+  - `controllers/` — Cobra CLI controllers (review, review-all, discover, auth, serve, self-update, version) that bridge CLI input to domain commands.
+  - `controllers/webhooks/` — HTTP webhook dispatcher for GitHub App and Azure DevOps events (WIP).
 - **`internal/support/`** — Shared utility functions (URL parsing, diff splitting, file classification, prompt building).
 - **`test/domain/doubles/`** — Test doubles (stubs) for domain repository interfaces.
 - **`configs/`** — Example YAML configuration files.
@@ -71,11 +72,16 @@ Token fields support three resolution strategies in order: **environment variabl
 Key config sections:
 
 - `providers[]` — list of Git hosting providers (`type: github|azuredevops`, `token`, `organizations[]`).
-- `ai.backend` — required; `openai` or `claude`.
+- `ai.backend` — required; `openai`, `claude`, or `anthropic`.
 - `ai.openai` — `api_key`, `model` (e.g. `gpt-4o`). `api_key` is required when backend is `openai`.
+- `ai.anthropic` — `api_key`, `model` (default `claude-sonnet-4-20250514`). `api_key` is required when backend is `anthropic`.
 - `ai.claude` — `binary_path` (default `claude`), `model` (default `sonnet`), `max_turns` (default `1`).
 - `rules.path` — directory containing Markdown rule files (supports `${VAR}` expansion).
 - `rules.categories` — optional allow-list of rule categories to load; empty means load all.
+- `server.port` — webhook server port (default `8080`).
+- `server.webhook_secret` — HMAC secret for verifying webhook payloads.
+- `github_app.app_id` — GitHub App ID for webhook authentication.
+- `github_app.private_key` — GitHub App private key.
 
 Validate required fields in `validateSettings`.
 
@@ -98,13 +104,17 @@ paths:
 
 ## CLI Usage
 
-Three subcommands are available:
+Available subcommands:
 
 | Command        | Description                                              |
 |----------------|----------------------------------------------------------|
 | `review <url>` | Review a single PR by URL (GitHub or Azure DevOps)       |
 | `review-all`   | Batch-review all open PRs across configured providers    |
 | `discover`     | Discover repos and list open PRs without posting reviews |
+| `auth`         | OAuth login/logout/status (login flow WIP)               |
+| `serve`        | Start webhook server for automatic PR review             |
+| `self-update`  | Update the CLI binary to the latest version              |
+| `version`      | Print the current CLI version                            |
 
 Common flags (all commands):
 
@@ -125,7 +135,11 @@ Common flags (all commands):
 
 Only add new dependencies when strictly necessary. Prefer the standard library. Current key dependencies:
 
+- `github.com/anthropics/anthropic-sdk-go` — Anthropic Messages API client
+- `github.com/rios0rios0/cliforge` — CLI utilities and self-update support
 - `github.com/rios0rios0/gitforge` — Multi-provider Git abstraction (consumed as a published pseudo-version; no local `replace` directive)
+- `github.com/rios0rios0/langforge` — Language classification by file extension
+- `github.com/rios0rios0/testkit` — Test builder base utilities
 - `github.com/sashabaranov/go-openai` — OpenAI API client
 - `github.com/sirupsen/logrus` — Structured logging
 - `github.com/spf13/cobra` — CLI framework
