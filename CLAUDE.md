@@ -29,18 +29,22 @@ Clean Architecture with domain/infrastructure separation, using Uber DIG for dep
 **Trivial PR flow:** CLI input → Controller → Command → DetectorRegistry (no AI) → Post approval/rejection comment via gitforge
 
 ### Domain Layer (`internal/domain/`)
-- `entities/` — Framework-agnostic domain models: `Settings`, `ReviewRequest`, `ReviewResult` (with `Verdict`), `ReviewComment`, `FileDiff`, `Rule`, `Controller` interface
-- `repositories/` — Interfaces only: `AIReviewerRepository` (AI engine contract), `RulesRepository` (rule loading contract), `TrivialDetector` + `TrivialDetectorRegistry` (trivial PR detection contracts with `DetectionContext`/`DetectionResult`)
-- `commands/` — Business logic: `ReviewCommand` (single PR with trivial detection), `ReviewAllCommand` (batch), `DiscoverCommand` (list PRs)
+- `entities/` — Framework-agnostic domain models: `Settings` (with `ServerConfig`, `GitHubAppConfig`), `ReviewRequest`, `ReviewResult`, `ReviewComment`, `FileDiff`, `Rule`, `AuthToken`, `AppVersion`, `Controller`/`FlagBinder` interfaces
+- `repositories/` — Interfaces only: `AIReviewerRepository` (AI engine contract), `RulesRepository` (rule loading contract), `TrivialDetector` + `TrivialDetectorRegistry` (trivial PR detection with `DetectionContext`/`DetectionResult`/`FileContentFetcher`), `TokenRepository` (OAuth token storage), `SelfUpdaterRepository` (binary self-update)
+- `commands/` — Business logic: `ReviewCommand` (single PR with trivial detection), `ReviewAllCommand` (batch), `DiscoverCommand` (list PRs), `AuthCommand` (OAuth login/logout/status), `SelfUpdateCommand`, `VersionCommand`
 
 ### Infrastructure Layer (`internal/infrastructure/`)
-- `controllers/` — Cobra CLI controllers implementing `entities.Controller`
+- `controllers/` — Cobra CLI controllers implementing `entities.Controller`: review, review-all, discover, auth, serve, self-update, version
+- `controllers/webhooks/` — HTTP webhook dispatcher for GitHub App and Azure DevOps Service Hook events (WIP)
 - `repositories/anthropic/` — Anthropic Messages API backend (via official Go SDK)
 - `repositories/claude/` — Claude Code CLI backend (invokes `claude --print`)
 - `repositories/openai/` — OpenAI Chat Completions API backend
 - `repositories/rules/` — Loads Markdown rule files from filesystem with YAML frontmatter glob filtering
 - `repositories/trivial/` — Built-in trivial PR detectors: `update-go`, `update-node`, `update-python` (dependency updates), `bump-go`, `bump-node`, `bump-python` (version bumps with `.autobump.yaml` validation), `docs-only`
 - `repositories/trivial/autobump/` — Parser for `.autobump.yaml` config files used by bump detectors
+- `repositories/auth/` — Filesystem-based OAuth token storage
+- `repositories/selfupdate/` — CLI binary self-updater via cliforge
+- `repositories/container.go` — `AIReviewerFactory` and `RulesRepositoryFactory` for settings-driven backend selection
 
 ### Support Package (`internal/support/`)
 Shared utilities: `diff_splitter.go` (parse unified diffs), `file_classifier.go` (detect language via langforge), `url_parser.go` (parse PR URLs via gitforge), `prompt_builder.go` (build AI system/user prompts), `response_parser.go` (shared JSON response parsing for all AI backends)
@@ -60,6 +64,7 @@ Each layer has a `container.go` with `RegisterProviders(*dig.Container) error`. 
 ## Key Dependencies
 
 - `github.com/anthropics/anthropic-sdk-go` — Anthropic Messages API client
+- `github.com/rios0rios0/cliforge` — CLI utilities and self-update support
 - `github.com/rios0rios0/gitforge` — Multi-provider Git abstraction (GitHub, Azure DevOps)
 - `github.com/rios0rios0/langforge` — Language classification by file extension
 - `github.com/rios0rios0/testkit` — Test builder base utilities
@@ -70,5 +75,7 @@ Each layer has a `container.go` with `RegisterProviders(*dig.Container) error`. 
 ## Configuration
 
 YAML config file (`.code-guru.yaml`) searched in: `.`, `.config`, `configs`, `~`, `~/.config`. Override with `-c` flag. Token fields support `${ENV_VAR}` expansion, file path resolution, and inline values.
+
+Key config sections: `providers[]`, `ai` (backend + openai/claude/anthropic sub-configs), `rules`, `trivial`, `server` (port, webhook_secret for `serve` command), `github_app` (app_id, private_key for GitHub App auth).
 
 For CI/CD environments without a config file, all settings can be provided via `CODE_GURU_*` environment variables (see README for full list).
