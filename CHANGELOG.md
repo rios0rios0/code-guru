@@ -16,10 +16,12 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-04-24
+
 ### Changed
 
-- changed the Go module dependencies to their latest versions
 - changed the Anthropic backend to call the Messages API over HTTP directly instead of using `anthropic-sdk-go`
+- changed the Go module dependencies to their latest versions
 
 ### Removed
 
