@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	logger "github.com/sirupsen/logrus"
@@ -24,26 +25,45 @@ const (
 	apiVersion       = "2023-06-01"
 	requestTimeout   = 120 * time.Second
 	contentTypeValue = "application/json"
+	maxResponseBytes = 10 * 1024 * 1024
+	errorBodyPreview = 512
+	textBlockType    = "text"
 )
+
+// Option configures an AIReviewerRepository.
+type Option func(*AIReviewerRepository)
+
+// WithEndpoint overrides the default Anthropic Messages API endpoint. Intended for tests.
+func WithEndpoint(url string) Option {
+	return func(r *AIReviewerRepository) {
+		r.endpoint = url
+	}
+}
 
 // AIReviewerRepository implements the AI reviewer using the Anthropic Messages API.
 type AIReviewerRepository struct {
 	httpClient *http.Client
 	apiKey     string
 	model      string
+	endpoint   string
 }
 
 // NewAIReviewerRepository creates a new Anthropic AI reviewer repository.
-func NewAIReviewerRepository(apiKey string, model string) *AIReviewerRepository {
+func NewAIReviewerRepository(apiKey string, model string, opts ...Option) *AIReviewerRepository {
 	if model == "" {
 		model = defaultModel
 	}
 
-	return &AIReviewerRepository{
+	repo := &AIReviewerRepository{
 		httpClient: &http.Client{Timeout: requestTimeout},
 		apiKey:     apiKey,
 		model:      model,
+		endpoint:   apiEndpoint,
 	}
+	for _, opt := range opts {
+		opt(repo)
+	}
+	return repo
 }
 
 // Name returns the backend identifier.
@@ -106,7 +126,7 @@ func (r *AIReviewerRepository) ReviewDiff(
 		return nil, fmt.Errorf("anthropic request marshaling failed: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiEndpoint, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, r.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("anthropic request creation failed: %w", err)
 	}
@@ -120,7 +140,7 @@ func (r *AIReviewerRepository) ReviewDiff(
 	}
 	defer httpResp.Body.Close()
 
-	respBody, err := io.ReadAll(httpResp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(httpResp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("anthropic response read failed: %w", err)
 	}
@@ -130,7 +150,11 @@ func (r *AIReviewerRepository) ReviewDiff(
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error.Message != "" {
 			return nil, fmt.Errorf("anthropic API error (%s): %s", apiErr.Error.Type, apiErr.Error.Message)
 		}
-		return nil, fmt.Errorf("anthropic API returned status %d: %s", httpResp.StatusCode, string(respBody))
+		return nil, fmt.Errorf(
+			"anthropic API returned status %d: %s",
+			httpResp.StatusCode,
+			truncate(string(respBody), errorBodyPreview),
+		)
 	}
 
 	var message responsePayload
@@ -138,9 +162,27 @@ func (r *AIReviewerRepository) ReviewDiff(
 		return nil, fmt.Errorf("anthropic response unmarshaling failed: %w", unmarshalErr)
 	}
 
-	if len(message.Content) == 0 {
-		return nil, errors.New("anthropic returned no content")
+	text := concatTextBlocks(message.Content)
+	if text == "" {
+		return nil, errors.New("anthropic returned no text content")
 	}
 
-	return support.ParseReviewResponse(message.Content[0].Text)
+	return support.ParseReviewResponse(text)
+}
+
+func concatTextBlocks(blocks []contentBlock) string {
+	var builder strings.Builder
+	for _, block := range blocks {
+		if block.Type == textBlockType {
+			builder.WriteString(block.Text)
+		}
+	}
+	return builder.String()
+}
+
+func truncate(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	return s[:limit] + "... (truncated)"
 }
