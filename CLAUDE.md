@@ -36,7 +36,7 @@ Clean Architecture with domain/infrastructure separation, using Uber DIG for dep
 ### Infrastructure Layer (`internal/infrastructure/`)
 - `controllers/` — Cobra CLI controllers implementing `entities.Controller`: review, review-all, discover, auth, serve, self-update, version
 - `controllers/webhooks/` — HTTP webhook dispatcher for GitHub App and Azure DevOps Service Hook events (WIP)
-- `repositories/anthropic/` — Anthropic Messages API backend (via official Go SDK)
+- `repositories/anthropic/` — Anthropic Messages API backend (direct `net/http` calls)
 - `repositories/claude/` — Claude Code CLI backend (invokes `claude --print`)
 - `repositories/openai/` — OpenAI Chat Completions API backend
 - `repositories/rules/` — Loads Markdown rule files from filesystem with YAML frontmatter glob filtering
@@ -63,7 +63,6 @@ Each layer has a `container.go` with `RegisterProviders(*dig.Container) error`. 
 
 ## Key Dependencies
 
-- `github.com/anthropics/anthropic-sdk-go` — Anthropic Messages API client
 - `github.com/rios0rios0/cliforge` — CLI utilities and self-update support
 - `github.com/rios0rios0/gitforge` — Multi-provider Git abstraction (GitHub, Azure DevOps)
 - `github.com/rios0rios0/langforge` — Language classification by file extension
