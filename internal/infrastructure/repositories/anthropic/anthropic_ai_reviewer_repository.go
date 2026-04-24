@@ -110,9 +110,9 @@ func (r *AIReviewerRepository) ReviewDiff(
 	if err != nil {
 		return nil, fmt.Errorf("anthropic request creation failed: %w", err)
 	}
-	httpReq.Header.Set("x-api-key", r.apiKey)
-	httpReq.Header.Set("anthropic-version", apiVersion)
-	httpReq.Header.Set("content-type", contentTypeValue)
+	httpReq.Header.Set("X-Api-Key", r.apiKey)
+	httpReq.Header.Set("Anthropic-Version", apiVersion)
+	httpReq.Header.Set("Content-Type", contentTypeValue)
 
 	httpResp, err := r.httpClient.Do(httpReq)
 	if err != nil {
@@ -134,8 +134,8 @@ func (r *AIReviewerRepository) ReviewDiff(
 	}
 
 	var message responsePayload
-	if err := json.Unmarshal(respBody, &message); err != nil {
-		return nil, fmt.Errorf("anthropic response unmarshaling failed: %w", err)
+	if unmarshalErr := json.Unmarshal(respBody, &message); unmarshalErr != nil {
+		return nil, fmt.Errorf("anthropic response unmarshaling failed: %w", unmarshalErr)
 	}
 
 	if len(message.Content) == 0 {
