@@ -135,7 +135,6 @@ Common flags (all commands):
 
 Only add new dependencies when strictly necessary. Prefer the standard library. Current key dependencies:
 
-- `github.com/anthropics/anthropic-sdk-go` — Anthropic Messages API client
 - `github.com/rios0rios0/cliforge` — CLI utilities and self-update support
 - `github.com/rios0rios0/gitforge` — Multi-provider Git abstraction (consumed as a published pseudo-version; no local `replace` directive)
 - `github.com/rios0rios0/langforge` — Language classification by file extension
