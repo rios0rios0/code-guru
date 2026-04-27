@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	configEntities "github.com/rios0rios0/gitforge/pkg/config/domain/entities"
 	"gopkg.in/yaml.v3"
@@ -65,8 +67,13 @@ type TrivialConfig struct {
 
 // ServerConfig holds settings for the webhook server.
 type ServerConfig struct {
-	Port          int    `yaml:"port"`
-	WebhookSecret string `yaml:"webhook_secret"`
+	Port                 int           `yaml:"port"`
+	WebhookSecret        string        `yaml:"webhook_secret"`
+	QueueSize            int           `yaml:"queue_size"`
+	Workers              int           `yaml:"workers"`
+	ShutdownTimeout      time.Duration `yaml:"shutdown_timeout"`
+	AllowedOrganizations []string      `yaml:"allowed_organizations"`
+	AllowedProjects      []string      `yaml:"allowed_projects"`
 }
 
 // GitHubAppConfig holds GitHub App authentication settings.
@@ -105,6 +112,9 @@ func NewSettingsFromEnv() (*Settings, error) {
 	maxTurns, _ := strconv.Atoi(envOrDefault("CODE_GURU_CLAUDE_MAX_TURNS", "1"))
 	port, _ := strconv.Atoi(envOrDefault("CODE_GURU_PORT", "8080"))
 	appID, _ := strconv.ParseInt(os.Getenv("CODE_GURU_GITHUB_APP_ID"), 10, 64)
+	queueSize, _ := strconv.Atoi(envOrDefault("CODE_GURU_SERVER_QUEUE_SIZE", "100"))
+	workers, _ := strconv.Atoi(envOrDefault("CODE_GURU_SERVER_WORKERS", strconv.Itoa(runtime.NumCPU())))
+	shutdownTimeout, _ := time.ParseDuration(envOrDefault("CODE_GURU_SERVER_SHUTDOWN_TIMEOUT", "30s"))
 
 	var adapters []string
 	if raw := os.Getenv("CODE_GURU_TRIVIAL_ADAPTERS"); raw != "" {
@@ -140,8 +150,13 @@ func NewSettingsFromEnv() (*Settings, error) {
 			Adapters: adapters,
 		},
 		Server: ServerConfig{
-			Port:          port,
-			WebhookSecret: os.Getenv("CODE_GURU_WEBHOOK_SECRET"),
+			Port:                 port,
+			WebhookSecret:        os.Getenv("CODE_GURU_WEBHOOK_SECRET"),
+			QueueSize:            queueSize,
+			Workers:              workers,
+			ShutdownTimeout:      shutdownTimeout,
+			AllowedOrganizations: splitCSV(os.Getenv("CODE_GURU_SERVER_ALLOWED_ORGANIZATIONS")),
+			AllowedProjects:      splitCSV(os.Getenv("CODE_GURU_SERVER_ALLOWED_PROJECTS")),
 		},
 		GitHubApp: GitHubAppConfig{
 			AppID:      appID,
@@ -190,4 +205,18 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitCSV parses a comma-separated string into a slice, trimming whitespace and skipping empties.
+func splitCSV(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for v := range strings.SplitSeq(raw, ",") {
+		if trimmed := strings.TrimSpace(v); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
