@@ -16,6 +16,8 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.2.6] - 2026-04-27
+
 ### Changed
 
 - refreshed `.github/copilot-instructions.md` to remove the `anthropic-sdk-go` dependency that was replaced with direct HTTP calls in 1.2.5
