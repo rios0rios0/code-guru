@@ -16,9 +16,23 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added HMAC-SHA256 verification for the GitHub `pull_request` webhook endpoint via the `X-Hub-Signature-256` header
+- added Basic Auth verification for the Azure DevOps Service Hook endpoint (constant `code-guru` username, configurable secret password)
+- added `git.pullrequest.created` and `git.pullrequest.updated` handler that builds an `azuredevops` `ReviewProvider` and enqueues active PRs for asynchronous review
+- added GitHub `pull_request` (`opened`, `synchronize`, `reopened`) handler with GitHub App installation token exchange (RS256 JWT, `sync.Map`-backed cache with a 5-minute safety margin) and a configured PAT fallback
+- added a bounded asynchronous worker `Pool` (configurable `Workers` and `QueueSize`) that drains review jobs and recovers from per-job panics so a single failure does not crash the worker
+- added graceful shutdown to the `serve` controller, capturing `SIGINT`/`SIGTERM` and draining both the HTTP server and the worker pool within `Server.ShutdownTimeout`
+- added `Server.AllowedOrganizations` and `Server.AllowedProjects` allowlists (defense-in-depth) consulted by both webhook handlers, returning `403 Forbidden` for off-list payloads
+- added a `Dockerfile` (multi-stage `golang:1.26-alpine` builder, `gcr.io/distroless/static-debian12:nonroot` runtime, `EXPOSE 8080`) and a `.dockerignore`
+
 ### Changed
 
+- changed the `serve` controller to register the dispatcher and itself in the DIG container so all subcommands ship with one binary
+- changed the `--port` flag on `serve` to be properly registered via `BindFlags` (it previously read but never declared the flag)
 - refreshed `.github/copilot-instructions.md` to remove the `anthropic-sdk-go` dependency that was replaced with direct HTTP calls in 1.2.5
+- refreshed `.github/copilot-instructions.md` to mark the webhook handlers as functional (no longer WIP)
 
 ## [1.2.5] - 2026-04-24
 
