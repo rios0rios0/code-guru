@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 
 	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
+	registry "github.com/rios0rios0/gitforge/pkg/registry/infrastructure"
 	logger "github.com/sirupsen/logrus"
 
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
@@ -14,12 +16,27 @@ import (
 	infraRepos "github.com/rios0rios0/codeguru/internal/infrastructure/repositories"
 )
 
+// Submitter is the subset of *Pool used by handlers; defining it here lets tests
+// substitute the pool without spinning up real workers.
+type Submitter interface {
+	Submit(job Job) error
+}
+
 // Dispatcher bridges webhook events to the domain review logic.
 type Dispatcher struct {
 	aiFactory        *infraRepos.AIReviewerFactory
 	rulesFactory     *infraRepos.RulesRepositoryFactory
 	detectorRegistry repositories.TrivialDetectorRegistry
 	settings         *entities.Settings
+	providerRegistry *registry.ProviderRegistry
+	submitter        Submitter
+	githubTokenizer  GitHubTokenizer
+}
+
+// GitHubTokenizer resolves an installation access token for a GitHub App.
+// Production code uses the JWT-based exchanger; tests can substitute a stub.
+type GitHubTokenizer interface {
+	InstallationToken(ctx context.Context, installationID int64) (string, error)
 }
 
 // NewDispatcher creates a new webhook dispatcher.
@@ -28,43 +45,35 @@ func NewDispatcher(
 	rulesFactory *infraRepos.RulesRepositoryFactory,
 	detectorRegistry repositories.TrivialDetectorRegistry,
 	settings *entities.Settings,
+	providerRegistry *registry.ProviderRegistry,
 ) *Dispatcher {
 	return &Dispatcher{
 		aiFactory:        aiFactory,
 		rulesFactory:     rulesFactory,
 		detectorRegistry: detectorRegistry,
 		settings:         settings,
+		providerRegistry: providerRegistry,
 	}
 }
 
-// HandleGitHub processes GitHub App webhook events.
-func (d *Dispatcher) HandleGitHub(w http.ResponseWriter, _ *http.Request) {
-	// TODO: implement GitHub webhook handling:
-	// 1. Verify HMAC-SHA256 signature from X-Hub-Signature-256 header
-	// 2. Parse check_suite.completed event payload
-	// 3. Extract repo, installation ID, head SHA, conclusion
-	// 4. Get installation access token (App JWT → installation token)
-	// 5. Find PR associated with the head SHA
-	// 6. Build gitforge ReviewProvider with installation token
-	// 7. Call HandlePR with ciPassed from conclusion
-	logger.Warn("GitHub webhook handler not yet implemented")
-	w.WriteHeader(http.StatusNotImplemented)
-	_, _ = fmt.Fprint(w, "GitHub webhook handler not yet implemented")
+// SetSubmitter wires the worker pool used to enqueue review jobs. Called by the
+// serve controller after the pool is constructed (the pool's handler closes over
+// the dispatcher, so the cycle is broken at construction time).
+func (d *Dispatcher) SetSubmitter(s Submitter) {
+	d.submitter = s
 }
 
-// HandleAzureDevOps processes Azure DevOps Service Hook events.
-func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, _ *http.Request) {
-	// TODO: implement Azure DevOps webhook handling:
-	// 1. Parse build.complete event payload
-	// 2. Extract repo, project, build result, associated PR
-	// 3. Build gitforge provider with PAT
-	// 4. Call HandlePR with ciPassed from build result
-	logger.Warn("Azure DevOps webhook handler not yet implemented")
-	w.WriteHeader(http.StatusNotImplemented)
-	_, _ = fmt.Fprint(w, "Azure DevOps webhook handler not yet implemented")
+// SetGitHubTokenizer wires the GitHub App installation token exchanger.
+func (d *Dispatcher) SetGitHubTokenizer(t GitHubTokenizer) {
+	d.githubTokenizer = t
 }
 
-// HandlePR performs a review and optionally merges the PR.
+// Settings exposes the loaded settings for handler-side allowlist checks.
+func (d *Dispatcher) Settings() *entities.Settings {
+	return d.settings
+}
+
+// HandlePR performs a review of a single PR. Called by worker goroutines.
 func (d *Dispatcher) HandlePR(
 	ctx context.Context,
 	provider forgeEntities.ReviewProvider,
@@ -85,10 +94,46 @@ func (d *Dispatcher) HandlePR(
 
 	logger.Infof("PR #%d review complete: verdict=%s, comments=%d", pr.ID, result.Verdict, len(result.Comments))
 
-	// TODO: auto-merge via provider.MergePullRequest() once gitforge adds this method
 	if result.Verdict == "approve" && ciPassed {
 		logger.Infof("PR #%d approved and CI passed -- auto-merge pending gitforge support", pr.ID)
 	}
 
 	return nil
+}
+
+// findToken returns the configured token for a given provider type.
+func (d *Dispatcher) findToken(providerType string) string {
+	for _, p := range d.settings.Providers {
+		if p.Type == providerType {
+			return p.Token
+		}
+	}
+	return ""
+}
+
+// allowedOrganization returns true when the org is on the allowlist (or the
+// allowlist is empty, which means "allow all").
+func (d *Dispatcher) allowedOrganization(org string) bool {
+	allowed := d.settings.Server.AllowedOrganizations
+	if len(allowed) == 0 {
+		return true
+	}
+	return slices.Contains(allowed, org)
+}
+
+// allowedProject returns true when the project is on the allowlist (or the
+// allowlist is empty). Empty project (e.g. GitHub) is always allowed.
+func (d *Dispatcher) allowedProject(project string) bool {
+	allowed := d.settings.Server.AllowedProjects
+	if len(allowed) == 0 || project == "" {
+		return true
+	}
+	return slices.Contains(allowed, project)
+}
+
+// writeError writes a status code and a short text body. Used for 4xx responses
+// where the body content does not matter to the sender (webhook services ignore it).
+func writeError(w http.ResponseWriter, status int, msg string) {
+	w.WriteHeader(status)
+	_, _ = fmt.Fprint(w, msg)
 }
