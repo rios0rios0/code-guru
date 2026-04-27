@@ -19,7 +19,7 @@ The project follows **Clean Architecture** with strict layer separation:
 - **`internal/infrastructure/`** — Concrete implementations of domain interfaces.
   - `repositories/` — AI backend implementations (`anthropic/`, `claude/`, `openai/`), rule loading (`rules/`), trivial PR detectors (`trivial/`), OAuth token storage (`auth/`), self-updater (`selfupdate/`). A `container.go` at this level provides `AIReviewerFactory` and `RulesRepositoryFactory` for settings-driven backend selection.
   - `controllers/` — Cobra CLI controllers (review, review-all, discover, auth, serve, self-update, version) that bridge CLI input to domain commands.
-  - `controllers/webhooks/` — HTTP webhook dispatcher for GitHub App and Azure DevOps events (WIP).
+  - `controllers/webhooks/` — HTTP webhook dispatcher with auth (`auth.go`: HMAC-SHA256 + Basic Auth), per-vendor handlers (`github.go`, `azuredevops.go`), GitHub App installation token exchange (`installation_token_exchange.go`: RS256 JWT, `sync.Map` cache), and a bounded async worker pool (`worker.go`).
 - **`internal/support/`** — Shared utility functions (URL parsing, diff splitting, file classification, prompt building).
 - **`test/domain/doubles/`** — Test doubles (stubs) for domain repository interfaces.
 - **`configs/`** — Example YAML configuration files.
