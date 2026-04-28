@@ -263,6 +263,17 @@ The Dockerfile uses a multi-stage build (`golang:1.26-alpine` builder,
 `gcr.io/distroless/static-debian12:nonroot` runtime) and runs as the
 non-root user.
 
+The image ships with a `HEALTHCHECK` directive that calls `code-guru
+health` against the local listener every 30 seconds. The `health`
+subcommand can also be invoked directly for ad-hoc smoke tests:
+
+```bash
+code-guru health --url http://127.0.0.1:8080/health --timeout 4s
+```
+
+Exit codes: `0` on `200`, `1` on any other status, network error, or
+timeout.
+
 ## Environment Variable Configuration
 
 For CI/CD environments without a config file, all settings can be provided via `CODE_GURU_*` environment variables:
