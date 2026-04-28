@@ -23,10 +23,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # is left in the reference for human readability.
 FROM debian:12-slim@sha256:f9c6a2fd2ddbc23e336b6257a5245e31f996953ef06cd13a59fa0a1df2d5c252
 
-# Use bash for RUN steps so `set -o pipefail` works (debian's /bin/sh is
-# dash, which has no pipefail). Bash ships in the base image already; this
-# directive only changes the shell Docker invokes for subsequent RUNs.
-SHELL ["/bin/bash", "-c"]
+# Use bash for RUN steps with `pipefail` enabled at the shell level so any
+# pipe (e.g. `claude --version | tee /etc/claude-version` below) propagates
+# failures from the upstream command. Setting `-o pipefail` on SHELL itself
+# also satisfies hadolint DL4006 — the inline `set -euxo pipefail` further
+# down is now redundant defense-in-depth.
+SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
 
 # Install the Claude Code native binary to a system path so it survives the
 # Kubernetes emptyDir mount on /home/nonroot/.claude (which masks anything the
