@@ -35,6 +35,10 @@ const installationTokenJWTLifetime = 9 * time.Minute
 // for an installation access token.
 const httpClientTimeout = 30 * time.Second
 
+// userAgent identifies code-guru on GitHub REST API requests. GitHub requires a
+// stable User-Agent header on every request and may reject requests without one.
+const userAgent = "code-guru"
+
 // cachedToken holds an installation token along with its expiry time.
 type cachedToken struct {
 	token     string
@@ -129,6 +133,7 @@ func (g *GitHubAppTokenizer) exchange(
 	req.Header.Set("Authorization", "Bearer "+jwtToken)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-Github-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := g.httpClient.Do(req)
 	if err != nil {
@@ -136,7 +141,10 @@ func (g *GitHubAppTokenizer) exchange(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return "", time.Time{}, fmt.Errorf("failed to read token exchange response body: %w", readErr)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", time.Time{}, fmt.Errorf("token exchange returned %d: %s", resp.StatusCode, string(body))
 	}

@@ -97,8 +97,14 @@ func NewSettings(path string) (*Settings, error) {
 	for i := range settings.Providers {
 		settings.Providers[i].Token = settings.Providers[i].ResolveToken()
 	}
-	settings.AI.OpenAI.APIKey = (&configEntities.ProviderConfig{Token: settings.AI.OpenAI.APIKey}).ResolveToken()
-	settings.AI.Anthropic.APIKey = (&configEntities.ProviderConfig{Token: settings.AI.Anthropic.APIKey}).ResolveToken()
+	settings.AI.OpenAI.APIKey = configEntities.ResolveToken(settings.AI.OpenAI.APIKey)
+	settings.AI.Anthropic.APIKey = configEntities.ResolveToken(settings.AI.Anthropic.APIKey)
+	// Webhook server fields support the same ${ENV_VAR}/file-path expansion as
+	// provider tokens. Resolve them here so the serve command can read literals
+	// like "${CODE_GURU_WEBHOOK_SECRET}" from YAML and have them expanded before
+	// reaching the auth/JWT code paths.
+	settings.Server.WebhookSecret = configEntities.ResolveToken(settings.Server.WebhookSecret)
+	settings.GitHubApp.PrivateKey = configEntities.ResolveToken(settings.GitHubApp.PrivateKey)
 
 	if validateErr := validateSettings(&settings); validateErr != nil {
 		return nil, validateErr
