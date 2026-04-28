@@ -5,6 +5,7 @@ go 1.26.2
 require github.com/rios0rios0/cliforge v0.3.3
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/rios0rios0/gitforge v0.9.4
 	github.com/rios0rios0/langforge v0.6.2
 	github.com/rios0rios0/testkit v0.1.2
