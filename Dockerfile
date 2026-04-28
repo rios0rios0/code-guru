@@ -28,11 +28,6 @@ FROM debian:12-slim@sha256:f9c6a2fd2ddbc23e336b6257a5245e31f996953ef06cd13a59fa0
 # directive only changes the shell Docker invokes for subsequent RUNs.
 SHELL ["/bin/bash", "-c"]
 
-# Pinning a Claude Code release rather than tracking the floating `stable`
-# channel so version upgrades are an explicit, reviewable change. Bump in
-# lockstep with the toolbox `image_tag`.
-ARG CLAUDE_VERSION=2.1.89
-
 # Install the Claude Code native binary to a system path so it survives the
 # Kubernetes emptyDir mount on /home/nonroot/.claude (which masks anything the
 # image puts under that subtree). The official installer drops the binary into
@@ -40,11 +35,20 @@ ARG CLAUDE_VERSION=2.1.89
 # move the result onto PATH. `curl` is removed at the end of the same RUN to
 # keep it out of the final image layer.
 #
-# Note: the installer is downloaded to a file and then executed, rather than
-# piped into bash, so a `curl` failure surfaces as the failing command (the
-# previous `curl ... | bash` pipeline could mask download errors because
-# `set -e` does not include `pipefail`). `set -euxo pipefail` is added as
-# defense in depth in case future edits reintroduce a pipe.
+# The installer is invoked with the explicit `stable` channel argument so the
+# image is insulated from a future change to the installer's default channel,
+# while still avoiding a hard version pin (security fixes ship without a
+# manual bump).
+#
+# The installer is downloaded to a file and then executed, rather than piped
+# into bash, so a `curl` failure surfaces as the failing command instead of
+# being masked. `set -euxo pipefail` is added as defense in depth in case
+# future edits reintroduce a pipe.
+#
+# The resolved version is written to /etc/claude-version (and emitted in the
+# build log) so operators can correlate runtime behavior with the exact CLI
+# version installed at build time -- otherwise the floating channel makes
+# version-specific debugging significantly harder.
 RUN set -euxo pipefail; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl libstdc++6; \
@@ -53,8 +57,9 @@ RUN set -euxo pipefail; \
         --home-dir /home/nonroot --shell /sbin/nologin nonroot; \
     mkdir -p /opt/claude-install; \
     curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh; \
-    HOME=/opt/claude-install bash /tmp/claude-install.sh "${CLAUDE_VERSION}"; \
+    HOME=/opt/claude-install bash /tmp/claude-install.sh stable; \
     install -m 0755 /opt/claude-install/.local/bin/claude /usr/local/bin/claude; \
+    /usr/local/bin/claude --version | tee /etc/claude-version; \
     rm -rf /opt/claude-install /tmp/claude-install.sh; \
     apt-get purge -y --auto-remove curl; \
     apt-get clean; \
