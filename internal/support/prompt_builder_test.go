@@ -79,6 +79,24 @@ func TestBuildSystemPrompt(t *testing.T) {
 		assert.Contains(t, result, "Do NOT comment on style preferences not covered by the rules")
 	})
 
+	t.Run("should instruct the model to set an explicit approve verdict on a clean review (both templates)", func(t *testing.T) {
+		// given
+		rulesProvided := []entities.Rule{
+			entitybuilders.NewRuleBuilder().WithName("security").WithContent("never expose secrets").BuildRule(),
+		}
+		var rulesEmpty []entities.Rule
+
+		// when
+		withRules := support.BuildSystemPrompt(rulesProvided)
+		noRules := support.BuildSystemPrompt(rulesEmpty)
+
+		// then: both templates must include `"verdict": "approve"` in the
+		// no-issues example, otherwise ParseReviewResponse would fall back to
+		// `comment` and downstream automation can never reach a clean approve.
+		assert.Contains(t, withRules, `"verdict": "approve", "summary": "No issues found.", "comments": []`)
+		assert.Contains(t, noRules, `"verdict": "approve", "summary": "No issues found.", "comments": []`)
+	})
+
 	t.Run("should not include best-practices wording when rules are provided", func(t *testing.T) {
 		// given
 		rules := []entities.Rule{

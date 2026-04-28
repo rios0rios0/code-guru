@@ -52,7 +52,7 @@ Severity levels:
 Guidelines:
 - Only comment on actual issues or clear improvements
 - Do NOT comment on style preferences not covered by the rules
-- If there are no issues, return {"summary": "No issues found.", "comments": []}
+- If there are no issues, return {"verdict": "approve", "summary": "No issues found.", "comments": []}
 - Reference the specific rule being violated when applicable
 - Keep comments concise and actionable
 - "suggestion" is optional; include it when proposing replacement code`
@@ -97,7 +97,7 @@ Severity levels:
 Guidelines:
 - Comment on actual bugs, security flaws, performance issues, and clear correctness problems
 - Avoid style nitpicks unless they significantly hurt readability or maintainability
-- If there are no issues, return {"summary": "No issues found.", "comments": []}
+- If there are no issues, return {"verdict": "approve", "summary": "No issues found.", "comments": []}
 - Keep comments concise and actionable
 - "suggestion" is optional; include it when proposing replacement code`
 
