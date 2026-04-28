@@ -16,6 +16,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Changed
+
+- changed `BuildSystemPrompt` to fall back to a general best-practices system prompt when no rules are loaded; the previous template embedded an empty `Rules to enforce` block plus the instruction `Do NOT comment on style preferences not covered by the rules`, which made the LLM correctly produce zero comments on every PR when `CODE_GURU_RULES_PATH` was unset or no rules matched the file languages — the no-rules path now asks the model to review for bugs, security issues, performance problems, and clear correctness violations without referencing a non-existent rule set
+
 ## [1.3.0] - 2026-04-28
 
 ### Added
