@@ -193,4 +193,28 @@ func TestHandleGitHub(t *testing.T) {
 		assert.Equal(t, http.StatusAccepted, w.Code)
 		require.Len(t, sub.Jobs(), 1)
 	})
+
+	t.Run("should accept a single untyped provider entry as the catch-all PAT", func(t *testing.T) {
+		// given - mirrors the env-only configuration where CODE_GURU_PROVIDER_TOKEN
+		// populates a single ProviderConfig entry without a Type.
+		settings := &entities.Settings{
+			Providers: []configEntities.ProviderConfig{
+				{Token: "ghp_envtest"}, // no Type set
+			},
+			Server: entities.ServerConfig{
+				WebhookSecret:        ghSecret,
+				AllowedOrganizations: []string{ghOwner},
+			},
+		}
+		d, sub := newDispatcherWithSettings(t, settings)
+		req := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		assert.Equal(t, http.StatusAccepted, w.Code)
+		require.Len(t, sub.Jobs(), 1)
+	})
 }

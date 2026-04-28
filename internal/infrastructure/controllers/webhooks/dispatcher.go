@@ -101,12 +101,18 @@ func (d *Dispatcher) HandlePR(
 	return nil
 }
 
-// findToken returns the configured token for a given provider type.
+// findToken returns the configured token for a given provider type. As a
+// fallback (used by the env-only configuration where CODE_GURU_PROVIDER_TOKEN
+// populates a single entry without a Type), a lone untyped provider entry is
+// treated as the catch-all token for any provider.
 func (d *Dispatcher) findToken(providerType string) string {
 	for _, p := range d.settings.Providers {
 		if p.Type == providerType {
 			return p.Token
 		}
+	}
+	if len(d.settings.Providers) == 1 && d.settings.Providers[0].Type == "" {
+		return d.settings.Providers[0].Token
 	}
 	return ""
 }

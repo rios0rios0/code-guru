@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	defaultServerPort      = 8080
-	defaultShutdownTimeout = 30 * time.Second
+	defaultServerPort        = 8080
+	defaultShutdownTimeout   = 30 * time.Second
+	defaultReadHeaderTimeout = 10 * time.Second
 )
 
 // ServeController handles the "serve" subcommand for the webhook server.
@@ -53,6 +54,10 @@ func (c *ServeController) BindFlags(cmd *cobra.Command) {
 
 // Execute starts the webhook HTTP server.
 func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
+	if err := c.validateSettings(); err != nil {
+		logger.Fatalf("serve: invalid settings: %v", err)
+	}
+
 	port := c.resolvePort(cmd)
 	shutdownTimeout := c.resolveShutdownTimeout()
 
@@ -89,7 +94,7 @@ func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
-		ReadHeaderTimeout: defaultShutdownTimeout,
+		ReadHeaderTimeout: defaultReadHeaderTimeout,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -142,4 +147,21 @@ func (c *ServeController) resolveShutdownTimeout() time.Duration {
 		return c.settings.Server.ShutdownTimeout
 	}
 	return defaultShutdownTimeout
+}
+
+// validateSettings enforces the minimum configuration required by the webhook
+// server. provideSettings falls back to an empty *Settings on error so the rest
+// of the CLI keeps working; this guard ensures `serve` does not silently start
+// with that empty fallback.
+func (c *ServeController) validateSettings() error {
+	if c.settings == nil {
+		return errors.New("settings are not configured")
+	}
+	if c.settings.AI.Backend == "" {
+		return errors.New("ai.backend is required (set CODE_GURU_BACKEND or configure via YAML)")
+	}
+	if c.settings.Server.WebhookSecret == "" {
+		return errors.New("server.webhook_secret is required for webhook authentication")
+	}
+	return nil
 }

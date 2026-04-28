@@ -33,6 +33,9 @@ type Pool struct {
 	handler JobHandler
 	wg      sync.WaitGroup
 
+	baseCtx    context.Context
+	cancelBase context.CancelFunc
+
 	mu     sync.Mutex
 	closed bool
 }
@@ -47,9 +50,15 @@ func NewPool(workerCount, queueSize int, handler JobHandler) *Pool {
 		workerCount = 1
 	}
 
+	// The cancel function is stored on the pool and invoked by Shutdown via
+	// defer; gosec cannot trace that cross-method call, so the lint warning is
+	// suppressed at the source.
+	baseCtx, cancelBase := context.WithCancel(context.Background()) //nolint:gosec // cancelBase released in Shutdown
 	p := &Pool{
-		queue:   make(chan Job, queueSize),
-		handler: handler,
+		queue:      make(chan Job, queueSize),
+		handler:    handler,
+		baseCtx:    baseCtx,
+		cancelBase: cancelBase,
 	}
 
 	for i := range workerCount {
@@ -60,14 +69,15 @@ func NewPool(workerCount, queueSize int, handler JobHandler) *Pool {
 }
 
 // Submit enqueues a job. Returns ErrPoolClosed if the pool has shut down or
-// ErrPoolFull if the queue is full.
+// ErrPoolFull if the queue is full. The send is performed under the same mutex
+// that guards Shutdown's close(queue) so the two cannot race.
 func (p *Pool) Submit(job Job) error {
 	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if p.closed {
-		p.mu.Unlock()
 		return ErrPoolClosed
 	}
-	p.mu.Unlock()
 
 	select {
 	case p.queue <- job:
@@ -78,8 +88,13 @@ func (p *Pool) Submit(job Job) error {
 }
 
 // Shutdown stops accepting new work and waits for in-flight jobs to drain. If ctx
-// is cancelled before workers exit, Shutdown returns the ctx error.
+// is cancelled before workers exit, Shutdown cancels the per-job base context so
+// in-flight handlers can observe the deadline, then returns the ctx error.
+// The base context is always cancelled on return, so calling Shutdown is the
+// only way to release the resources held by the pool.
 func (p *Pool) Shutdown(ctx context.Context) error {
+	defer p.cancelBase()
+
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -117,8 +132,7 @@ func (p *Pool) handle(id int, job Job) {
 		}
 	}()
 
-	ctx := context.Background()
-	if err := p.handler(ctx, job); err != nil {
+	if err := p.handler(p.baseCtx, job); err != nil {
 		logger.Errorf("worker %d failed to process PR #%d: %v", id, job.PR.ID, err)
 	}
 }

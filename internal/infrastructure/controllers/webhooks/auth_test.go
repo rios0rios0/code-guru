@@ -205,4 +205,16 @@ func TestVerifyBasicAuth(t *testing.T) {
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, webhooks.ErrInvalidBasicAuth))
 	})
+
+	t.Run("should accept the lowercase scheme prefix per RFC 7617", func(t *testing.T) {
+		// given
+		secret := "swordfish"
+		header := "basic " + base64.StdEncoding.EncodeToString([]byte(webhooks.BasicAuthUsername+":"+secret))
+
+		// when
+		err := webhooks.VerifyBasicAuth(secret, header)
+
+		// then
+		require.NoError(t, err)
+	})
 }

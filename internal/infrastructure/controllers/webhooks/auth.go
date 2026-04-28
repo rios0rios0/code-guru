@@ -63,8 +63,11 @@ func VerifyBasicAuth(secret string, header string) error {
 		return ErrInvalidBasicAuth
 	}
 
+	// RFC 7617/7235: the auth scheme token ("Basic") is case-insensitive, so
+	// "basic <...>" and "BASIC <...>" must be accepted. The credentials part
+	// (base64 token) remains case-sensitive.
 	const prefix = "Basic "
-	if !strings.HasPrefix(header, prefix) {
+	if len(header) < len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
 		return ErrInvalidBasicAuth
 	}
 
