@@ -182,6 +182,98 @@ trivial:
 
 Or via environment variables: `CODE_GURU_TRIVIAL_ADAPTERS=update-go,bump-go,docs-only`
 
+## Server / Webhook Mode
+
+Code Guru can run as a long-lived HTTP server that receives webhook events from
+GitHub Apps and Azure DevOps Service Hooks. Each event is enqueued onto a bounded
+worker pool and the HTTP response returns immediately (`202 Accepted`), so the
+review runs asynchronously and never blocks the sender.
+
+```bash
+code-guru serve --port 8080
+```
+
+### Endpoints
+
+| Endpoint                | Method | Auth                           | Notes                                                                                                                       |
+|-------------------------|--------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------------|
+| `/health`               | GET    | none                           | Liveness probe                                                                                                              |
+| `/webhooks/github`      | POST   | HMAC-SHA256                    | Validates the `X-Hub-Signature-256` header against `server.webhook_secret`. Acts on `pull_request` `opened`/`synchronize`/`reopened`. |
+| `/webhooks/azuredevops` | POST   | HTTP Basic                     | Username must be `code-guru`; password must equal `server.webhook_secret`. Acts on `git.pullrequest.created`/`git.pullrequest.updated` for active PRs. |
+
+### Authentication Models
+
+- **GitHub** -- the secret is the value configured on the GitHub App webhook
+  ("Webhook secret" in the App settings). When `github_app.app_id` and
+  `github_app.private_key` are configured the server signs an RS256 JWT and
+  exchanges it for a per-installation access token, cached until 5 minutes
+  before expiry. Without `github_app.*` the handler falls back to the configured
+  `github` PAT in `providers[]`.
+- **Azure DevOps** -- ADO does not sign Service Hooks, so it uses HTTP Basic.
+  Configure the Service Hook with username `code-guru` and password equal to
+  `server.webhook_secret`.
+
+### Configuration
+
+```yaml
+server:
+  port: 8080
+  webhook_secret: '${CODE_GURU_WEBHOOK_SECRET}'
+  workers: 8
+  queue_size: 100
+  shutdown_timeout: 30s
+  allowed_organizations:
+    - 'ZestSecurity'
+  allowed_projects:
+    - 'Platform'
+
+github_app:
+  app_id: 123456
+  private_key: '${CODE_GURU_GITHUB_PRIVATE_KEY}'
+```
+
+### Webhook Environment Variables
+
+| Variable                                  | Description                                                       | Default              |
+|-------------------------------------------|-------------------------------------------------------------------|----------------------|
+| `CODE_GURU_PORT`                          | HTTP port to listen on                                            | `8080`               |
+| `CODE_GURU_WEBHOOK_SECRET`                | Shared secret for HMAC (GitHub) and Basic Auth password (ADO)     |                      |
+| `CODE_GURU_SERVER_WORKERS`                | Worker count draining the review queue                            | `runtime.NumCPU()`   |
+| `CODE_GURU_SERVER_QUEUE_SIZE`             | Maximum buffered jobs before submitters get `503 Service Unavailable` | `100`            |
+| `CODE_GURU_SERVER_SHUTDOWN_TIMEOUT`       | Maximum drain time on `SIGINT`/`SIGTERM`                          | `30s`                |
+| `CODE_GURU_SERVER_ALLOWED_ORGANIZATIONS`  | Comma-separated allowlist of org/owner names (empty = allow all)  |                      |
+| `CODE_GURU_SERVER_ALLOWED_PROJECTS`       | Comma-separated allowlist of ADO project names (empty = allow all) |                     |
+| `CODE_GURU_GITHUB_APP_ID`                 | Numeric GitHub App ID                                             |                      |
+| `CODE_GURU_GITHUB_PRIVATE_KEY`            | PEM-encoded RSA private key for the GitHub App                    |                      |
+
+### Running with Docker
+
+```bash
+docker build -t code-guru:latest .
+docker run --rm -p 8080:8080 \
+  -e CODE_GURU_BACKEND=anthropic \
+  -e CODE_GURU_ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  -e CODE_GURU_WEBHOOK_SECRET=$WEBHOOK_SECRET \
+  -e CODE_GURU_PROVIDER_TOKEN=$AZURE_DEVOPS_PAT \
+  -e CODE_GURU_SERVER_ALLOWED_ORGANIZATIONS=ZestSecurity \
+  code-guru:latest
+```
+
+The Dockerfile uses a multi-stage build (`golang:1.26-alpine` builder,
+`gcr.io/distroless/static-debian12:nonroot` runtime) and runs as the
+non-root user.
+
+The image ships with a `HEALTHCHECK` directive that calls `code-guru
+health` against the local listener every 30 seconds. The `health`
+subcommand can also be invoked directly for ad-hoc smoke tests:
+
+```bash
+code-guru health --url http://127.0.0.1:8080/health --timeout 4s
+```
+
+Exit codes: `0` on `200`, `1` on any other status, network error, or
+timeout.
+
 ## Environment Variable Configuration
 
 For CI/CD environments without a config file, all settings can be provided via `CODE_GURU_*` environment variables:

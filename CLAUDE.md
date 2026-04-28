@@ -35,7 +35,7 @@ Clean Architecture with domain/infrastructure separation, using Uber DIG for dep
 
 ### Infrastructure Layer (`internal/infrastructure/`)
 - `controllers/` — Cobra CLI controllers implementing `entities.Controller`: review, review-all, discover, auth, serve, self-update, version
-- `controllers/webhooks/` — HTTP webhook dispatcher for GitHub App and Azure DevOps Service Hook events (WIP)
+- `controllers/webhooks/` — Functional HTTP webhook stack: `auth.go` (HMAC-SHA256 + HTTP Basic helpers), `github.go` and `azuredevops.go` (vendor handlers that parse payloads and enqueue jobs), `installation_token_exchange.go` (GitHub App JWT/installation-token exchanger with cache), `worker.go` (bounded async worker pool with graceful drain)
 - `repositories/anthropic/` — Anthropic Messages API backend (direct `net/http` calls)
 - `repositories/claude/` — Claude Code CLI backend (invokes `claude --print`)
 - `repositories/openai/` — OpenAI Chat Completions API backend
@@ -58,7 +58,7 @@ Each layer has a `container.go` with `RegisterProviders(*dig.Container) error`. 
 - External test packages (e.g., `package support_test`)
 - BDD structure: `// given`, `// when`, `// then`
 - `t.Parallel()` + `t.Run()` for unit tests
-- Test doubles in `test/domain/doubles/repositories/` (stubs with canned responses)
+- Test doubles in `test/domain/doubles/repositories/` for domain-contract stubs and `test/infrastructure/doubles/repositories/` for stubs that double infrastructure-only types (e.g., webhook `Submitter`, `GitHubTokenizer`) — keep the layer the stub references on the same side of the import boundary
 - Entity builders in `test/domain/entitybuilders/` (fluent API via testkit.BaseBuilder)
 
 ## Key Dependencies
