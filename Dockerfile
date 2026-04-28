@@ -23,5 +23,14 @@ COPY --from=builder /out/code-guru /code-guru
 
 EXPOSE 8080
 USER nonroot:nonroot
+
+# Probe the local /health endpoint via the binary itself. The distroless base
+# image ships no shell, no curl, and no wget, so the binary doubles as its own
+# healthcheck client. --start-period gives the listener time to bind; the per
+# request timeout is shorter than HEALTHCHECK --timeout so the controller's
+# error message is the one Docker captures.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/code-guru", "health", "--timeout=4s"]
+
 ENTRYPOINT ["/code-guru"]
 CMD ["serve"]

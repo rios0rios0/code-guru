@@ -26,6 +26,8 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - added graceful shutdown to the `serve` controller, capturing `SIGINT`/`SIGTERM` and draining both the HTTP server and the worker pool within `Server.ShutdownTimeout`
 - added `Server.AllowedOrganizations` and `Server.AllowedProjects` allowlists (defense-in-depth) consulted by both webhook handlers, returning `403 Forbidden` for off-list payloads
 - added a `Dockerfile` (multi-stage `golang:1.26-alpine` builder, `gcr.io/distroless/static-debian12:nonroot` runtime, `EXPOSE 8080`) and a `.dockerignore`
+- added a `health` subcommand (`code-guru health`) that probes a running `serve` listener and exits `0` on `200`, `1` otherwise; used by the `Dockerfile` `HEALTHCHECK` directive (the distroless base image has no shell, no `curl`, no `wget`, so the binary doubles as its own healthcheck client)
+- added a `HEALTHCHECK` directive to the `Dockerfile` calling `code-guru health` with a 30s interval and a 10s start period, so `docker run` / `compose` deployments get a live readiness signal without requiring a Kubernetes probe
 
 ### Changed
 
