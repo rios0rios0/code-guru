@@ -27,7 +27,14 @@ func provideSettings() *Settings {
 	}
 	s, err := NewSettingsFromEnv()
 	if err != nil {
-		logger.Warnf("settings: env-based load failed: %v -- using empty defaults", err)
+		// CLI subcommands (review, review-all, discover, ...) re-load settings
+		// inside their controllers and ignore this provider, so a startup error
+		// here cannot fail DI for the whole binary. Subcommands that *do* rely
+		// on this provider (notably `serve`) must validate the returned struct
+		// before using it -- see ServeController.Execute, which exits with a
+		// fatal error when required server fields are missing.
+		logger.Errorf("settings: env-based load failed: %v -- using empty defaults; "+
+			"subcommands that depend on global settings will fail to start", err)
 		return &Settings{}
 	}
 	return s

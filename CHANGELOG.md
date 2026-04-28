@@ -31,8 +31,20 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 - changed the `serve` controller to register the dispatcher and itself in the DIG container so all subcommands ship with one binary
 - changed the `--port` flag on `serve` to be properly registered via `BindFlags` (it previously read but never declared the flag)
+- changed `Pool.Submit` to hold the same mutex used by `Shutdown` while sending on the queue, eliminating the TOCTOU race that could panic with `send on closed channel` under concurrent traffic and graceful shutdown
+- changed `Pool` workers to receive a cancellable base context that `Shutdown` cancels, so in-flight `JobHandler` invocations can observe shutdown timeouts via the `ctx` argument
+- changed `NewSettings` to also resolve `${ENV_VAR}`/file-path references for `server.webhook_secret` and `github_app.private_key`, so YAML literals like `${CODE_GURU_WEBHOOK_SECRET}` are expanded before reaching the auth/JWT code paths
+- changed `Dispatcher.findToken` to fall back to a single untyped provider entry, so the env-only configuration (`CODE_GURU_PROVIDER_TOKEN`) works for both GitHub and Azure DevOps webhook handlers
+- changed `ServeController.Execute` to validate required settings (`ai.backend`, `server.webhook_secret`) up front and exit fatally instead of starting with the empty `Settings` fallback
+- changed the HTTP server's `ReadHeaderTimeout` to a dedicated `defaultReadHeaderTimeout` (`10s`) instead of reusing `defaultShutdownTimeout`
+- changed `VerifyBasicAuth` to accept the `Basic` scheme prefix case-insensitively per RFC 7617/7235
 - refreshed `.github/copilot-instructions.md` to remove the `anthropic-sdk-go` dependency that was replaced with direct HTTP calls in 1.2.5
 - refreshed `.github/copilot-instructions.md` to mark the webhook handlers as functional (no longer WIP)
+
+### Fixed
+
+- fixed `installation_token_exchange.go` to handle `io.ReadAll` errors and to send a `User-Agent` header on the GitHub installation token exchange request, preventing silent body truncation and 403 rejections from GitHub
+- fixed `go.mod` to mark `github.com/golang-jwt/jwt/v5` as a direct dependency (it is imported directly by the installation token exchanger)
 
 ## [1.2.5] - 2026-04-24
 
