@@ -35,14 +35,20 @@ SHELL ["/bin/bash", "-c"]
 # move the result onto PATH. `curl` is removed at the end of the same RUN to
 # keep it out of the final image layer.
 #
-# The installer is invoked without a version argument so the latest stable
-# release is fetched on every image rebuild — pinning is intentionally
-# avoided here so security fixes ship without a manual bump.
+# The installer is invoked with the explicit `stable` channel argument so the
+# image is insulated from a future change to the installer's default channel,
+# while still avoiding a hard version pin (security fixes ship without a
+# manual bump).
 #
 # The installer is downloaded to a file and then executed, rather than piped
 # into bash, so a `curl` failure surfaces as the failing command instead of
 # being masked. `set -euxo pipefail` is added as defense in depth in case
 # future edits reintroduce a pipe.
+#
+# The resolved version is written to /etc/claude-version (and emitted in the
+# build log) so operators can correlate runtime behavior with the exact CLI
+# version installed at build time -- otherwise the floating channel makes
+# version-specific debugging significantly harder.
 RUN set -euxo pipefail; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl libstdc++6; \
@@ -51,8 +57,9 @@ RUN set -euxo pipefail; \
         --home-dir /home/nonroot --shell /sbin/nologin nonroot; \
     mkdir -p /opt/claude-install; \
     curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh; \
-    HOME=/opt/claude-install bash /tmp/claude-install.sh; \
+    HOME=/opt/claude-install bash /tmp/claude-install.sh stable; \
     install -m 0755 /opt/claude-install/.local/bin/claude /usr/local/bin/claude; \
+    /usr/local/bin/claude --version | tee /etc/claude-version; \
     rm -rf /opt/claude-install /tmp/claude-install.sh; \
     apt-get purge -y --auto-remove curl; \
     apt-get clean; \
