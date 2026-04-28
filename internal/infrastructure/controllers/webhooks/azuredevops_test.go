@@ -19,7 +19,7 @@ import (
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	infraRepos "github.com/rios0rios0/codeguru/internal/infrastructure/repositories"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers/webhooks"
-	doubles "github.com/rios0rios0/codeguru/test/domain/doubles/repositories"
+	doubles "github.com/rios0rios0/codeguru/test/infrastructure/doubles/repositories"
 )
 
 const (

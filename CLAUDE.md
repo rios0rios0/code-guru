@@ -58,7 +58,7 @@ Each layer has a `container.go` with `RegisterProviders(*dig.Container) error`. 
 - External test packages (e.g., `package support_test`)
 - BDD structure: `// given`, `// when`, `// then`
 - `t.Parallel()` + `t.Run()` for unit tests
-- Test doubles in `test/domain/doubles/repositories/` (stubs with canned responses)
+- Test doubles in `test/domain/doubles/repositories/` for domain-contract stubs and `test/infrastructure/doubles/repositories/` for stubs that double infrastructure-only types (e.g., webhook `Submitter`, `GitHubTokenizer`) — keep the layer the stub references on the same side of the import boundary
 - Entity builders in `test/domain/entitybuilders/` (fluent API via testkit.BaseBuilder)
 
 ## Key Dependencies
