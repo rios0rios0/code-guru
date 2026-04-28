@@ -1,8 +1,10 @@
 package controllers
 
 import (
-	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"go.uber.org/dig"
+
+	"github.com/rios0rios0/codeguru/internal/domain/entities"
+	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers/webhooks"
 )
 
 // RegisterProviders registers all controller providers with the DIG container.
@@ -22,6 +24,15 @@ func RegisterProviders(container *dig.Container) error {
 	if err := container.Provide(NewVersionController); err != nil {
 		return err
 	}
+	if err := container.Provide(webhooks.NewDispatcher); err != nil {
+		return err
+	}
+	if err := container.Provide(NewServeController); err != nil {
+		return err
+	}
+	if err := container.Provide(NewHealthCheckController); err != nil {
+		return err
+	}
 	if err := container.Provide(NewControllers); err != nil {
 		return err
 	}
@@ -36,6 +47,8 @@ func NewControllers(
 	discoverController *DiscoverController,
 	selfUpdateController *SelfUpdateController,
 	versionController *VersionController,
+	serveController *ServeController,
+	healthCheckController *HealthCheckController,
 ) *[]entities.Controller {
 	return &[]entities.Controller{
 		reviewController,
@@ -43,5 +56,7 @@ func NewControllers(
 		discoverController,
 		selfUpdateController,
 		versionController,
+		serveController,
+		healthCheckController,
 	}
 }
