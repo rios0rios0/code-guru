@@ -47,16 +47,68 @@ func TestBuildSystemPrompt(t *testing.T) {
 		assert.Contains(t, result, "JSON")
 	})
 
-	t.Run("should handle empty rules", func(t *testing.T) {
+	t.Run("should fall back to a no-rules template when no rules are provided", func(t *testing.T) {
 		// given
 		var rules []entities.Rule
 
 		// when
 		result := support.BuildSystemPrompt(rules)
 
-		// then
+		// then: the no-rules template asks for a general best-practices review
+		// and (critically) does NOT instruct the model to skip anything outside
+		// the rule set — the with-rules template has that constraint and would
+		// produce zero comments against an empty rules block.
 		assert.NotEmpty(t, result)
 		assert.Contains(t, result, "senior code reviewer")
+		assert.Contains(t, result, "best practices")
+		assert.NotContains(t, result, "Rules to enforce")
+		assert.NotContains(t, result, "Do NOT comment on style preferences not covered by the rules")
+	})
+
+	t.Run("should keep the rules-block instruction when rules are provided", func(t *testing.T) {
+		// given
+		rules := []entities.Rule{
+			entitybuilders.NewRuleBuilder().WithName("security").WithContent("never expose secrets").BuildRule(),
+		}
+
+		// when
+		result := support.BuildSystemPrompt(rules)
+
+		// then
+		assert.Contains(t, result, "Rules to enforce")
+		assert.Contains(t, result, "Do NOT comment on style preferences not covered by the rules")
+	})
+
+	t.Run("should instruct the model to set an explicit approve verdict on a clean review (both templates)", func(t *testing.T) {
+		// given
+		rulesProvided := []entities.Rule{
+			entitybuilders.NewRuleBuilder().WithName("security").WithContent("never expose secrets").BuildRule(),
+		}
+		var rulesEmpty []entities.Rule
+
+		// when
+		withRules := support.BuildSystemPrompt(rulesProvided)
+		noRules := support.BuildSystemPrompt(rulesEmpty)
+
+		// then: both templates must include `"verdict": "approve"` in the
+		// no-issues example, otherwise ParseReviewResponse would fall back to
+		// `comment` and downstream automation can never reach a clean approve.
+		assert.Contains(t, withRules, `"verdict": "approve", "summary": "No issues found.", "comments": []`)
+		assert.Contains(t, noRules, `"verdict": "approve", "summary": "No issues found.", "comments": []`)
+	})
+
+	t.Run("should not include best-practices wording when rules are provided", func(t *testing.T) {
+		// given
+		rules := []entities.Rule{
+			entitybuilders.NewRuleBuilder().WithName("security").WithContent("never expose secrets").BuildRule(),
+		}
+
+		// when
+		result := support.BuildSystemPrompt(rules)
+
+		// then: the no-rules template wording must not leak into rules-mode
+		// (otherwise the model could be tempted to ignore the rules).
+		assert.NotContains(t, result, "widely-accepted software engineering best practices")
 	})
 }
 
