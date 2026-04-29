@@ -5,6 +5,7 @@ package webhooks_test
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -67,7 +68,14 @@ func adoBasicAuth(secret string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(webhooks.BasicAuthUsername+":"+secret))
 }
 
-const adoActivePRPayload = `{
+const adoRepoUUID = "11111111-2222-3333-4444-555555555555"
+
+// adoActivePRPayload returns the canonical ADO `git.pullrequest.created`
+// payload used across the test suite. Built via Sprintf so adoRepoUUID
+// stays the single source of truth for the repository UUID — both the
+// JSON body and any assertions compare against the same constant.
+func adoActivePRPayload() string {
+	return fmt.Sprintf(`{
   "eventType": "git.pullrequest.created",
   "resource": {
     "pullRequestId": 42,
@@ -77,12 +85,14 @@ const adoActivePRPayload = `{
     "sourceRefName": "refs/heads/feat/x",
     "targetRefName": "refs/heads/main",
     "repository": {
+      "id": %q,
       "name": "demo-repo",
       "remoteUrl": "https://dev.azure.com/ExampleOrg/Platform/_git/demo-repo",
       "project": {"name": "Platform"}
     }
   }
-}`
+}`, adoRepoUUID)
+}
 
 func TestHandleAzureDevOps(t *testing.T) {
 	t.Parallel()
@@ -90,7 +100,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 	t.Run("should respond 202 (Accepted) when an active PR is enqueued", func(t *testing.T) {
 		// given
 		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
 		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
 		w := httptest.NewRecorder()
 
@@ -103,6 +113,8 @@ func TestHandleAzureDevOps(t *testing.T) {
 		require.Len(t, jobs, 1)
 		assert.Equal(t, 42, jobs[0].PR.ID)
 		assert.Equal(t, adoRepoName, jobs[0].Repo.Name)
+		assert.Equal(t, adoRepoUUID, jobs[0].Repo.ID,
+			"Repo.ID must be populated from resource.repository.id so the gitforge ADO provider can use the UUID instead of falling back to the repo name")
 		assert.Equal(t, adoProjectName, jobs[0].Repo.Project)
 		assert.Equal(t, adoOrgSlug, jobs[0].Repo.Organization)
 		assert.False(t, jobs[0].CIPassed)
@@ -111,7 +123,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 	t.Run("should respond 401 (Unauthorized) when basic auth is wrong", func(t *testing.T) {
 		// given
 		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
 		req.Header.Set("Authorization", adoBasicAuth("wrong"))
 		w := httptest.NewRecorder()
 
@@ -126,7 +138,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 	t.Run("should respond 400 (Bad Request) when the auth header is missing", func(t *testing.T) {
 		// given
 		d, _ := newDispatcherWithSettings(t, defaultADOSettings())
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
 		w := httptest.NewRecorder()
 
 		// when
@@ -187,7 +199,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 		settings := defaultADOSettings()
 		settings.Server.AllowedProjects = []string{"OtherProject"}
 		d, sub := newDispatcherWithSettings(t, settings)
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
 		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
 		w := httptest.NewRecorder()
 
@@ -204,7 +216,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 		settings := defaultADOSettings()
 		settings.Server.AllowedSourceCIDRs = []string{"13.107.6.0/24", "13.107.9.0/24"}
 		d, sub := newDispatcherWithSettings(t, settings)
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
 		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
 		req.Header.Set("CF-Connecting-IP", "8.8.8.8")
 		w := httptest.NewRecorder()
@@ -222,7 +234,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 		settings := defaultADOSettings()
 		settings.Server.AllowedSourceCIDRs = []string{"13.107.6.0/24"}
 		d, sub := newDispatcherWithSettings(t, settings)
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
 		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
 		req.Header.Set("CF-Connecting-IP", "13.107.6.42")
 		w := httptest.NewRecorder()
@@ -240,7 +252,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 		// list is nil — the allowlist is intentionally permissive when no
 		// CIDRs are configured.
 		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
 		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
 		req.Header.Set("CF-Connecting-IP", "8.8.8.8")
 		w := httptest.NewRecorder()
@@ -259,7 +271,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 		settings := defaultADOSettings()
 		settings.Server.AllowedSourceCIDRs = []string{"13.107.6.0/24"}
 		d, sub := newDispatcherWithSettings(t, settings)
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
 		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
 		req.Header.Set("X-Forwarded-For", "13.107.6.42, 10.0.0.1, 172.16.90.7")
 		w := httptest.NewRecorder()
