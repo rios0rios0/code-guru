@@ -68,6 +68,10 @@ const fullNameSegments = 2
 // Settings.Server.WebhookSecret. Supported events: pull_request with action
 // in {opened, synchronize, reopened}.
 func (d *Dispatcher) HandleGitHub(w http.ResponseWriter, r *http.Request) {
+	if !d.enforceSourceIPAllowlist(w, r, "GitHub") {
+		return
+	}
+
 	defer func() { _ = r.Body.Close() }()
 	body, readErr := io.ReadAll(r.Body)
 	if readErr != nil {
