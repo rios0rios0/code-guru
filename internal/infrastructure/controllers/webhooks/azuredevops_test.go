@@ -198,4 +198,77 @@ func TestHandleAzureDevOps(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, w.Code)
 		assert.Empty(t, sub.Jobs())
 	})
+
+	t.Run("should respond 403 (Forbidden) when CF-Connecting-IP is outside AllowedSourceCIDRs", func(t *testing.T) {
+		// given: a settings with a strict allowlist that excludes 8.8.8.8
+		settings := defaultADOSettings()
+		settings.Server.AllowedSourceCIDRs = []string{"13.107.6.0/24", "13.107.9.0/24"}
+		d, sub := newDispatcherWithSettings(t, settings)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		req.Header.Set("CF-Connecting-IP", "8.8.8.8")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then: rejected before basic-auth even runs, so the queue stays empty
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 202 (Accepted) when CF-Connecting-IP is inside AllowedSourceCIDRs", func(t *testing.T) {
+		// given
+		settings := defaultADOSettings()
+		settings.Server.AllowedSourceCIDRs = []string{"13.107.6.0/24"}
+		d, sub := newDispatcherWithSettings(t, settings)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		req.Header.Set("CF-Connecting-IP", "13.107.6.42")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusAccepted, w.Code)
+		assert.Len(t, sub.Jobs(), 1)
+	})
+
+	t.Run("should accept any source IP when AllowedSourceCIDRs is empty (default)", func(t *testing.T) {
+		// given: defaultADOSettings() does not set AllowedSourceCIDRs, so the
+		// list is nil — the allowlist is intentionally permissive when no
+		// CIDRs are configured.
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		req.Header.Set("CF-Connecting-IP", "8.8.8.8")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusAccepted, w.Code)
+		assert.Len(t, sub.Jobs(), 1)
+	})
+
+	t.Run("should fall back to X-Forwarded-For when CF-Connecting-IP is absent", func(t *testing.T) {
+		// given: only the leftmost XFF entry is the original client; the
+		// second entry is a proxy hop that should NOT be used for matching.
+		settings := defaultADOSettings()
+		settings.Server.AllowedSourceCIDRs = []string{"13.107.6.0/24"}
+		d, sub := newDispatcherWithSettings(t, settings)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		req.Header.Set("X-Forwarded-For", "13.107.6.42, 10.0.0.1, 172.16.90.7")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusAccepted, w.Code)
+		assert.Len(t, sub.Jobs(), 1)
+	})
 }
