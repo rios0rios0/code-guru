@@ -55,3 +55,15 @@ func extractFilePath(diffLine string) string {
 
 	return ""
 }
+
+// LookupChunkByPath returns the chunk for the given path, normalising the
+// caller's path to match the splitter's convention (no leading slash). The
+// splitter keys chunks by the bare new-side path because the `diff --git
+// a/X b/X` line never carries a leading slash, but Azure DevOps's
+// `GetPullRequestFiles` returns paths like `/README.md` — a direct lookup
+// would silently miss for every ADO PR. Centralising the normalisation
+// here keeps both providers wired through the same path.
+func LookupChunkByPath(chunks map[string]string, path string) (string, bool) {
+	chunk, ok := chunks[strings.TrimPrefix(path, "/")]
+	return chunk, ok
+}
