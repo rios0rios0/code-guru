@@ -15,9 +15,16 @@ permissions:
   checks: 'write' # code_check-style_golangci_lint
   security-events: 'write' # security-sast_codeql
   contents: 'write' # delivery-release
+  packages: 'write' # delivery-docker (deliver_docker: true) — push to ghcr.io/rios0rios0/code-guru
 
 jobs:
   default:
     uses: 'rios0rios0/pipelines/.github/workflows/go-binary.yaml@main'
     with:
       binary_name: 'code-guru'
+      # Build and publish a Docker image to ghcr.io/rios0rios0/code-guru
+      # alongside the binary release. Until this was set, every image bump
+      # required a manual `docker build && docker push` (see the 0.2.0
+      # rollout for the toolbox stack). Opt-in flag added in
+      # rios0rios0/pipelines#383.
+      deliver_docker: true
