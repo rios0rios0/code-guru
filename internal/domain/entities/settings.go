@@ -74,6 +74,7 @@ type ServerConfig struct {
 	ShutdownTimeout      time.Duration `yaml:"shutdown_timeout"`
 	AllowedOrganizations []string      `yaml:"allowed_organizations"`
 	AllowedProjects      []string      `yaml:"allowed_projects"`
+	AllowedSourceCIDRs   []string      `yaml:"allowed_source_cidrs"`
 }
 
 // GitHubAppConfig holds GitHub App authentication settings.
@@ -163,6 +164,7 @@ func NewSettingsFromEnv() (*Settings, error) {
 			ShutdownTimeout:      shutdownTimeout,
 			AllowedOrganizations: splitCSV(os.Getenv("CODE_GURU_SERVER_ALLOWED_ORGANIZATIONS")),
 			AllowedProjects:      splitCSV(os.Getenv("CODE_GURU_SERVER_ALLOWED_PROJECTS")),
+			AllowedSourceCIDRs:   splitCSV(os.Getenv("CODE_GURU_SERVER_ALLOWED_SOURCE_CIDRS")),
 		},
 		GitHubApp: GitHubAppConfig{
 			AppID:      appID,
