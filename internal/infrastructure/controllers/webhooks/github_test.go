@@ -217,4 +217,39 @@ func TestHandleGitHub(t *testing.T) {
 		assert.Equal(t, http.StatusAccepted, w.Code)
 		require.Len(t, sub.Jobs(), 1)
 	})
+
+	t.Run("should respond 403 (Forbidden) when CF-Connecting-IP is outside AllowedSourceCIDRs", func(t *testing.T) {
+		// given: source-IP allowlist runs before HMAC verification, so an
+		// off-list request never gets a chance to brute-force the signature.
+		settings := defaultGitHubSettings()
+		settings.Server.AllowedSourceCIDRs = []string{"140.82.112.0/20"} // GitHub Hooks range example
+		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
+		req := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		req.Header.Set("CF-Connecting-IP", "8.8.8.8")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 202 (Accepted) when CF-Connecting-IP is inside AllowedSourceCIDRs", func(t *testing.T) {
+		// given
+		settings := defaultGitHubSettings()
+		settings.Server.AllowedSourceCIDRs = []string{"140.82.112.0/20"}
+		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
+		req := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		req.Header.Set("CF-Connecting-IP", "140.82.112.42")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		assert.Equal(t, http.StatusAccepted, w.Code)
+		assert.Len(t, sub.Jobs(), 1)
+	})
 }

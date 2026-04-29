@@ -18,10 +18,8 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Added
 
-- added `Server.AllowedSourceCIDRs` (env: `CODE_GURU_SERVER_ALLOWED_SOURCE_CIDRS`) — a comma-separated CIDR allowlist enforced on `/webhooks/azuredevops` and `/webhooks/github` before any auth check; the source IP is read from `CF-Connecting-IP`, then `X-Real-IP`, then the leftmost `X-Forwarded-For` entry, then `RemoteAddr` (in that order); empty list means "no allowlist", preserving existing behaviour
-- added `clientIP(*http.Request)` and `sourceIPAllowed(ip, cidrs)` helpers in `internal/infrastructure/controllers/webhooks/source_ip.go`, plus a `Dispatcher.enforceSourceIPAllowlist` middleware-style helper that both webhook handlers call as their first guard
-
-### Added
+- added `Server.AllowedSourceCIDRs` (env: `CODE_GURU_SERVER_ALLOWED_SOURCE_CIDRS`) — a comma-separated CIDR allowlist enforced on `/webhooks/azuredevops` and `/webhooks/github` before any auth check; the source IP is read from `CF-Connecting-IP`, then `X-Real-IP`, then the leftmost `X-Forwarded-For` entry, then `RemoteAddr` (in that order); empty list means "no allowlist", preserving existing behaviour. CIDRs are parsed once at dispatcher construction so the per-request hot path has no parsing cost; invalid entries are logged and skipped
+- added `clientIP(*http.Request)` and `sourceIPAllowed(ip, prefixes)` helpers in `internal/infrastructure/controllers/webhooks/source_ip.go`, plus a `Dispatcher.enforceSourceIPAllowlist` middleware-style helper that both webhook handlers call as their first guard
 
 - added `deliver_docker: true` to `.github/workflows/default.yaml` so future tag pushes automatically build and publish the Docker image to `ghcr.io/rios0rios0/code-guru` alongside the binary release; previously every image bump required a manual `docker build && docker push` (see the `0.2.0` rollout for the toolbox stack)
 - added `packages: 'write'` to the workflow `permissions:` block so the `delivery-docker` job can authenticate to GHCR; reusable workflows cannot escalate beyond the caller's grants, so the permission has to be declared at the caller level

@@ -9,6 +9,9 @@ import (
 	logger "github.com/sirupsen/logrus"
 )
 
+// Re-exported indirectly: source_ip.go and dispatcher.go share the
+// netip.Prefix type via the dispatcher's pre-parsed slice.
+
 // clientIP returns the original client IP for r, preferring proxy-set headers
 // over the connection peer because the pod typically sits behind a CDN
 // (Cloudflare) and an in-cluster ingress controller. Header precedence,
@@ -45,23 +48,19 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// sourceIPAllowed returns true when ip is within any of the cidrs, or when the
-// list is empty (which means "no allowlist configured, allow all"). Empty or
-// malformed cidrs entries are skipped silently so a single bad config line
-// does not lock the whole listener out.
-func sourceIPAllowed(ip string, cidrs []string) bool {
-	if len(cidrs) == 0 {
+// sourceIPAllowed returns true when ip is within any of the prefixes, or when
+// the list is empty (which means "no allowlist configured, allow all").
+// Prefixes are pre-parsed at dispatcher construction (see parseAllowedCIDRs)
+// so this hot-path check has no per-request parsing cost.
+func sourceIPAllowed(ip string, prefixes []netip.Prefix) bool {
+	if len(prefixes) == 0 {
 		return true
 	}
 	addr, parseErr := netip.ParseAddr(ip)
 	if parseErr != nil {
 		return false
 	}
-	for _, c := range cidrs {
-		prefix, prefixErr := netip.ParsePrefix(strings.TrimSpace(c))
-		if prefixErr != nil {
-			continue
-		}
+	for _, prefix := range prefixes {
 		if prefix.Contains(addr) {
 			return true
 		}
@@ -78,7 +77,7 @@ func sourceIPAllowed(ip string, cidrs []string) bool {
 // rejections apart in the same stream.
 func (d *Dispatcher) enforceSourceIPAllowlist(w http.ResponseWriter, r *http.Request, label string) bool {
 	ip := clientIP(r)
-	if sourceIPAllowed(ip, d.settings.Server.AllowedSourceCIDRs) {
+	if sourceIPAllowed(ip, d.allowedSourcePrefixes) {
 		return true
 	}
 	logger.Warnf("%s webhook rejected: source IP %s not in allowlist", label, ip)

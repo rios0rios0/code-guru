@@ -46,11 +46,12 @@ type adoProject struct {
 // Supported events: git.pullrequest.created and git.pullrequest.updated for
 // active PRs. All other events return 204 No Content.
 //
-// number of validation guard clauses it has to enforce in order before
-// touching the worker queue. Splitting further would scatter the request flow
-// across multiple methods without removing any branches.
+// The handler length is driven by the number of validation guard clauses it
+// has to enforce in order before touching the worker queue. Splitting further
+// would scatter the request flow across multiple methods without removing any
+// branches.
 //
-//nolint:funlen // Single-shot HTTP handler whose length is proportional to the
+//nolint:funlen // Single-shot HTTP handler whose length is proportional to its required validation flow.
 func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 	if !d.enforceSourceIPAllowlist(w, r, "ADO") {
 		return
