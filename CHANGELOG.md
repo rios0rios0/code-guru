@@ -18,7 +18,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Fixed
 
-- fixed `Repository ID is empty, falling back to repository name for API calls` warning emitted by the gitforge Azure DevOps provider on every webhook delivery; the ADO `git.pullrequest.created` / `updated` payload includes the repository UUID at `resource.repository.id` but the handler was not extracting it. Added `ID` to the `adoRepository` struct and now passes `forgeEntities.Repository{ID: ...}`. The fallback-to-name path still works for older provider versions or payloads missing the field
+- fixed `Repository ID is empty, falling back to repository name for API calls` warning emitted by the gitforge Azure DevOps provider on every webhook delivery; the ADO `git.pullrequest.created` / `updated` payload includes the repository UUID at `resource.repository.id` but the handler was not extracting it. Added `ID` to the `adoRepository` struct and now passes `forgeEntities.Repository{ID: ...}`. The fallback-to-name path still works when the handler receives a payload with a missing or empty `resource.repository.id`
 
 ### Added
 
