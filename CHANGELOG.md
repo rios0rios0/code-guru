@@ -16,19 +16,14 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
-### Fixed
-
-- fixed Azure DevOps PR reviews ending with a bot comment that says "no diff" even when the PR has real changes; `ReviewCommand.buildDiffs` was looking up unified-diff chunks by `diffs[i].Path` (e.g. `/README.md`, the leading slash that `gitforge`'s ADO `GetPullRequestFiles` returns) while `support.SplitUnifiedDiff` keys chunks by the bare new-side path (`README.md`, parsed from `diff --git a/X b/X`). The lookup missed for every ADO file, leaving the diff body empty under each `### File:` header and tricking the LLM into reporting "no diff to review". Centralised the normalisation in a new `support.LookupChunkByPath(chunks, path)` helper so the leading slash is stripped at exactly one site, with a regression test exercising both the bare and the leading-slash shapes
-- fixed `default / delivery > docker` job failing on `main` with `ERROR: failed to build: resolve : lstat .ci: no such file or directory` after `rios0rios0/pipelines` commit `c9553e2` (`hotfix(moved): moved Dockerfile of original position`) renamed the convention to `.ci/stages/40-delivery/app.Dockerfile`; relocated the existing `Dockerfile` to that path. Build context stays at the repo root so all `COPY` directives resolve unchanged
-- fixed `Repository ID is empty, falling back to repository name for API calls` warning emitted by the gitforge Azure DevOps provider on every webhook delivery; the ADO `git.pullrequest.created` / `updated` payload includes the repository UUID at `resource.repository.id` but the handler was not extracting it. Added `ID` to the `adoRepository` struct and now passes `forgeEntities.Repository{ID: ...}`. The fallback-to-name path still works when the handler receives a payload with a missing or empty `resource.repository.id`
+## [1.4.0] - 2026-04-29
 
 ### Added
 
-- added `Server.AllowedSourceCIDRs` (env: `CODE_GURU_SERVER_ALLOWED_SOURCE_CIDRS`) — a comma-separated CIDR allowlist enforced on `/webhooks/azuredevops` and `/webhooks/github` before any auth check; the source IP is read from `CF-Connecting-IP`, then `X-Real-IP`, then the leftmost `X-Forwarded-For` entry, then `RemoteAddr` (in that order); empty list means "no allowlist", preserving existing behaviour. CIDRs are parsed once at dispatcher construction so the per-request hot path has no parsing cost; invalid entries are logged and skipped
 - added `clientIP(*http.Request)` and `sourceIPAllowed(ip, prefixes)` helpers in `internal/infrastructure/controllers/webhooks/source_ip.go`, plus a `Dispatcher.enforceSourceIPAllowlist` middleware-style helper that both webhook handlers call as their first guard
-
 - added `deliver_docker: true` to `.github/workflows/default.yaml` so future tag pushes automatically build and publish the Docker image to `ghcr.io/rios0rios0/code-guru` alongside the binary release; previously every image bump required a manual `docker build && docker push` (see the `0.2.0` rollout for the toolbox stack)
 - added `packages: 'write'` to the workflow `permissions:` block so the `delivery-docker` job can authenticate to GHCR; reusable workflows cannot escalate beyond the caller's grants, so the permission has to be declared at the caller level
+- added `Server.AllowedSourceCIDRs` (env: `CODE_GURU_SERVER_ALLOWED_SOURCE_CIDRS`) — a comma-separated CIDR allowlist enforced on `/webhooks/azuredevops` and `/webhooks/github` before any auth check; the source IP is read from `CF-Connecting-IP`, then `X-Real-IP`, then the leftmost `X-Forwarded-For` entry, then `RemoteAddr` (in that order); empty list means "no allowlist", preserving existing behaviour. CIDRs are parsed once at dispatcher construction so the per-request hot path has no parsing cost; invalid entries are logged and skipped
 
 ### Changed
 
@@ -36,6 +31,12 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - changed both system prompt templates to include `"verdict": "approve"` in the no-issues example so the LLM does not omit the field on clean reviews; without this, `ParseReviewResponse` defaulted to `comment` and downstream automation could never reach a clean `approve` verdict
 - changed the `Dockerfile` `SHELL` directive from `["/bin/bash", "-c"]` to `["/bin/bash", "-eo", "pipefail", "-c"]` so `pipefail` is enforced at the shell level for every `RUN` (the inline `set -euxo pipefail` becomes redundant defense in depth) — fixes hadolint `DL4006` triggered by the `claude --version | tee /etc/claude-version` pipe added in `1.4.0`
 - changed the Go module dependencies to their latest versions
+
+### Fixed
+
+- fixed `default / delivery > docker` job failing on `main` with `ERROR: failed to build: resolve : lstat .ci: no such file or directory` after `rios0rios0/pipelines` commit `c9553e2` (`hotfix(moved): moved Dockerfile of original position`) renamed the convention to `.ci/stages/40-delivery/app.Dockerfile`; relocated the existing `Dockerfile` to that path. Build context stays at the repo root so all `COPY` directives resolve unchanged
+- fixed `Repository ID is empty, falling back to repository name for API calls` warning emitted by the gitforge Azure DevOps provider on every webhook delivery; the ADO `git.pullrequest.created` / `updated` payload includes the repository UUID at `resource.repository.id` but the handler was not extracting it. Added `ID` to the `adoRepository` struct and now passes `forgeEntities.Repository{ID: ...}`. The fallback-to-name path still works when the handler receives a payload with a missing or empty `resource.repository.id`
+- fixed Azure DevOps PR reviews ending with a bot comment that says "no diff" even when the PR has real changes; `ReviewCommand.buildDiffs` was looking up unified-diff chunks by `diffs[i].Path` (e.g. `/README.md`, the leading slash that `gitforge`'s ADO `GetPullRequestFiles` returns) while `support.SplitUnifiedDiff` keys chunks by the bare new-side path (`README.md`, parsed from `diff --git a/X b/X`). The lookup missed for every ADO file, leaving the diff body empty under each `### File:` header and tricking the LLM into reporting "no diff to review". Centralised the normalisation in a new `support.LookupChunkByPath(chunks, path)` helper so the leading slash is stripped at exactly one site, with a regression test exercising both the bare and the leading-slash shapes
 
 ## [1.3.0] - 2026-04-28
 
