@@ -2,13 +2,13 @@ module github.com/rios0rios0/codeguru
 
 go 1.26.2
 
-require github.com/rios0rios0/cliforge v0.3.3
+require github.com/rios0rios0/cliforge v0.3.4
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/rios0rios0/gitforge v0.9.4
-	github.com/rios0rios0/langforge v0.6.2
-	github.com/rios0rios0/testkit v0.1.2
+	github.com/rios0rios0/gitforge v0.9.5
+	github.com/rios0rios0/langforge v0.6.3
+	github.com/rios0rios0/testkit v0.2.0
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
