@@ -18,6 +18,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Fixed
 
+- fixed `default / delivery > docker` job failing on `main` with `ERROR: failed to build: resolve : lstat .ci: no such file or directory` after `rios0rios0/pipelines` commit `c9553e2` (`hotfix(moved): moved Dockerfile of original position`) renamed the convention to `.ci/stages/40-delivery/app.Dockerfile`; relocated the existing `Dockerfile` to that path. Build context stays at the repo root so all `COPY` directives resolve unchanged
 - fixed `Repository ID is empty, falling back to repository name for API calls` warning emitted by the gitforge Azure DevOps provider on every webhook delivery; the ADO `git.pullrequest.created` / `updated` payload includes the repository UUID at `resource.repository.id` but the handler was not extracting it. Added `ID` to the `adoRepository` struct and now passes `forgeEntities.Repository{ID: ...}`. The fallback-to-name path still works when the handler receives a payload with a missing or empty `resource.repository.id`
 
 ### Added
