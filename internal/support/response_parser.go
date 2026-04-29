@@ -1,6 +1,8 @@
 package support
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,9 +17,15 @@ import (
 // jsonCodeBlockPattern matches content inside markdown code fences.
 var jsonCodeBlockPattern = regexp.MustCompile("(?s)```(?:json)?\\s*\\n(.+?)\\n```")
 
-// rawResponseLogLimit caps the number of bytes echoed to the log on a final
-// parse failure so a runaway model does not flood the log volume.
+// rawResponseLogLimit caps the number of bytes echoed at `DEBUG` level on a
+// parse failure so a runaway model does not flood the log volume even when
+// the operator has explicitly opted into raw-content logging.
 const rawResponseLogLimit = 4096
+
+// fingerprintHexLen is the prefix length of the response SHA-256 digest emitted
+// at `ERROR` so two failures with the same model output can be correlated
+// without exposing the model output itself.
+const fingerprintHexLen = 16
 
 // repairBufferSlack pre-allocates room for a handful of `\` escapes injected
 // by `repairJSONStrings`. The exact value barely matters — it just keeps the
@@ -29,7 +37,7 @@ const defaultVerdict = "comment"
 // ErrUnparseableResponse is returned when the AI response cannot be parsed
 // even after a repair pass. Callers in the command layer treat this as a
 // hard failure so no malformed JSON ends up posted to a PR thread.
-var ErrUnparseableResponse = errors.New("AI response is not valid JSON, even after repair")
+var ErrUnparseableResponse = errors.New("ai response is not valid JSON, even after repair")
 
 // ParseReviewResponse parses an AI response string into a `ReviewResult`.
 //
@@ -38,15 +46,22 @@ var ErrUnparseableResponse = errors.New("AI response is not valid JSON, even aft
 //  2. extract a fenced ```json ... ``` block and unmarshal that;
 //  3. run a repair pass that escapes unescaped double quotes inside string
 //     values, then unmarshal the repaired content;
-//  4. give up — log the raw content (truncated) and return
-//     `ErrUnparseableResponse` so the worker logs the failure and does not
-//     post anything to the PR.
+//  4. give up — log a length + content fingerprint at `ERROR`, log the raw
+//     content (truncated) at `DEBUG` only, and return `ErrUnparseableResponse`
+//     so the worker logs the failure and does not post anything to the PR.
 //
 // Step 3 exists because LLMs occasionally forget to escape a `"` inside a
 // generated string value (e.g. `"body":"... — "Always use ..."."`) and the
 // stock parser then dropped the whole response into a PR thread as plain
 // text. See `code-guru` PR review of `internal/auth-service#NNNN` thread
 // `71418` for the canonical failure trace.
+//
+// The raw content is intentionally NOT emitted at `ERROR` because the model
+// echoes pieces of the prompt back in the body field and the prompt embeds
+// the full PR diff — so an unconditional raw-content log would dump
+// arbitrary repository source (and any in-diff secrets) into shared log
+// stores. Operators who need the raw output for diagnosis can drop the log
+// level to `DEBUG` on a single pod.
 func ParseReviewResponse(content string) (*entities.ReviewResult, error) {
 	// 1. strict parse
 	if result, ok := tryUnmarshal(content); ok {
@@ -71,11 +86,23 @@ func ParseReviewResponse(content string) (*entities.ReviewResult, error) {
 
 	// 4. give up
 	logger.WithFields(logger.Fields{
-		"length": len(content),
-		"head":   truncate(content, rawResponseLogLimit),
+		"length":      len(content),
+		"fingerprint": fingerprintContent(content),
 	}).Error("failed to parse AI response as JSON; refusing to post raw content as a PR thread")
+	logger.WithField("raw", truncate(content, rawResponseLogLimit)).
+		Debug("unparseable AI response (raw, truncated) — gated behind DEBUG to avoid leaking diff content")
 
 	return nil, fmt.Errorf("%w (length=%d)", ErrUnparseableResponse, len(content))
+}
+
+// fingerprintContent returns the first `fingerprintHexLen` hex chars of the
+// SHA-256 digest of `s`. Two failures emitting the same fingerprint are the
+// same model output, so operators can grep across pods/runs without exposing
+// the content itself.
+func fingerprintContent(s string) string {
+	digest := sha256.Sum256([]byte(s))
+
+	return hex.EncodeToString(digest[:])[:fingerprintHexLen]
 }
 
 func tryUnmarshal(s string) (*entities.ReviewResult, bool) {
