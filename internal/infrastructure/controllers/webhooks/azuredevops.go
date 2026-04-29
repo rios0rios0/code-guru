@@ -45,7 +45,17 @@ type adoProject struct {
 // Auth: Basic. ADO does not support HMAC signing on Service Hooks.
 // Supported events: git.pullrequest.created and git.pullrequest.updated for
 // active PRs. All other events return 204 No Content.
+//
+// number of validation guard clauses it has to enforce in order before
+// touching the worker queue. Splitting further would scatter the request flow
+// across multiple methods without removing any branches.
+//
+//nolint:funlen // Single-shot HTTP handler whose length is proportional to the
 func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
+	if !d.enforceSourceIPAllowlist(w, r, "ADO") {
+		return
+	}
+
 	if authErr := VerifyBasicAuth(d.settings.Server.WebhookSecret, r.Header.Get("Authorization")); authErr != nil {
 		logger.Warnf("ADO webhook rejected: %v", authErr)
 		status := http.StatusUnauthorized
