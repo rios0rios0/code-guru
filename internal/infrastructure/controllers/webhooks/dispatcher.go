@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"slices"
+	"strings"
 
 	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
 	registry "github.com/rios0rios0/gitforge/pkg/registry/infrastructure"
@@ -24,13 +26,14 @@ type Submitter interface {
 
 // Dispatcher bridges webhook events to the domain review logic.
 type Dispatcher struct {
-	aiFactory        *infraRepos.AIReviewerFactory
-	rulesFactory     *infraRepos.RulesRepositoryFactory
-	detectorRegistry repositories.TrivialDetectorRegistry
-	settings         *entities.Settings
-	providerRegistry *registry.ProviderRegistry
-	submitter        Submitter
-	githubTokenizer  GitHubTokenizer
+	aiFactory             *infraRepos.AIReviewerFactory
+	rulesFactory          *infraRepos.RulesRepositoryFactory
+	detectorRegistry      repositories.TrivialDetectorRegistry
+	settings              *entities.Settings
+	providerRegistry      *registry.ProviderRegistry
+	submitter             Submitter
+	githubTokenizer       GitHubTokenizer
+	allowedSourcePrefixes []netip.Prefix
 }
 
 // GitHubTokenizer resolves an installation access token for a GitHub App.
@@ -48,12 +51,37 @@ func NewDispatcher(
 	providerRegistry *registry.ProviderRegistry,
 ) *Dispatcher {
 	return &Dispatcher{
-		aiFactory:        aiFactory,
-		rulesFactory:     rulesFactory,
-		detectorRegistry: detectorRegistry,
-		settings:         settings,
-		providerRegistry: providerRegistry,
+		aiFactory:             aiFactory,
+		rulesFactory:          rulesFactory,
+		detectorRegistry:      detectorRegistry,
+		settings:              settings,
+		providerRegistry:      providerRegistry,
+		allowedSourcePrefixes: parseAllowedCIDRs(settings.Server.AllowedSourceCIDRs),
 	}
+}
+
+// parseAllowedCIDRs validates and parses each CIDR entry once at startup so
+// hot-path requests don't re-parse the same strings. Invalid entries are
+// logged and skipped — this keeps the dispatcher boot-able if a single typo
+// slips through, while still surfacing the problem in the operator log.
+func parseAllowedCIDRs(raw []string) []netip.Prefix {
+	if len(raw) == 0 {
+		return nil
+	}
+	parsed := make([]netip.Prefix, 0, len(raw))
+	for _, c := range raw {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(c)
+		if err != nil {
+			logger.Warnf("dispatcher: ignoring invalid CIDR %q in Server.AllowedSourceCIDRs: %v", c, err)
+			continue
+		}
+		parsed = append(parsed, prefix)
+	}
+	return parsed
 }
 
 // SetSubmitter wires the worker pool used to enqueue review jobs. Called by the
