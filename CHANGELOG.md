@@ -16,6 +16,11 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added `deliver_docker: true` to `.github/workflows/default.yaml` so future tag pushes automatically build and publish the Docker image to `ghcr.io/rios0rios0/code-guru` alongside the binary release; previously every image bump required a manual `docker build && docker push` (see the `0.2.0` rollout for the toolbox stack)
+- added `packages: 'write'` to the workflow `permissions:` block so the `delivery-docker` job can authenticate to GHCR; reusable workflows cannot escalate beyond the caller's grants, so the permission has to be declared at the caller level
+
 ### Changed
 
 - changed `BuildSystemPrompt` to fall back to a general best-practices system prompt when no rules are loaded; the previous template embedded an empty `Rules to enforce` block plus the instruction `Do NOT comment on style preferences not covered by the rules`, which made the LLM correctly produce zero comments on every PR when `CODE_GURU_RULES_PATH` was unset or no rules matched the file languages — the no-rules path now asks the model to review for bugs, security issues, performance problems, and clear correctness violations without referencing a non-existent rule set
