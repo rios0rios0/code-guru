@@ -208,9 +208,15 @@ func (c *ReviewCommand) buildDiffs(
 			return nil, fmt.Errorf("failed to get PR diff: %w", err)
 		}
 
+		// `support.LookupChunkByPath` normalises the leading slash
+		// that Azure DevOps's `GetPullRequestFiles` returns on every
+		// path (e.g. `/README.md`). Without the normalisation, the
+		// chunk lookup would always miss for ADO PRs and the AI would
+		// receive an empty diff under each file header, then correctly
+		// report "no diff to review".
 		chunks := support.SplitUnifiedDiff(fullDiff)
 		for i := range diffs {
-			if chunk, ok := chunks[diffs[i].Path]; ok {
+			if chunk, ok := support.LookupChunkByPath(chunks, diffs[i].Path); ok {
 				diffs[i].Diff = chunk
 			}
 		}
