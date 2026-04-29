@@ -16,23 +16,24 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
-### Fixed
-
-- fixed `Repository ID is empty, falling back to repository name for API calls` warning emitted by the gitforge Azure DevOps provider on every webhook delivery; the ADO `git.pullrequest.created` / `updated` payload includes the repository UUID at `resource.repository.id` but the handler was not extracting it. Added `ID` to the `adoRepository` struct and now passes `forgeEntities.Repository{ID: ...}`. The fallback-to-name path still works when the handler receives a payload with a missing or empty `resource.repository.id`
+## [1.4.0] - 2026-04-28
 
 ### Added
 
-- added `Server.AllowedSourceCIDRs` (env: `CODE_GURU_SERVER_ALLOWED_SOURCE_CIDRS`) — a comma-separated CIDR allowlist enforced on `/webhooks/azuredevops` and `/webhooks/github` before any auth check; the source IP is read from `CF-Connecting-IP`, then `X-Real-IP`, then the leftmost `X-Forwarded-For` entry, then `RemoteAddr` (in that order); empty list means "no allowlist", preserving existing behaviour. CIDRs are parsed once at dispatcher construction so the per-request hot path has no parsing cost; invalid entries are logged and skipped
 - added `clientIP(*http.Request)` and `sourceIPAllowed(ip, prefixes)` helpers in `internal/infrastructure/controllers/webhooks/source_ip.go`, plus a `Dispatcher.enforceSourceIPAllowlist` middleware-style helper that both webhook handlers call as their first guard
-
 - added `deliver_docker: true` to `.github/workflows/default.yaml` so future tag pushes automatically build and publish the Docker image to `ghcr.io/rios0rios0/code-guru` alongside the binary release; previously every image bump required a manual `docker build && docker push` (see the `0.2.0` rollout for the toolbox stack)
 - added `packages: 'write'` to the workflow `permissions:` block so the `delivery-docker` job can authenticate to GHCR; reusable workflows cannot escalate beyond the caller's grants, so the permission has to be declared at the caller level
+- added `Server.AllowedSourceCIDRs` (env: `CODE_GURU_SERVER_ALLOWED_SOURCE_CIDRS`) — a comma-separated CIDR allowlist enforced on `/webhooks/azuredevops` and `/webhooks/github` before any auth check; the source IP is read from `CF-Connecting-IP`, then `X-Real-IP`, then the leftmost `X-Forwarded-For` entry, then `RemoteAddr` (in that order); empty list means "no allowlist", preserving existing behavior. CIDRs are parsed once at dispatcher construction so the per-request hot path has no parsing cost; invalid entries are logged and skipped
 
 ### Changed
 
 - changed `BuildSystemPrompt` to fall back to a general best-practices system prompt when no rules are loaded; the previous template embedded an empty `Rules to enforce` block plus the instruction `Do NOT comment on style preferences not covered by the rules`, which made the LLM correctly produce zero comments on every PR when `CODE_GURU_RULES_PATH` was unset or no rules matched the file languages — the no-rules path now asks the model to review for bugs, security issues, performance problems, and clear correctness violations without referencing a non-existent rule set
 - changed both system prompt templates to include `"verdict": "approve"` in the no-issues example so the LLM does not omit the field on clean reviews; without this, `ParseReviewResponse` defaulted to `comment` and downstream automation could never reach a clean `approve` verdict
-- changed the `Dockerfile` `SHELL` directive from `["/bin/bash", "-c"]` to `["/bin/bash", "-eo", "pipefail", "-c"]` so `pipefail` is enforced at the shell level for every `RUN` (the inline `set -euxo pipefail` becomes redundant defense in depth) — fixes hadolint `DL4006` triggered by the `claude --version | tee /etc/claude-version` pipe added in `1.4.0`
+- changed the `Dockerfile` `SHELL` directive from `["/bin/bash", "-c"]` to `["/bin/bash", "-eo", "pipefail", "-c"]` so `pipefail` is enforced at the shell level for every `RUN` (the inline `set -euxo pipefail` becomes redundant defense in depth) — fixes Hadolint `DL4006` triggered by the `claude --version | tee /etc/claude-version` pipe added in `1.4.0`
+
+### Fixed
+
+- fixed `Repository ID is empty, falling back to repository name for API calls` warning emitted by the `gitforge` Azure DevOps provider on every webhook delivery; the ADO `git.pullrequest.created` / `updated` payload includes the repository UUID at `resource.repository.id` but the handler was not extracting it. Added `ID` to the `adoRepository` struct and now passes `forgeEntities.Repository{ID: ...}`. The fallback-to-name path still works when the handler receives a payload with a missing or empty `resource.repository.id`
 
 ## [1.3.0] - 2026-04-28
 
@@ -41,7 +42,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - added `git.pullrequest.created` and `git.pullrequest.updated` handler that builds an `azuredevops` `ReviewProvider` and enqueues active PRs for asynchronous review
 - added `Server.AllowedOrganizations` and `Server.AllowedProjects` allowlists (defense-in-depth) consulted by both webhook handlers, returning `403 Forbidden` for off-list payloads
 - added a `Dockerfile` (multi-stage `golang:1.26-alpine` builder, `gcr.io/distroless/static-debian12:nonroot` runtime, `EXPOSE 8080`) and a `.dockerignore`
-- added a `health` subcommand (`code-guru health`) that probes a running `serve` listener and exits `0` on `200`, `1` otherwise; used by the `Dockerfile` `HEALTHCHECK` directive (the distroless base image has no shell, no `curl`, no `wget`, so the binary doubles as its own healthcheck client)
+- added a `health` subcommand (`code-guru health`) that probes a running `serve` listener and exits `0` on `200`, `1` otherwise; used by the `Dockerfile` `HEALTHCHECK` directive (the `distroless` base image has no shell, no `curl`, no `wget`, so the binary doubles as its own health check client)
 - added a `HEALTHCHECK` directive to the `Dockerfile` calling `code-guru health` with a 30s interval and a 10s start period, so `docker run` / `compose` deployments get a live readiness signal without requiring a Kubernetes probe
 - added a bounded asynchronous worker `Pool` (configurable `Workers` and `QueueSize`) that drains review jobs and recovers from per-job panics so a single failure does not crash the worker
 - added Basic Auth verification for the Azure DevOps Service Hook endpoint (constant `code-guru` username, configurable secret password)
@@ -53,7 +54,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 - changed `Dispatcher.findToken` to fall back to a single untyped provider entry, so the env-only configuration (`CODE_GURU_PROVIDER_TOKEN`) works for both GitHub and Azure DevOps webhook handlers
 - changed `NewSettings` to also resolve `${ENV_VAR}`/file-path references for `server.webhook_secret` and `github_app.private_key`, so YAML literals like `${CODE_GURU_WEBHOOK_SECRET}` are expanded before reaching the auth/JWT code paths
-- changed `Pool.Submit` to hold the same mutex used by `Shutdown` while sending on the queue, eliminating the TOCTOU race that could panic with `send on closed channel` under concurrent traffic and graceful shutdown
+- changed `Pool.Submit` to hold the same mutex used by `Shutdown` while sending on the queue, eliminating the `TOCTOU` race that could panic with `send on closed channel` under concurrent traffic and graceful shutdown
 - changed `Pool` workers to receive a cancellable base context that `Shutdown` cancels, so in-flight `JobHandler` invocations can observe shutdown timeouts via the `ctx` argument
 - changed `ServeController.Execute` to validate required settings (`ai.backend`, `server.webhook_secret`) up front and exit fatally instead of starting with the empty `Settings` fallback
 - changed `VerifyBasicAuth` to accept the `Basic` scheme prefix case-insensitively per RFC 7617/7235
@@ -130,7 +131,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Changed
 
-- changed cliforge import paths to reflect upstream `pkg/` restructuring
+- changed `cliforge` import paths to reflect upstream `pkg/` restructuring
 - changed the Go module dependencies to their latest versions
 
 ## [1.0.3] - 2026-03-31
@@ -156,9 +157,9 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 ### Added
 
 - added `--version` flag to the CLI using Cobra's built-in version support
-- added `.autobump.yaml` validation for bump-* trivial adapters to verify version files are present
+- added `.autobump.yaml` validation for `bump-*` trivial adapters to verify version files are present
 - added `update-go`, `update-node`, `update-python` trivial adapters for dependency update PRs
-- added version ldflags injection at build time via `make build` and `make install` targets
+- added version `ldflags` injection at build time via `make build` and `make install` targets
 
 ### Changed
 
