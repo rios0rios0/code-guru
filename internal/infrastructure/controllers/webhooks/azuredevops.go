@@ -31,6 +31,7 @@ type adoResource struct {
 }
 
 type adoRepository struct {
+	ID        string     `json:"id"`
 	Name      string     `json:"name"`
 	RemoteURL string     `json:"remoteUrl"`
 	Project   adoProject `json:"project"`
@@ -117,6 +118,7 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo := forgeEntities.Repository{
+		ID:           event.Resource.Repository.ID,
 		Name:         event.Resource.Repository.Name,
 		Organization: org,
 		Project:      event.Resource.Repository.Project.Name,
