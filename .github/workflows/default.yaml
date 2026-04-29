@@ -15,6 +15,7 @@ permissions:
   checks: 'write' # code_check-style_golangci_lint
   security-events: 'write' # security-sast_codeql
   contents: 'write' # delivery-release
+  packages: 'write' # delivery-docker (deliver_docker: true) — push to ghcr.io/rios0rios0/code-guru
 
 jobs:
   default:
