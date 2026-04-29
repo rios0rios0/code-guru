@@ -68,3 +68,58 @@ index 123..456 100644
 		assert.Empty(t, result)
 	})
 }
+
+func TestLookupChunkByPath(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should find chunk when caller path matches the bare key", func(t *testing.T) {
+		// given
+		chunks := map[string]string{"README.md": "diff body"}
+
+		// when
+		chunk, ok := support.LookupChunkByPath(chunks, "README.md")
+
+		// then
+		assert.True(t, ok)
+		assert.Equal(t, "diff body", chunk)
+	})
+
+	t.Run("should find chunk when caller path has a leading slash (Azure DevOps shape)", func(t *testing.T) {
+		// given: SplitUnifiedDiff keys chunks by the bare new-side path, but
+		// Azure DevOps's GetPullRequestFiles returns paths like "/README.md".
+		// Without normalisation the lookup would always miss for ADO PRs and
+		// the AI would receive an empty diff under each file header.
+		chunks := map[string]string{"README.md": "diff body"}
+
+		// when
+		chunk, ok := support.LookupChunkByPath(chunks, "/README.md")
+
+		// then
+		assert.True(t, ok)
+		assert.Equal(t, "diff body", chunk)
+	})
+
+	t.Run("should return false when the path does not exist in the chunks", func(t *testing.T) {
+		// given
+		chunks := map[string]string{"README.md": "diff body"}
+
+		// when
+		chunk, ok := support.LookupChunkByPath(chunks, "missing.go")
+
+		// then
+		assert.False(t, ok)
+		assert.Empty(t, chunk)
+	})
+
+	t.Run("should preserve nested path segments after the leading slash", func(t *testing.T) {
+		// given
+		chunks := map[string]string{"src/util/helper.go": "diff body"}
+
+		// when
+		chunk, ok := support.LookupChunkByPath(chunks, "/src/util/helper.go")
+
+		// then
+		assert.True(t, ok)
+		assert.Equal(t, "diff body", chunk)
+	})
+}
