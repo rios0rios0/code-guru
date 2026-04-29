@@ -67,6 +67,8 @@ func adoBasicAuth(secret string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(webhooks.BasicAuthUsername+":"+secret))
 }
 
+const adoRepoUUID = "11111111-2222-3333-4444-555555555555"
+
 const adoActivePRPayload = `{
   "eventType": "git.pullrequest.created",
   "resource": {
@@ -77,6 +79,7 @@ const adoActivePRPayload = `{
     "sourceRefName": "refs/heads/feat/x",
     "targetRefName": "refs/heads/main",
     "repository": {
+      "id": "11111111-2222-3333-4444-555555555555",
       "name": "demo-repo",
       "remoteUrl": "https://dev.azure.com/ZestSecurity/Platform/_git/demo-repo",
       "project": {"name": "Platform"}
@@ -103,6 +106,8 @@ func TestHandleAzureDevOps(t *testing.T) {
 		require.Len(t, jobs, 1)
 		assert.Equal(t, 42, jobs[0].PR.ID)
 		assert.Equal(t, adoRepoName, jobs[0].Repo.Name)
+		assert.Equal(t, adoRepoUUID, jobs[0].Repo.ID,
+			"Repo.ID must be populated from resource.repository.id so the gitforge ADO provider can use the UUID instead of falling back to the repo name")
 		assert.Equal(t, adoProjectName, jobs[0].Repo.Project)
 		assert.Equal(t, adoOrgSlug, jobs[0].Repo.Organization)
 		assert.False(t, jobs[0].CIPassed)
