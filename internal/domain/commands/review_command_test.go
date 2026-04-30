@@ -63,17 +63,18 @@ func TestShouldPostSummary(t *testing.T) {
 		assert.False(t, ok, "summary must not be posted when the summary string is empty")
 	})
 
-	t.Run("should suppress summary when summary is empty even though inline comments are absent", func(t *testing.T) {
-		// given: an empty-summary result must not produce a blank PR-wide
-		// thread regardless of the comments slice shape.
+	t.Run("should treat a whitespace-only summary as non-empty (current contract)", func(t *testing.T) {
+		// given: the predicate's emptiness check is `Summary != ""`, so a
+		// whitespace-only summary is considered non-empty and posted when
+		// `Comments` is empty. Pin this behaviour so a future change to
+		// trim or treat whitespace as empty is deliberate and arrives with
+		// an explicit test update.
 		result := &entities.ReviewResult{Summary: "   ", Comments: nil}
 
 		// when
 		ok := commands.ShouldPostSummary(result)
 
-		// then: whitespace-only summaries are still treated as non-empty by
-		// the predicate today (it checks `!= ""`); this test pins that
-		// behaviour so a future change has to be deliberate.
-		assert.True(t, ok, "current contract: any non-empty Summary string is posted when no inline comments exist")
+		// then
+		assert.True(t, ok, "whitespace-only Summary is treated as non-empty and posted when Comments is empty")
 	})
 }
