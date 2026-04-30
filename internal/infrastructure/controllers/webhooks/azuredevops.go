@@ -100,24 +100,38 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 
 	org := extractADOOrganization(event.Resource.Repository.RemoteURL)
 	if !d.allowedOrganization(org) || !d.allowedProject(event.Resource.Repository.Project.Name) {
-		logger.Warnf("ADO webhook: org=%q project=%q not on allowlist", org, event.Resource.Repository.Project.Name)
-		// On allowlist rejection, dump the parsed shape and a head of the
-		// raw body at `Debug` so operators can correlate "why was the
-		// payload empty" against what ADO actually sent — particularly
-		// useful when the management notification API shows a fully
-		// populated `resource` but the live HTTP body delivered to the
-		// pod is sparse. Capped at 4 KB to keep the log volume bounded.
+		// On allowlist rejection, dump the parsed shape AND a head of
+		// the raw body at `Warn`. The diagnostic is intentionally NOT
+		// gated behind `Debug` because the operational reality is that
+		// rejection is rare (the org/project allowlist is small and
+		// stable) but when it fires it always means something is
+		// genuinely wrong with the wire payload — the management API
+		// shows fully populated `resource.repository` blocks while the
+		// pod sees them empty, and a `kubectl set env DEBUG=true` patch
+		// keeps getting reverted by `terra apply` runs that race with
+		// the diagnosis loop. Surfacing at `Warn` (the same level as
+		// the existing `not on allowlist` line) makes the diagnostic
+		// survive whatever the pod's log level happens to be set to.
+		//
+		// Body cap is `adoRawBodyLogLimit` (32 KB) to cover the typical
+		// `git.pullrequest.*` envelope including the verbose
+		// `message` / `detailedMessage` blocks plus the `resource`
+		// block that sits after them — at 4 KB the cut landed right
+		// before `resource`, which was the entire diagnostic of value.
+		// 32 KB is still a constant per request and still eligible for
+		// the `truncationSentinel` tail.
 		logger.WithFields(logger.Fields{
-			"event_type":    event.EventType,
-			"pull_id":       event.Resource.PullRequestID,
-			"status":        event.Resource.Status,
-			"repo_id":       event.Resource.Repository.ID,
-			"repo_name":     event.Resource.Repository.Name,
-			"remote_url":    event.Resource.Repository.RemoteURL,
-			"project_name":  event.Resource.Repository.Project.Name,
-			"body_length":   len(body),
-			"body_head_4kb": support.TruncateBytesForLog(body, adoRawBodyLogLimit),
-		}).Debug("ADO webhook: payload diagnostic on allowlist rejection")
+			"event_type":   event.EventType,
+			"pull_id":      event.Resource.PullRequestID,
+			"status":       event.Resource.Status,
+			"repo_id":      event.Resource.Repository.ID,
+			"repo_name":    event.Resource.Repository.Name,
+			"remote_url":   event.Resource.Repository.RemoteURL,
+			"project_name": event.Resource.Repository.Project.Name,
+			"body_length":  len(body),
+			"body_head":    support.TruncateBytesForLog(body, adoRawBodyLogLimit),
+			"parsed_org":   org,
+		}).Warnf("ADO webhook: org=%q project=%q not on allowlist", org, event.Resource.Repository.Project.Name)
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -231,7 +245,12 @@ func refToBranch(ref string) string {
 	return strings.TrimPrefix(ref, "refs/heads/")
 }
 
-// adoRawBodyLogLimit caps the number of body bytes echoed at `Debug` on the
-// allowlist-rejection diagnostic. 4 KB covers the canonical ADO payload
-// envelope while keeping the log volume bounded under burst load.
-const adoRawBodyLogLimit = 4096
+// adoRawBodyLogLimit caps the number of body bytes echoed at `Warn` on the
+// allowlist-rejection diagnostic. 32 KB covers the canonical ADO payload
+// envelope including the `message` / `detailedMessage` blocks AND the
+// `resource` block that sits after them — at the previous 4 KB cap the
+// cut landed right before `resource`, which was the entire diagnostic of
+// value. The `Warn`-level emission is intentionally not gated behind
+// `Debug` because the rejection itself is already a rare, operator-level
+// signal and the body cap keeps the per-request cost bounded.
+const adoRawBodyLogLimit = 32768
