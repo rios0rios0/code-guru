@@ -16,14 +16,16 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
-### Fixed
-
-- fixed `code-guru` posting the raw model output as a single PR-wide thread when the AI returned malformed JSON; observed on `backend/authenticator#12027` thread `71418` where the model emitted `"body":"... Rule: Go Logging — "Always use \`WithFields\` ..."."` with unescaped `"` characters inside the string value. `json.Unmarshal` rejected it, the markdown-fence regex missed (the model honoured the "no fences" instruction), and `ParseReviewResponse` defaulted to `Verdict="comment"` plus `Summary=raw response` — which `postComments` then dumped onto the PR as a 3.5 KB JSON blob. Added a `repairJSONStrings` state-machine pass that escapes any `"` whose lookahead is not a JSON structural token (`,`, `:`, `}`, `]`, or end of input); valid JSON round-trips unchanged. On total parse failure the parser now logs the raw content (truncated to `4096` bytes) at `ERROR` and returns `support.ErrUnparseableResponse` so the worker logs the failure and posts nothing — instead of fabricating a comment from the broken response
+## [1.4.1] - 2026-04-30
 
 ### Changed
 
 - changed `support.ParseReviewResponse` so it no longer falls back to `&ReviewResult{Summary: content}` on a parse failure — that fallback is what allowed the malformed-JSON dump described above to reach the PR. Callers that depended on the previous "always returns a result" contract (the three AI reviewer repositories — `claude`, `openai`, `anthropic`) propagate the new error up through `ReviewDiff`; the worker layer already logs and swallows reviewer errors, so a parse failure now manifests as a log line and an absent comment rather than a noisy thread
 - changed the Go module dependencies to their latest versions
+
+### Fixed
+
+- fixed `code-guru` posting the raw model output as a single PR-wide thread when the AI returned malformed JSON; observed on `backend/authenticator#12027` thread `71418` where the model emitted `"body":"... Rule: Go Logging — "Always use \`WithFields\` ..."."` with unescaped `"` characters inside the string value. `json.Unmarshal` rejected it, the markdown-fence regex missed (the model honoured the "no fences" instruction), and `ParseReviewResponse` defaulted to `Verdict="comment"` plus `Summary=raw response` — which `postComments` then dumped onto the PR as a 3.5 KB JSON blob. Added a `repairJSONStrings` state-machine pass that escapes any `"` whose lookahead is not a JSON structural token (`,`, `:`, `}`, `]`, or end of input); valid JSON round-trips unchanged. On total parse failure the parser now logs the raw content (truncated to `4096` bytes) at `ERROR` and returns `support.ErrUnparseableResponse` so the worker logs the failure and posts nothing — instead of fabricating a comment from the broken response
 
 ## [1.4.0] - 2026-04-29
 
