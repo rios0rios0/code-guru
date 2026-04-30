@@ -86,9 +86,9 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if !strings.EqualFold(event.Resource.Status, "active") {
+	if isClosedADOPullRequestStatus(event.Resource.Status) {
 		logger.Debugf(
-			"ADO webhook: PR #%d status %q is not active",
+			"ADO webhook: PR #%d status %q is closed (abandoned/completed)",
 			event.Resource.PullRequestID,
 			event.Resource.Status,
 		)
@@ -157,6 +157,28 @@ var supportedADOEvents = map[string]struct{}{
 
 func isSupportedADOEvent(eventType string) bool {
 	_, ok := supportedADOEvents[eventType]
+	return ok
+}
+
+// closedADOPullRequestStatuses lists the values of `resource.status` that
+// represent a Pull Request the bot must NOT review. The check is
+// allow-list-by-rejection: anything not in this set (including the empty
+// string and any future enum value Azure DevOps may add) proceeds. ADO's
+// `git.pullrequest.created` / `git.pullrequest.updated` events are
+// observed in the wild to ship `resource.status: ""` on certain
+// commit-only updates — particularly on Zest-Terraform PR #12029 captured
+// in the diagnosis log — and an empty status used to short-circuit the
+// handler with a 204, dropping every push silently. The new shape only
+// rejects PRs that are explicitly closed.
+//
+//nolint:gochecknoglobals // read-only lookup table used as a constant
+var closedADOPullRequestStatuses = map[string]struct{}{
+	"abandoned": {},
+	"completed": {},
+}
+
+func isClosedADOPullRequestStatus(status string) bool {
+	_, ok := closedADOPullRequestStatuses[strings.ToLower(strings.TrimSpace(status))]
 	return ok
 }
 

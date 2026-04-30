@@ -148,7 +148,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("should respond 204 (No Content) when the PR is not active", func(t *testing.T) {
+	t.Run("should respond 204 (No Content) when the PR is abandoned", func(t *testing.T) {
 		// given
 		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
 		payload := `{"eventType":"git.pullrequest.updated","resource":{"pullRequestId":1,"status":"abandoned","repository":{"name":"r","remoteUrl":"https://dev.azure.com/ZestSecurity/Platform/_git/r","project":{"name":"Platform"}}}}`
@@ -162,6 +162,46 @@ func TestHandleAzureDevOps(t *testing.T) {
 		// then
 		assert.Equal(t, http.StatusNoContent, w.Code)
 		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 204 (No Content) when the PR is completed", func(t *testing.T) {
+		// given: `completed` is the second known closed value alongside
+		// `abandoned`. Anything else proceeds — see the empty-status case
+		// below.
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		payload := fmt.Sprintf(`{"eventType":"git.pullrequest.updated","resource":{"pullRequestId":7,"status":"completed","repository":{"id":%q,"name":"demo-repo","remoteUrl":"https://dev.azure.com/ZestSecurity/Platform/_git/demo-repo","project":{"name":"Platform"}}}}`, adoRepoUUID)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(payload))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 202 (Accepted) when status is empty", func(t *testing.T) {
+		// given: ADO's `git.pullrequest.updated` payload is observed in
+		// the wild to ship `resource.status: ""` on commit-only updates —
+		// captured live on Zest-Terraform PR #12029 where every push was
+		// silently 204'd. The handler's old strict-active check rejected
+		// every such delivery; the new check only rejects KNOWN closed
+		// states, so an empty (or any unknown) status proceeds and the
+		// PR is enqueued.
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		payload := fmt.Sprintf(`{"eventType":"git.pullrequest.updated","resource":{"pullRequestId":42,"status":"","repository":{"id":%q,"name":"demo-repo","remoteUrl":"https://dev.azure.com/ZestSecurity/Platform/_git/demo-repo","project":{"name":"Platform"}}}}`, adoRepoUUID)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(payload))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusAccepted, w.Code)
+		assert.Len(t, sub.Jobs(), 1)
 	})
 
 	t.Run("should respond 204 (No Content) when the event is unsupported", func(t *testing.T) {
