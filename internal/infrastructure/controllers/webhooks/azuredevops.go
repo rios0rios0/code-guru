@@ -11,6 +11,8 @@ import (
 
 	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
 	logger "github.com/sirupsen/logrus"
+
+	"github.com/rios0rios0/codeguru/internal/support"
 )
 
 // adoEvent is the minimal subset of an Azure DevOps Service Hook payload that
@@ -114,7 +116,7 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 			"remote_url":    event.Resource.Repository.RemoteURL,
 			"project_name":  event.Resource.Repository.Project.Name,
 			"body_length":   len(body),
-			"body_head_4kb": truncateForLog(string(body), adoRawBodyLogLimit),
+			"body_head_4kb": support.TruncateBytesForLog(body, adoRawBodyLogLimit),
 		}).Debug("ADO webhook: payload diagnostic on allowlist rejection")
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
@@ -233,15 +235,3 @@ func refToBranch(ref string) string {
 // allowlist-rejection diagnostic. 4 KB covers the canonical ADO payload
 // envelope while keeping the log volume bounded under burst load.
 const adoRawBodyLogLimit = 4096
-
-// truncateForLog returns the first n bytes of s plus a sentinel when the
-// input was clipped. Safe for arbitrary UTF-8 — the cut is byte-based, so a
-// trailing multi-byte rune may be split, which is acceptable for a raw-body
-// diagnostic where the goal is to glance at the structure, not parse it.
-func truncateForLog(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-
-	return s[:n] + "...[truncated]"
-}

@@ -3,7 +3,6 @@
 package webhooks_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -192,59 +191,9 @@ func TestRefToBranch(t *testing.T) {
 	}
 }
 
-func TestTruncateForLog(t *testing.T) {
-	t.Parallel()
-
-	t.Run("should return input unchanged when shorter than the limit", func(t *testing.T) {
-		assert.Equal(t, "short", webhooks.TruncateForLog("short", 10))
-	})
-
-	t.Run("should return input unchanged when exactly at the limit", func(t *testing.T) {
-		assert.Equal(t, "0123456789", webhooks.TruncateForLog("0123456789", 10))
-	})
-
-	t.Run("should clip and append the truncation sentinel when over the limit", func(t *testing.T) {
-		// given
-		input := strings.Repeat("a", 20)
-
-		// when
-		got := webhooks.TruncateForLog(input, 10)
-
-		// then
-		assert.Equal(t, strings.Repeat("a", 10)+"...[truncated]", got)
-	})
-
-	t.Run("should clip the canonical 4 KB body cap honoured by the diagnostic", func(t *testing.T) {
-		// given: the allowlist-rejection diagnostic uses
-		// `adoRawBodyLogLimit = 4096`. Pin both the cap and the
-		// truncation sentinel so a future "I'll bump it to 8 KB"
-		// change has to surface here.
-		input := strings.Repeat("x", webhooks.ADORawBodyLogLimit*2)
-
-		// when
-		got := webhooks.TruncateForLog(input, webhooks.ADORawBodyLogLimit)
-
-		// then
-		assert.Len(t, got, webhooks.ADORawBodyLogLimit+len("...[truncated]"))
-		assert.True(t, strings.HasSuffix(got, "...[truncated]"), "truncated output must end with the sentinel so log readers can tell")
-	})
-
-	t.Run("should handle empty input", func(t *testing.T) {
-		assert.Empty(t, webhooks.TruncateForLog("", 10))
-	})
-
-	t.Run("should be byte-based (a multi-byte rune at the boundary may be split)", func(t *testing.T) {
-		// given: the diagnostic operates on raw bytes (no UTF-8
-		// boundary search) because the goal is "let an operator glance
-		// at the structure", not produce a valid UTF-8 sub-string. Pin
-		// the byte-based behaviour so a future "let me make this
-		// rune-aware" change is deliberate.
-		input := "héllo" // h=1, é=2 bytes (0xC3 0xA9), l=1, l=1, o=1 → 6 bytes
-
-		// when
-		got := webhooks.TruncateForLog(input, 2)
-
-		// then
-		assert.Len(t, got, 2+len("...[truncated]"))
-	})
-}
+// TestTruncateForLog moved to `internal/support/truncate_test.go` after the
+// helper was consolidated into `support.TruncateForLog` /
+// `support.TruncateBytesForLog`. The webhook diagnostic now passes the
+// raw `[]byte` body directly into `support.TruncateBytesForLog` so the
+// quoted, log-injection-safe form is produced without a full-body string
+// copy.
