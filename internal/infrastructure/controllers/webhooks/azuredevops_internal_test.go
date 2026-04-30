@@ -128,7 +128,11 @@ func TestIsClosedADOPullRequestStatus(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, webhooks.IsClosedADOPullRequestStatus(tc.status))
+			// when
+			got := webhooks.IsClosedADOPullRequestStatus(tc.status)
+
+			// then
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
@@ -155,7 +159,11 @@ func TestIsSupportedADOEvent(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, webhooks.IsSupportedADOEvent(tc.eventType))
+			// when
+			got := webhooks.IsSupportedADOEvent(tc.eventType)
+
+			// then
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
@@ -186,7 +194,11 @@ func TestRefToBranch(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, webhooks.RefToBranch(tc.ref))
+			// when
+			got := webhooks.RefToBranch(tc.ref)
+
+			// then
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
