@@ -89,7 +89,7 @@ func ParseReviewResponse(content string) (*entities.ReviewResult, error) {
 		"length":      len(content),
 		"fingerprint": fingerprintContent(content),
 	}).Error("failed to parse AI response as JSON; refusing to post raw content as a PR thread")
-	logger.WithField("raw", truncate(content, rawResponseLogLimit)).
+	logger.WithField("raw", TruncateForLog(content, rawResponseLogLimit)).
 		Debug("unparseable AI response (raw, truncated) — gated behind DEBUG to avoid leaking diff content")
 
 	return nil, fmt.Errorf("%w (length=%d)", ErrUnparseableResponse, len(content))
@@ -200,12 +200,4 @@ func isJSONStringTerminator(s string, i int) bool {
 	}
 
 	return true
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-
-	return s[:n] + "...[truncated]"
 }
