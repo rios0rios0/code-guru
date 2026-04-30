@@ -258,7 +258,14 @@ func (c *ReviewCommand) postComments(
 	prID int,
 	result *entities.ReviewResult,
 ) {
-	if result.Summary != "" {
+	// Post the PR-wide summary only when there are no per-issue comments
+	// (neither inline `Line > 0` threads nor PR-wide `Line <= 0`
+	// annotations). The per-issue comments already carry the feedback, so
+	// an extra summary thread on every push is pure noise that accumulates
+	// as reviewers push fixes. The summary is still posted for clean
+	// reviews (`verdict=approve` with empty `Comments`) so the operator can
+	// see that the bot ran and concluded with no issues.
+	if shouldPostSummary(result) {
 		if err := provider.PostPullRequestComment(ctx, repo, prID, result.Summary); err != nil {
 			logger.Errorf("failed to post summary comment: %v", err)
 		}
@@ -279,6 +286,19 @@ func (c *ReviewCommand) postComments(
 			}
 		}
 	}
+}
+
+// shouldPostSummary decides whether the PR-wide summary thread should be
+// emitted alongside the per-issue comments. The summary is suppressed
+// whenever `result.Comments` is non-empty — that is, whenever the review
+// carries any per-issue feedback, regardless of whether each item lands as
+// an inline thread (`Line > 0`) or a PR-wide annotation (`Line <= 0`).
+// Each push otherwise produced a fresh duplicate summary even when the
+// per-issue feedback already covered the same content. A non-empty summary
+// with zero comments is still posted so clean reviews (`verdict=approve`,
+// "no issues found") leave a visible signal that the bot ran.
+func shouldPostSummary(result *entities.ReviewResult) bool {
+	return result.Summary != "" && len(result.Comments) == 0
 }
 
 func allDiffsEmpty(diffs []entities.FileDiff) bool {
