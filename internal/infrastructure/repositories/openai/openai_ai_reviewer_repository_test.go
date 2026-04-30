@@ -40,16 +40,19 @@ func TestParseReviewResponse(t *testing.T) {
 		assert.Equal(t, "fenced", result.Summary)
 	})
 
-	t.Run("should fallback to plain text summary", func(t *testing.T) {
-		// given
+	t.Run("should return ErrUnparseableResponse for plain text", func(t *testing.T) {
+		// given: the parser refuses to fabricate a `Summary: content` result,
+		// because the command layer would otherwise post the raw model output
+		// straight onto the PR as a thread. See `internal/support/response_parser.go`
+		// for the rationale.
 		content := "This PR looks fine to me."
 
 		// when
 		result, err := support.ParseReviewResponse(content)
 
 		// then
-		require.NoError(t, err)
-		assert.Equal(t, content, result.Summary)
-		assert.Empty(t, result.Comments)
+		require.Error(t, err)
+		require.ErrorIs(t, err, support.ErrUnparseableResponse)
+		assert.Nil(t, result)
 	})
 }
