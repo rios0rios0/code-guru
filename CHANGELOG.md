@@ -23,6 +23,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 ### Changed
 
 - changed `support.ParseReviewResponse` so it no longer falls back to `&ReviewResult{Summary: content}` on a parse failure — that fallback is what allowed the malformed-JSON dump described above to reach the PR. Callers that depended on the previous "always returns a result" contract (the three AI reviewer repositories — `claude`, `openai`, `anthropic`) propagate the new error up through `ReviewDiff`; the worker layer already logs and swallows reviewer errors, so a parse failure now manifests as a log line and an absent comment rather than a noisy thread
+- changed the Go module dependencies to their latest versions
 
 ## [1.4.0] - 2026-04-29
 
