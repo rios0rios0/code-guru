@@ -15,14 +15,27 @@ func TestTruncate(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should return input unchanged when shorter than the limit", func(t *testing.T) {
-		assert.Equal(t, "short", support.Truncate("short", 10))
+		// given
+		input := "short"
+
+		// when
+		got := support.Truncate(input, 10)
+
+		// then
+		assert.Equal(t, "short", got)
 	})
 
 	t.Run("should return input unchanged when exactly at the limit", func(t *testing.T) {
 		// given: byte length equals the cap — no sentinel must be added,
 		// because the value is fully represented and any sentinel would
 		// confuse the reader.
-		assert.Equal(t, "0123456789", support.Truncate("0123456789", 10))
+		input := "0123456789"
+
+		// when
+		got := support.Truncate(input, 10)
+
+		// then
+		assert.Equal(t, "0123456789", got)
 	})
 
 	t.Run("should clip and append the truncation sentinel when over the limit", func(t *testing.T) {
@@ -37,7 +50,14 @@ func TestTruncate(t *testing.T) {
 	})
 
 	t.Run("should handle empty input", func(t *testing.T) {
-		assert.Empty(t, support.Truncate("", 10))
+		// given
+		input := ""
+
+		// when
+		got := support.Truncate(input, 10)
+
+		// then
+		assert.Empty(t, got)
 	})
 
 	t.Run("should be byte-based and may split a multi-byte rune at the boundary", func(t *testing.T) {
@@ -62,7 +82,13 @@ func TestTruncateForLog(t *testing.T) {
 	t.Run("should quote a short string and skip the sentinel", func(t *testing.T) {
 		// given: under the cap → fully represented. Quoting wraps the
 		// content in `"..."` and escapes any control byte.
-		assert.Equal(t, `"hello"`, support.TruncateForLog("hello", 10))
+		input := "hello"
+
+		// when
+		got := support.TruncateForLog(input, 10)
+
+		// then
+		assert.Equal(t, `"hello"`, got)
 	})
 
 	t.Run("should quote and append sentinel OUTSIDE the quotes when over the limit", func(t *testing.T) {
@@ -71,8 +97,12 @@ func TestTruncateForLog(t *testing.T) {
 		// body. This contract is also what makes the output unambiguous
 		// when the body itself contains the literal `...[truncated]`
 		// substring.
-		got := support.TruncateForLog(strings.Repeat("a", 20), 5)
+		input := strings.Repeat("a", 20)
 
+		// when
+		got := support.TruncateForLog(input, 5)
+
+		// then
 		assert.Equal(t, `"aaaaa"...[truncated]`, got)
 	})
 
@@ -110,7 +140,14 @@ func TestTruncateForLog(t *testing.T) {
 	})
 
 	t.Run("should handle empty input as an empty quoted string with no sentinel", func(t *testing.T) {
-		assert.Equal(t, `""`, support.TruncateForLog("", 10))
+		// given
+		input := ""
+
+		// when
+		got := support.TruncateForLog(input, 10)
+
+		// then
+		assert.Equal(t, `""`, got)
 	})
 
 	t.Run("should produce valid UTF-8 even when the input contains an invalid sequence", func(t *testing.T) {
@@ -132,12 +169,24 @@ func TestTruncateBytesForLog(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should quote a short byte slice and skip the sentinel", func(t *testing.T) {
-		assert.Equal(t, `"hello"`, support.TruncateBytesForLog([]byte("hello"), 10))
+		// given
+		input := []byte("hello")
+
+		// when
+		got := support.TruncateBytesForLog(input, 10)
+
+		// then
+		assert.Equal(t, `"hello"`, got)
 	})
 
 	t.Run("should quote and append sentinel when over the limit", func(t *testing.T) {
-		got := support.TruncateBytesForLog([]byte(strings.Repeat("b", 20)), 5)
+		// given
+		input := []byte(strings.Repeat("b", 20))
 
+		// when
+		got := support.TruncateBytesForLog(input, 5)
+
+		// then
 		assert.Equal(t, `"bbbbb"...[truncated]`, got)
 	})
 
@@ -178,7 +227,18 @@ func TestTruncateBytesForLog(t *testing.T) {
 	})
 
 	t.Run("should handle empty byte slice as an empty quoted string", func(t *testing.T) {
-		assert.Equal(t, `""`, support.TruncateBytesForLog(nil, 10))
-		assert.Equal(t, `""`, support.TruncateBytesForLog([]byte{}, 10))
+		// given: cover both the `nil` slice and the explicit empty-but-
+		// non-nil `[]byte{}` since they are distinct in Go and a regression
+		// could trigger only one of them.
+		var nilBytes []byte
+		emptyBytes := []byte{}
+
+		// when
+		gotNil := support.TruncateBytesForLog(nilBytes, 10)
+		gotEmpty := support.TruncateBytesForLog(emptyBytes, 10)
+
+		// then
+		assert.Equal(t, `""`, gotNil)
+		assert.Equal(t, `""`, gotEmpty)
 	})
 }
