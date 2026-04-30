@@ -99,6 +99,23 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 	org := extractADOOrganization(event.Resource.Repository.RemoteURL)
 	if !d.allowedOrganization(org) || !d.allowedProject(event.Resource.Repository.Project.Name) {
 		logger.Warnf("ADO webhook: org=%q project=%q not on allowlist", org, event.Resource.Repository.Project.Name)
+		// On allowlist rejection, dump the parsed shape and a head of the
+		// raw body at `Debug` so operators can correlate "why was the
+		// payload empty" against what ADO actually sent — particularly
+		// useful when the management notification API shows a fully
+		// populated `resource` but the live HTTP body delivered to the
+		// pod is sparse. Capped at 4 KB to keep the log volume bounded.
+		logger.WithFields(logger.Fields{
+			"event_type":    event.EventType,
+			"pull_id":       event.Resource.PullRequestID,
+			"status":        event.Resource.Status,
+			"repo_id":       event.Resource.Repository.ID,
+			"repo_name":     event.Resource.Repository.Name,
+			"remote_url":    event.Resource.Repository.RemoteURL,
+			"project_name":  event.Resource.Repository.Project.Name,
+			"body_length":   len(body),
+			"body_head_4kb": truncateForLog(string(body), adoRawBodyLogLimit),
+		}).Debug("ADO webhook: payload diagnostic on allowlist rejection")
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -210,4 +227,21 @@ func extractADOOrganization(remoteURL string) string {
 // refToBranch trims the refs/heads/ prefix from a Git ref name.
 func refToBranch(ref string) string {
 	return strings.TrimPrefix(ref, "refs/heads/")
+}
+
+// adoRawBodyLogLimit caps the number of body bytes echoed at `Debug` on the
+// allowlist-rejection diagnostic. 4 KB covers the canonical ADO payload
+// envelope while keeping the log volume bounded under burst load.
+const adoRawBodyLogLimit = 4096
+
+// truncateForLog returns the first n bytes of s plus a sentinel when the
+// input was clipped. Safe for arbitrary UTF-8 — the cut is byte-based, so a
+// trailing multi-byte rune may be split, which is acceptable for a raw-body
+// diagnostic where the goal is to glance at the structure, not parse it.
+func truncateForLog(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+
+	return s[:n] + "...[truncated]"
 }
