@@ -75,11 +75,21 @@ const adoRepoUUID = "11111111-2222-3333-4444-555555555555"
 // stays the single source of truth for the repository UUID — both the
 // JSON body and any assertions compare against the same constant.
 func adoActivePRPayload() string {
+	return adoPRPayload("git.pullrequest.created", "active")
+}
+
+// adoPRPayload renders the canonical ADO PR payload with caller-supplied
+// `eventType` and `resource.status`. Used by the closed-status and
+// empty-status test cases so the body stays a faithful clone of a real
+// delivery (title / url / refs all populated) instead of a hand-trimmed
+// minimal blob — the realistic shape catches downstream parsing issues
+// the minimal version would silently miss.
+func adoPRPayload(eventType, status string) string {
 	return fmt.Sprintf(`{
-  "eventType": "git.pullrequest.created",
+  "eventType": %q,
   "resource": {
     "pullRequestId": 42,
-    "status": "active",
+    "status": %q,
     "title": "Add feature X",
     "url": "https://dev.azure.com/ZestSecurity/Platform/_git/demo-repo/pullrequest/42",
     "sourceRefName": "refs/heads/feat/x",
@@ -91,7 +101,7 @@ func adoActivePRPayload() string {
       "project": {"name": "Platform"}
     }
   }
-}`, adoRepoUUID)
+}`, eventType, status, adoRepoUUID)
 }
 
 func TestHandleAzureDevOps(t *testing.T) {
@@ -169,7 +179,29 @@ func TestHandleAzureDevOps(t *testing.T) {
 		// `abandoned`. Anything else proceeds — see the empty-status case
 		// below.
 		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
-		payload := fmt.Sprintf(`{"eventType":"git.pullrequest.updated","resource":{"pullRequestId":7,"status":"completed","repository":{"id":%q,"name":"demo-repo","remoteUrl":"https://dev.azure.com/ZestSecurity/Platform/_git/demo-repo","project":{"name":"Platform"}}}}`, adoRepoUUID)
+		payload := adoPRPayload("git.pullrequest.updated", "completed")
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(payload))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 204 (No Content) for closed status with mixed case and surrounding whitespace", func(t *testing.T) {
+		// given: the `isClosedADOPullRequestStatus` predicate normalises
+		// via `strings.TrimSpace` + `strings.ToLower`, so a payload that
+		// ships ` Completed ` (mixed case + leading/trailing whitespace)
+		// must still short-circuit. Without this test the case- and
+		// whitespace-tolerance lives in the predicate but is unverified at
+		// the handler boundary, leaving room for a future "fix" to drop
+		// the normalisation and silently re-introduce the original bug.
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		payload := adoPRPayload("git.pullrequest.updated", " Completed ")
 		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(payload))
 		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
 		w := httptest.NewRecorder()
@@ -189,9 +221,11 @@ func TestHandleAzureDevOps(t *testing.T) {
 		// silently 204'd. The handler's old strict-active check rejected
 		// every such delivery; the new check only rejects KNOWN closed
 		// states, so an empty (or any unknown) status proceeds and the
-		// PR is enqueued.
+		// PR is enqueued — with the canonical payload shape so the test
+		// reflects a real delivery (title / url / refs / repo UUID all
+		// populated) rather than a trimmed minimal blob.
 		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
-		payload := fmt.Sprintf(`{"eventType":"git.pullrequest.updated","resource":{"pullRequestId":42,"status":"","repository":{"id":%q,"name":"demo-repo","remoteUrl":"https://dev.azure.com/ZestSecurity/Platform/_git/demo-repo","project":{"name":"Platform"}}}}`, adoRepoUUID)
+		payload := adoPRPayload("git.pullrequest.updated", "")
 		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(payload))
 		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
 		w := httptest.NewRecorder()
@@ -201,7 +235,16 @@ func TestHandleAzureDevOps(t *testing.T) {
 
 		// then
 		assert.Equal(t, http.StatusAccepted, w.Code)
-		assert.Len(t, sub.Jobs(), 1)
+		jobs := sub.Jobs()
+		require.Len(t, jobs, 1)
+		assert.Equal(t, 42, jobs[0].PR.ID, "PR ID must round-trip from resource.pullRequestId")
+		assert.Empty(t, jobs[0].PR.Status, "PR.Status must propagate the original empty value so downstream consumers see what ADO actually sent")
+		assert.Equal(t, adoRepoUUID, jobs[0].Repo.ID, "Repo.ID must be populated from resource.repository.id even when status is empty")
+		assert.Equal(t, adoRepoName, jobs[0].Repo.Name)
+		assert.Equal(t, adoProjectName, jobs[0].Repo.Project)
+		assert.Equal(t, adoOrgSlug, jobs[0].Repo.Organization)
+		assert.Equal(t, "feat/x", jobs[0].PR.SourceBranch, "SourceBranch must be parsed (refs/heads/ stripped) regardless of status")
+		assert.Equal(t, "main", jobs[0].PR.TargetBranch)
 	})
 
 	t.Run("should respond 204 (No Content) when the event is unsupported", func(t *testing.T) {

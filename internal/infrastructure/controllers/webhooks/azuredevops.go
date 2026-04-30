@@ -88,7 +88,7 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 	}
 	if isClosedADOPullRequestStatus(event.Resource.Status) {
 		logger.Debugf(
-			"ADO webhook: PR #%d status %q is closed (abandoned/completed)",
+			"ADO webhook: PR #%d status %q is closed",
 			event.Resource.PullRequestID,
 			event.Resource.Status,
 		)
