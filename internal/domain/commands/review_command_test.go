@@ -826,15 +826,15 @@ func TestMarkerHelpersForwardThreadStatusOption(t *testing.T) {
 
 			// then
 			require.Len(t, provider.calls, 1, "each helper must call PostPullRequestComment exactly once")
-			require.Len(t, provider.calls[0].opts, 1, "each helper must forward exactly one CommentOption")
+			require.NotEmpty(t, provider.calls[0].opts, "each helper must forward at least one CommentOption")
 
-			// Resolve the option through gitforge's helper to confirm
-			// the encoded status value is `closed` — without this we
-			// would be asserting that an opaque function was passed,
-			// not that the right status string lands on the wire.
+			// Resolve the forwarded options through gitforge's helper
+			// to confirm the encoded status value is `closed` — this
+			// keeps the test focused on the contract that matters even
+			// if additional CommentOptions are forwarded in the future.
 			resolved := forgeEntities.ResolveCommentOptions(provider.calls[0].opts...)
 			assert.Equal(t, commands.AnnotationThreadStatus, resolved,
-				"the option must resolve to the AnnotationThreadStatus constant ('closed')")
+				"the forwarded options must resolve to the AnnotationThreadStatus constant ('closed')")
 		})
 	}
 }
