@@ -919,7 +919,7 @@ func TestSubmitNativeReviewFlagGate(t *testing.T) {
 		assert.Equal(t, forgeEntities.ReviewVerdictRequestChanges, provider.submissions[0].Verdict)
 	})
 
-	t.Run("should skip provider call for comment verdict so the AI noise floor stays low", func(t *testing.T) {
+	t.Run("should map comment verdict to WaitingForAuthor so ADO surfaces vote=-5 and GitHub posts a COMMENT review", func(t *testing.T) {
 		t.Parallel()
 
 		// given
@@ -931,7 +931,29 @@ func TestSubmitNativeReviewFlagGate(t *testing.T) {
 			"comment", "FYI", commands.ReviewOptions{SubmitNativeReview: true})
 
 		// then
-		assert.Empty(t, provider.submissions)
+		require.Len(t, provider.submissions, 1)
+		assert.Equal(t, forgeEntities.ReviewVerdictWaitingForAuthor, provider.submissions[0].Verdict)
+		assert.Equal(t, "FYI", provider.submissions[0].Body)
+	})
+
+	t.Run("should map LLM-vocabulary request_changes verdict to RequestChanges (parser emits this, not 'reject')", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+
+		// when
+		commands.SubmitNativeReview(rc, context.Background(), provider, repo, prID,
+			"request_changes", "needs work", commands.ReviewOptions{SubmitNativeReview: true})
+
+		// then: this is the verdict shape that was silently skipped before the
+		// mapper learned the LLM vocabulary — see the dev pod logs from
+		// 2026-05-01T21:13Z where verdict=request_changes never produced a
+		// "native review submission failed" warning AND never produced a vote.
+		require.Len(t, provider.submissions, 1)
+		assert.Equal(t, forgeEntities.ReviewVerdictRequestChanges, provider.submissions[0].Verdict)
+		assert.Equal(t, "needs work", provider.submissions[0].Body)
 	})
 
 	t.Run("should swallow provider errors so the worker keeps going", func(t *testing.T) {

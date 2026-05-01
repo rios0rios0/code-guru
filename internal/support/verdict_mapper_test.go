@@ -31,7 +31,7 @@ func TestMapVerdictToReview(t *testing.T) {
 			wantBody:    "all good",
 		},
 		{
-			name:        "should return RequestChanges submission for reject verdict",
+			name:        "should return RequestChanges submission for reject verdict (trivial detector vocabulary)",
 			verdict:     "reject",
 			summary:     "blocking concerns",
 			wantOK:      true,
@@ -39,10 +39,20 @@ func TestMapVerdictToReview(t *testing.T) {
 			wantBody:    "blocking concerns",
 		},
 		{
-			name:    "should skip native review for comment verdict",
-			verdict: "comment",
-			summary: "FYI",
-			wantOK:  false,
+			name:        "should return RequestChanges submission for request_changes verdict (LLM response parser vocabulary)",
+			verdict:     "request_changes",
+			summary:     "blocking concerns",
+			wantOK:      true,
+			wantVerdict: forgeEntities.ReviewVerdictRequestChanges,
+			wantBody:    "blocking concerns",
+		},
+		{
+			name:        "should return WaitingForAuthor submission for comment verdict so ADO sets vote=-5 and GitHub posts a COMMENT review",
+			verdict:     "comment",
+			summary:     "FYI",
+			wantOK:      true,
+			wantVerdict: forgeEntities.ReviewVerdictWaitingForAuthor,
+			wantBody:    "FYI",
 		},
 		{
 			name:    "should skip native review for unknown verdict",
