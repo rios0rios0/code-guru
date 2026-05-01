@@ -26,4 +26,5 @@ var (
 	SummarizeStaleFilePaths  = summarizeStaleFilePaths
 	NormalizeFilePathForTest = normalizeFilePath
 	BuildReviewingMarkerBody = buildReviewingMarkerBody
+	BuildReviewFailedBody    = buildReviewFailedBody
 )
