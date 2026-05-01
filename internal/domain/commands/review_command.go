@@ -544,6 +544,25 @@ func (c *ReviewCommand) postComments(
 	prID int,
 	result *entities.ReviewResult,
 ) {
+	// Re-check the PR's status before posting. The webhook payload's
+	// `status` is captured at delivery time, but the AI step can take
+	// 5–10 minutes on complex diffs (PR `#12102` on `2026-05-01` took
+	// 8.5 minutes), and the PR may have been merged or abandoned in
+	// the meantime. Posting comments on a closed PR works on ADO
+	// (verified live on PR `#12102`) but pollutes the merged thread
+	// and wastes the PAT quota. The status check is best-effort: a
+	// fetch failure logs `Warn` and posting proceeds — never worse
+	// than today's baseline.
+	if isPullRequestClosed(ctx, provider, repo, prID) {
+		logger.Warnf(
+			"PR #%d: closed mid-flight, skipping comment post (verdict=%s, comments=%d would have been posted)",
+			prID,
+			result.Verdict,
+			len(result.Comments),
+		)
+		return
+	}
+
 	// Post the PR-wide summary only when there are no per-issue comments
 	// (neither inline `Line > 0` threads nor PR-wide `Line <= 0`
 	// annotations). The per-issue comments already carry the feedback, so
@@ -561,7 +580,14 @@ func (c *ReviewCommand) postComments(
 
 	for _, comment := range comments {
 		if comment.Line > 0 {
-			err := provider.PostPullRequestThreadComment(
+			// `_` discards the new thread ID gitforge returns (post
+			// `0.9.7`). The inline comment threads are not currently
+			// updated after creation — the marker thread (PR #102) is
+			// the only candidate for auto-close, and it goes through
+			// `PostPullRequestComment`, not this path. Capturing the
+			// ID here is reserved for a future "edit on second push"
+			// feature.
+			_, err := provider.PostPullRequestThreadComment(
 				ctx, repo, prID, comment.FilePath, comment.Line, comment.Body,
 			)
 			if err != nil {
@@ -573,6 +599,47 @@ func (c *ReviewCommand) postComments(
 				logger.Errorf("failed to post comment: %v", err)
 			}
 		}
+	}
+}
+
+// pullRequestStatusGetter is the narrow subset of
+// `forgeEntities.ReviewProvider` that `isPullRequestClosed` consumes.
+// Defined here so the test can pass a 1-method stub rather than
+// build a full `ReviewProvider` for every row.
+type pullRequestStatusGetter interface {
+	GetPullRequestStatus(ctx context.Context, repo forgeEntities.Repository, prID int) (string, error)
+}
+
+// isPullRequestClosed re-checks the PR's status via the provider and
+// returns true when the PR is no longer eligible for review comments.
+// Best-effort: a fetch failure logs `Warn` and the function returns
+// false so the caller proceeds with posting (the bot is never worse
+// than today's baseline). The closed-status set covers both Azure
+// DevOps' enum (`completed`, `abandoned`) and GitHub's mapped values
+// from `gitforge.GetPullRequestStatus` (`closed`, `merged`); the
+// comparison is case-/whitespace-tolerant so a future enum addition
+// or a mixed-case payload from a new ADO version doesn't slip
+// through. Pinned per task `#43`.
+func isPullRequestClosed(
+	ctx context.Context,
+	getter pullRequestStatusGetter,
+	repo forgeEntities.Repository,
+	prID int,
+) bool {
+	status, err := getter.GetPullRequestStatus(ctx, repo, prID)
+	if err != nil {
+		logger.Warnf(
+			"PR #%d: GetPullRequestStatus failed (%v); proceeding with post under the assumption the PR is still active",
+			prID,
+			err,
+		)
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "abandoned", "completed", "closed", "merged":
+		return true
+	default:
+		return false
 	}
 }
 
