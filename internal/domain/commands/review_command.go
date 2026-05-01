@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	logger "github.com/sirupsen/logrus"
 
@@ -84,6 +85,19 @@ func (c *ReviewCommand) Execute(
 		if result := c.handleTrivialDetection(ctx, provider, repo, pr, paths, opts.DryRun); result != nil {
 			return result, nil
 		}
+	}
+
+	// Post a "reviewing" marker so the PR author sees the bot has the
+	// work and is on it — without this, on a complex diff the bot can
+	// take 5-10 minutes (or fail silently mid-review, see PR #98) and
+	// the author would have no signal to wait. The marker is
+	// intentionally placed AFTER the trivial-detection gate so trivial
+	// PRs (auto-approve / auto-reject — already-instant signal) don't
+	// get the noise of an extra "reviewing" thread on top of the
+	// verdict. Skipped under DryRun so `terra plan`-style invocations
+	// stay silent.
+	if !opts.DryRun {
+		c.postReviewingMarker(ctx, provider, repo, pr.ID)
 	}
 
 	// build diffs and run AI review
@@ -250,6 +264,46 @@ func (c *ReviewCommand) postRejectionComment(
 	if err := provider.PostPullRequestComment(ctx, repo, prID, body); err != nil {
 		logger.Errorf("failed to post rejection comment: %v", err)
 	}
+}
+
+// postReviewingMarker drops a single PR-wide acknowledgement so the
+// author knows the bot has picked up the PR and is doing the work.
+// The body is intentionally short — the rich feedback lands as
+// inline threads + a summary when the AI completes. The marker
+// closes the gap between webhook-receive and review-complete (which
+// can be 5-10 minutes on complex diffs), removing the failure mode
+// observed on `Zest-Terraform/customer-clusters#12102` where the
+// author merged at the 7-minute mark and missed the 3 well-grounded
+// comments that landed 4 minutes later.
+//
+// Best-effort: a failure to post the marker logs at `Warn` and the
+// review continues — the marker is operator-visible UX, not a
+// correctness gate.
+func (c *ReviewCommand) postReviewingMarker(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+) {
+	body := buildReviewingMarkerBody(time.Now().UTC())
+	if err := provider.PostPullRequestComment(ctx, repo, prID, body); err != nil {
+		logger.Warnf("failed to post 'reviewing' marker on PR #%d: %v", prID, err)
+	}
+}
+
+// buildReviewingMarkerBody renders the PR-wide marker body. Pure
+// function — exposed via `export_test.go` so the formatting contract
+// is unit-testable without standing up a stub provider. The
+// timestamp uses RFC 3339 in UTC so the operator log and the PR
+// thread carry the same shape.
+func buildReviewingMarkerBody(now time.Time) string {
+	return fmt.Sprintf(
+		"\xf0\x9f\xa4\x96 **Code Guru is reviewing this PR.**\n\n"+
+			"Please wait for the review to complete before merging — typically 1-3 minutes for "+
+			"small PRs, longer for complex diffs. Comments will be posted as inline threads when "+
+			"the review finishes.\n\n_Started at %s._",
+		now.Format(time.RFC3339),
+	)
 }
 
 func (c *ReviewCommand) postComments(
