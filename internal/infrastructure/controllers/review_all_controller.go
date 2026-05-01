@@ -90,7 +90,7 @@ func (c *ReviewAllController) Execute(cmd *cobra.Command, _ []string) {
 	results, err := reviewAllCmd.Execute(ctx, settings, commands.ReviewOptions{
 		DryRun:             dryRun,
 		Verbose:            verbose,
-		SubmitNativeReview: settings.AI.SubmitNativeReview,
+		SubmitNativeReview: settings.AI.NativeReviewSubmissionEnabled(),
 		ReviewDrafts:       settings.AI.ReviewDrafts,
 	})
 	if err != nil {

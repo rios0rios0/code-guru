@@ -33,22 +33,40 @@ type AIConfig struct {
 	Claude    ClaudeConfig    `yaml:"claude"`
 	Anthropic AnthropicConfig `yaml:"anthropic"`
 
-	// SubmitNativeReview, when true, asks the bot to record a native pull
-	// request review (Approved / Changes Requested) on GitHub or Azure
-	// DevOps in addition to the existing text-only completion annotation.
-	// Comment-only verdicts are not submitted as native reviews
-	// (support.MapVerdictToReview returns ok=false for them). The native
-	// review surfaces the verdict in the platform's reviewer panel.
-	// Defaults to false so existing deployments keep their previous
-	// behaviour until operators explicitly opt in. Override via
-	// CODE_GURU_AI_SUBMIT_NATIVE_REVIEW=true.
-	SubmitNativeReview bool `yaml:"submit_native_review"`
+	// SubmitNativeReview, when set, controls whether the bot also records
+	// a native pull request review (Approved / Changes Requested) on
+	// GitHub or Azure DevOps. Comment-only verdicts are not submitted as
+	// native reviews (support.MapVerdictToReview returns ok=false for
+	// them). The native review surfaces the verdict in the platform's
+	// reviewer panel.
+	//
+	// Tri-state pointer so YAML / env "unset" can mean "use the default":
+	// nil resolves to true via NativeReviewSubmissionEnabled (default ON).
+	// Operators that want to opt out explicitly set
+	// `submit_native_review: false` in YAML or
+	// CODE_GURU_AI_SUBMIT_NATIVE_REVIEW=false. Call sites should always
+	// read the resolved value via NativeReviewSubmissionEnabled rather
+	// than dereferencing the pointer directly.
+	SubmitNativeReview *bool `yaml:"submit_native_review"`
 
 	// ReviewDrafts, when true, lets the bot review draft PRs as well. By
 	// default draft PRs are skipped — most teams treat drafts as
 	// work-in-progress that should not consume review budget. Override via
 	// CODE_GURU_AI_REVIEW_DRAFTS=true.
 	ReviewDrafts bool `yaml:"review_drafts"`
+}
+
+// NativeReviewSubmissionEnabled resolves the tri-state SubmitNativeReview
+// pointer into a single boolean. nil (the YAML / env "unset" state) returns
+// true so deployments that never wire the flag pick up the new default
+// behaviour automatically; an explicit `submit_native_review: false` in YAML
+// or `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW=false` returns false. Callers should
+// always go through this helper rather than dereferencing the pointer.
+func (a AIConfig) NativeReviewSubmissionEnabled() bool {
+	if a.SubmitNativeReview == nil {
+		return true
+	}
+	return *a.SubmitNativeReview
 }
 
 // OpenAIConfig holds OpenAI-specific settings.
@@ -165,7 +183,7 @@ func NewSettingsFromEnv() (*Settings, error) {
 				APIKey: os.Getenv("CODE_GURU_ANTHROPIC_API_KEY"),
 				Model:  envOrDefault("CODE_GURU_ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
 			},
-			SubmitNativeReview: parseBoolEnv("CODE_GURU_AI_SUBMIT_NATIVE_REVIEW", false),
+			SubmitNativeReview: parseOptionalBoolEnv("CODE_GURU_AI_SUBMIT_NATIVE_REVIEW"),
 			ReviewDrafts:       parseBoolEnv("CODE_GURU_AI_REVIEW_DRAFTS", false),
 		},
 		Rules: RulesConfig{
@@ -237,9 +255,11 @@ func envOrDefault(key, fallback string) string {
 // parseBoolEnv reads a boolean environment variable. Truthy values are the
 // strconv defaults (`1`, `t`, `true` — case-insensitive); any non-empty value
 // the parser rejects falls back to the provided default rather than panicking,
-// so a typo does not silently flip behaviour.
+// so a typo does not silently flip behaviour. Surrounding whitespace is
+// trimmed before parsing so values shipped via Helm/templating (which often
+// leave a trailing newline or space, e.g. `"false "`) parse correctly.
 func parseBoolEnv(key string, fallback bool) bool {
-	raw := os.Getenv(key)
+	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
 		return fallback
 	}
@@ -248,6 +268,28 @@ func parseBoolEnv(key string, fallback bool) bool {
 		return fallback
 	}
 	return parsed
+}
+
+// parseOptionalBoolEnv reads a tri-state boolean env var. An unset variable
+// (or one that is whitespace-only after trimming) returns nil so downstream
+// resolvers (e.g. NativeReviewSubmissionEnabled) can apply their default. A
+// set-but-unparseable value also returns nil so a typo does not silently
+// flip behaviour — operators see the default instead. Truthy values follow
+// the [strconv.ParseBool] defaults. Surrounding whitespace is trimmed before
+// parsing so Helm-rendered values like `"false "` survive the round-trip and
+// the operator's explicit opt-out is honoured (without trimming, ParseBool
+// would reject the trailing space and the resolver would fall back to the
+// default ON, which is exactly the silent flip this branch tries to avoid).
+func parseOptionalBoolEnv(key string) *bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil
+	}
+	return &parsed
 }
 
 // splitCSV parses a comma-separated string into a slice, trimming whitespace and skipping empties.

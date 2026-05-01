@@ -137,7 +137,7 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 		DryRun:             dryRun,
 		Verbose:            verbose,
 		CIPassed:           ciPassed,
-		SubmitNativeReview: settings.AI.SubmitNativeReview,
+		SubmitNativeReview: settings.AI.NativeReviewSubmissionEnabled(),
 		ReviewDrafts:       settings.AI.ReviewDrafts,
 	})
 	if err != nil {
