@@ -108,17 +108,29 @@ import (
 const leaseAPITimeout = 5 * time.Second
 
 // leaseDurationSeconds is the freshness window applied to every dedup
-// lease. 5 minutes is comfortably above the longest review the bot has
-// been observed to run (≈8 minutes is the outlier; the typical p95 is
-// ≈90 seconds). On a clean review the lease is `Delete`d explicitly
-// AFTER `submitter.Submit` succeeds AND the worker finishes (the pool
-// handler in the serve controller `defer`s the release). The
-// duration is the upper bound on how long a crashed pod's lease can
-// block new work for the same PR: when a fresh delivery's `Create`
-// hits `AlreadyExists` and the held lease's `acquireTime + duration`
-// has already passed, the takeover path deletes it (with a UID
-// precondition for race safety) and re-acquires.
-const leaseDurationSeconds int32 = 300
+// lease. The value MUST exceed the maximum wall-clock duration of a
+// review, because the takeover path treats any lease older than this
+// as "the holder crashed" and steals it — a duration shorter than the
+// review time would let a webhook delivery that arrives mid-review
+// take over an actively-held lease, putting two pods on the same PR
+// and producing the exact duplicate the dedup is supposed to prevent.
+//
+// 15 minutes is comfortably above the worst review wall-time the bot
+// has been observed to run (≈8 minutes outlier; typical p95 ≈90
+// seconds), with margin for traffic to the upstream AI provider
+// degrading without immediately breaking dedup correctness. On a
+// clean review the lease is `Delete`d explicitly AFTER
+// `submitter.Submit` succeeds AND the worker finishes (the pool
+// handler in the serve controller `defer`s the release), so the
+// duration is only material when the holder crashes — in which case
+// it bounds how long a crashed lease blocks new work. A future
+// "renew the lease while a long review is in progress" path
+// (`update`/`patch` already in the Role) would let this constant
+// drop back toward the typical p95 without breaking the
+// duration > review-wall-time invariant; today the simpler
+// no-renew implementation pays for that with a longer blocking
+// window after a crash.
+const leaseDurationSeconds int32 = 900
 
 // k8sNameMaxLen mirrors RFC 1123 subdomain limits enforced by the K8s
 // API server. Lease names that exceed this are rejected with
