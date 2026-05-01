@@ -16,6 +16,11 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Changed
+
+- changed the default of `ai.submit_native_review` from `false` to `true` so deployments that have not wired the flag pick up native pull request reviews (Approved / Changes Requested in the platform's reviewer panel) automatically. Operators that want the previous text-only behaviour now opt out explicitly with `submit_native_review: false` in YAML or `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW=false`. Implemented as a tri-state `*bool` on `AIConfig.SubmitNativeReview` plus a new `AIConfig.NativeReviewSubmissionEnabled()` helper that resolves nil (the YAML / env "unset" state) to `true`; all three call sites (`review_controller.go`, `review_all_controller.go`, `webhooks/dispatcher.go`) now go through the helper. Pinned by six new test rows covering the resolver (`nil → true`, explicit `true`, explicit `false`) and the env-only path (unset → nil + default ON, explicit `false` → resolved off, unparseable typo → nil + default ON so a typo cannot silently flip behaviour)
+
+
 ### Added
 
 - added native pull request review submission so the bot's verdict surfaces in the platform's reviewer panel (Approved / Changes Requested) instead of only inside the completion annotation. After every trivial-detector verdict and every successful AI review, `ReviewCommand` now also calls `gitforge.SubmitPullRequestReview` — GitHub uses the `event` field on `POST /pulls/:n/reviews` (`APPROVE` / `REQUEST_CHANGES`), Azure DevOps uses the integer reviewer vote on `PUT /pullrequests/:id/reviewers/:reviewerId` (`10` / `-10`). Gated by the new `ai.submit_native_review` setting (default `false`); flip via YAML or `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW=true`. Best-effort: a provider failure logs at `Warn` and the existing text annotation still posts. The `comment` verdict deliberately skips the API call so an AI review with no opinion does not flip a previous Approved/Changes-Requested vote on the next push. The verdict-to-`forgeEntities.ReviewSubmission` translation lives in the new `support.MapVerdictToReview` helper, covered by table-driven unit tests in `internal/support/verdict_mapper_test.go`

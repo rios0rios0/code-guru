@@ -207,7 +207,7 @@ func (d *Dispatcher) HandlePR(
 
 	result, err := reviewCmd.Execute(ctx, provider, repo, pr, commands.ReviewOptions{
 		CIPassed:           ciPassed,
-		SubmitNativeReview: d.settings.AI.SubmitNativeReview,
+		SubmitNativeReview: d.settings.AI.NativeReviewSubmissionEnabled(),
 		ReviewDrafts:       d.settings.AI.ReviewDrafts,
 	})
 	if err != nil {
