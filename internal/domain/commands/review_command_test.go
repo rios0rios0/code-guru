@@ -766,6 +766,8 @@ func TestAnnotationThreadStatusContract(t *testing.T) {
 	// without a test failure even though it would change how the PR
 	// author perceives every annotation we post.
 	t.Run("should be 'closed' so ADO renders annotations as ended discussions", func(t *testing.T) {
+		t.Parallel()
+
 		// given / when / then
 		assert.Equal(t, "closed", commands.AnnotationThreadStatus,
 			"the constant must remain 'closed' — see the doc on annotationThreadStatus for why")
