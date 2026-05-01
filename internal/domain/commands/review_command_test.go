@@ -3,11 +3,13 @@
 package commands_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -650,5 +652,77 @@ func TestBuildReviewCompleteBody(t *testing.T) {
 			"only the two `Line > 0` comments must show up against the `inline` label")
 		assert.NotContains(t, body, "5 inline comments",
 			"the three PR-wide annotations must NOT inflate the count")
+	})
+}
+
+// stubPRStatusGetter is a 1-method test double satisfying
+// `commands.PullRequestStatusGetter`. Records the call and returns a
+// canned status / error.
+type stubPRStatusGetter struct {
+	status string
+	err    error
+	calls  int
+}
+
+func (s *stubPRStatusGetter) GetPullRequestStatus(_ context.Context, _ forgeEntities.Repository, _ int) (string, error) {
+	s.calls++
+	return s.status, s.err
+}
+
+func TestIsPullRequestClosed(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		status string
+		err    error
+		want   bool
+	}{
+		{name: "should return true for ADO `completed`", status: "completed", want: true},
+		{name: "should return true for ADO `abandoned`", status: "abandoned", want: true},
+		{name: "should return true for GitHub `closed`", status: "closed", want: true},
+		{name: "should return true for GitHub `merged`", status: "merged", want: true},
+		{name: "should normalise mixed case (`Completed`)", status: "Completed", want: true},
+		{name: "should normalise upper case (`ABANDONED`)", status: "ABANDONED", want: true},
+		{name: "should normalise leading/trailing whitespace (` merged `)", status: " merged ", want: true},
+		{name: "should return false for ADO `active`", status: "active", want: false},
+		{name: "should return false for GitHub `open`", status: "open", want: false},
+		{name: "should return false for an empty status (defensive — webhook payload sometimes ships empty)", status: "", want: false},
+		{name: "should return false for an unknown future enum value (`merging`) — defer to the worker", status: "merging", want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			getter := &stubPRStatusGetter{status: tc.status, err: tc.err}
+			repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+
+			// when
+			got := commands.IsPullRequestClosed(context.Background(), getter, repo, 12)
+
+			// then
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, 1, getter.calls, "the getter must be called exactly once per check")
+		})
+	}
+
+	t.Run("should return false (proceed with post) when GetPullRequestStatus errors — best-effort contract", func(t *testing.T) {
+		// given: a transient ADO outage. The bot must NOT silently
+		// drop the review comments because the status check failed —
+		// posting on a closed PR is harmless (verified live on PR
+		// #NNNN), but skipping a legitimate post would be a
+		// regression. Pinned per task #43.
+		t.Parallel()
+		getter := &stubPRStatusGetter{err: errors.New("ADO 503 Service Unavailable")}
+		repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+
+		// when
+		got := commands.IsPullRequestClosed(context.Background(), getter, repo, 12)
+
+		// then
+		assert.False(t, got, "a fetch failure must default to `not closed` so the caller proceeds with posting")
+		assert.Equal(t, 1, getter.calls)
 	})
 }

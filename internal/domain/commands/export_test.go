@@ -28,4 +28,10 @@ var (
 	BuildReviewingMarkerBody = buildReviewingMarkerBody
 	BuildReviewFailedBody    = buildReviewFailedBody
 	BuildReviewCompleteBody  = buildReviewCompleteBody
+	IsPullRequestClosed      = isPullRequestClosed
 )
+
+// PullRequestStatusGetter is the test-only alias for the unexported
+// `pullRequestStatusGetter` interface so external tests can build a
+// 1-method stub without depending on the full `forgeEntities.ReviewProvider`.
+type PullRequestStatusGetter = pullRequestStatusGetter
