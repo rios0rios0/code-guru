@@ -76,3 +76,10 @@ func NewWebhookDedupCache(ttl time.Duration) *WebhookDedupCache {
 func (c *WebhookDedupCache) SeenRecently(key string, now time.Time) bool {
 	return c.seenRecently(key, now)
 }
+
+// Forget exposes the unexported `forget` method on the cache so
+// external tests can verify the rollback contract — when a caller
+// records a key but the work it intended to gate (typically
+// `submitter.Submit`) fails, calling Forget puts the cache back to
+// the state that lets a retry through.
+func (c *WebhookDedupCache) Forget(key string) { c.forget(key) }

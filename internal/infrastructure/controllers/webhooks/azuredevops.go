@@ -182,6 +182,10 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 
 	if submitErr := d.submitter.Submit(Job{Provider: provider, Repo: repo, PR: pr, CIPassed: false}); submitErr != nil {
 		logger.Errorf("ADO webhook: submit failed: %v", submitErr)
+		// Roll back the dedup record so a webhook retry inside the
+		// TTL is not silently dropped — the cache must only retain
+		// keys that actually made it onto the worker queue.
+		d.dedupForget(dedupKey)
 		writeError(w, http.StatusServiceUnavailable, "queue full")
 		return
 	}
