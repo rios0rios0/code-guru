@@ -78,9 +78,10 @@ func TestClaudeReviewer_ReviewDiff_FailureCapturesBothStreams(t *testing.T) {
 		// auxiliary message on stderr. Captured live across PRs
 		// `#NNNN`, `#NNNN`, `#NNNN`, `#NNNN`, `#NNNN` on
 		// `2026-05-01`, where every error line in production logs
-		// showed `(stderr: )` because the wrapper at
-		// `claude_ai_reviewer_repository.go:88` threw away stdout —
-		// hiding the only diagnostic the CLI actually produced.
+		// showed `(stderr: )` because `AIReviewerRepository.ReviewDiff`
+		// threw away the child process's stdout — hiding the only
+		// diagnostic the CLI actually produced. Code-guru PR #98 ships
+		// the fix; this test pins it.
 		bin := writeFakeClaudeBinary(t)
 		t.Setenv("FAKE_STDOUT", `{"error":"rate_limit_exceeded","message":"too many requests"}`)
 		t.Setenv("FAKE_STDERR", "auxiliary stderr context")
@@ -124,11 +125,11 @@ func TestClaudeReviewer_ReviewDiff_FailureCapturesBothStreams(t *testing.T) {
 
 	t.Run("should truncate captured streams to the documented cap so the error line stays bounded", func(t *testing.T) {
 		// given: an oversized stdout (8 KB of `A`s, twice the 4 KB cap).
-		// `support.TruncateForLog` quotes the value with `strconv.Quote`
-		// and ends with a `…(truncated)` sentinel; pin both halves of
-		// the contract so a future "let me un-truncate to make
-		// debugging easier" refactor surfaces in the test before it
-		// floods the log pipeline.
+		// `support.TruncateBytesForLog` quotes the value with
+		// `strconv.Quote` and ends with a `...[truncated]` sentinel;
+		// pin both halves of the contract so a future "let me
+		// un-truncate to make debugging easier" refactor surfaces in
+		// the test before it floods the log pipeline.
 		bin := writeFakeClaudeBinary(t)
 		oversized := strings.Repeat("A", 8192)
 		t.Setenv("FAKE_STDOUT", oversized)
@@ -146,6 +147,8 @@ func TestClaudeReviewer_ReviewDiff_FailureCapturesBothStreams(t *testing.T) {
 			"the error message must not echo the full 8 KB stdout — the truncation cap is the whole point")
 		assert.Contains(t, errMsg, "AAAA",
 			"some of the oversized stdout must still surface (truncate, not drop)")
+		assert.Contains(t, errMsg, "...[truncated]",
+			"the sentinel from support.TruncateBytesForLog must be appended to flag the cut")
 	})
 }
 
