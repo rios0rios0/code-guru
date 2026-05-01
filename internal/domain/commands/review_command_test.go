@@ -736,9 +736,10 @@ func TestIsPullRequestClosed(t *testing.T) {
 // than as a silent stub.
 type recordingReviewProvider struct {
 	forgeEntities.ReviewProvider
-	calls       []recordedPRComment
-	submissions []forgeEntities.ReviewSubmission
-	submitErr   error
+	calls                  []recordedPRComment
+	submissions            []forgeEntities.ReviewSubmission
+	submitErr              error
+	getPullRequestFilesErr error
 }
 
 type recordedPRComment struct {
@@ -765,6 +766,17 @@ func (r *recordingReviewProvider) SubmitPullRequestReview(
 ) error {
 	r.submissions = append(r.submissions, sub)
 	return r.submitErr
+}
+
+func (r *recordingReviewProvider) GetPullRequestFiles(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	_ int,
+) ([]forgeEntities.PullRequestFile, error) {
+	if r.getPullRequestFilesErr != nil {
+		return nil, r.getPullRequestFilesErr
+	}
+	return nil, nil
 }
 
 func TestAnnotationThreadStatusContract(t *testing.T) {
@@ -969,25 +981,32 @@ func TestExecuteSkipsDraftsByDefault(t *testing.T) {
 	t.Run("should NOT skip when ReviewDrafts opt-in is set", func(t *testing.T) {
 		t.Parallel()
 
-		// given: a ReviewCommand with nil dependencies — Execute will go
-		// past the IsDraft branch, then panic on the nil aiReviewer when
-		// it tries to fetch files via the nil provider. We catch that
-		// panic and assert the draft branch was NOT taken (no early
-		// return, no result).
+		// given: a deterministic provider that surfaces a known error from
+		// GetPullRequestFiles — Execute must reach that call (proving the
+		// draft branch was bypassed) and return the wrapped error so the
+		// test asserts the bypass without relying on panic behaviour.
+		expectedErr := errors.New("get pull request files failed")
 		rc := commands.NewReviewCommand(nil, nil, nil)
-		provider := &recordingReviewProvider{}
+		provider := &recordingReviewProvider{
+			getPullRequestFilesErr: expectedErr,
+		}
 		repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 		pr := forgeEntities.PullRequestDetail{
 			PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "wip", URL: "https://example/pr/4242"},
 			IsDraft:     true,
 		}
 
-		// when / then
-		assert.Panics(t, func() {
-			_, _ = rc.Execute(
-				context.Background(), provider, repo, pr,
-				commands.ReviewOptions{ReviewDrafts: true},
-			)
-		}, "with ReviewDrafts=true the draft branch must be bypassed and the next path runs into the nil provider")
+		// when
+		result, err := rc.Execute(
+			context.Background(), provider, repo, pr,
+			commands.ReviewOptions{ReviewDrafts: true},
+		)
+
+		// then
+		require.Error(t, err)
+		assert.ErrorIs(t, err, expectedErr,
+			"with ReviewDrafts=true the draft branch must be bypassed; Execute must surface the deterministic provider error from GetPullRequestFiles")
+		assert.Nil(t, result)
+		assert.Empty(t, provider.submissions, "the command should stop on the deterministic provider error instead of skipping the draft")
 	})
 }

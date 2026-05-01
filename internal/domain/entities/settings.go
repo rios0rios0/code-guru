@@ -34,11 +34,13 @@ type AIConfig struct {
 	Anthropic AnthropicConfig `yaml:"anthropic"`
 
 	// SubmitNativeReview, when true, asks the bot to record a native pull
-	// request review (Approved / Changes Requested / Comment) on GitHub or
-	// Azure DevOps in addition to the existing text-only completion
-	// annotation. The native review surfaces the verdict in the platform's
-	// reviewer panel. Defaults to false so existing deployments keep their
-	// previous behaviour until operators explicitly opt in. Override via
+	// request review (Approved / Changes Requested) on GitHub or Azure
+	// DevOps in addition to the existing text-only completion annotation.
+	// Comment-only verdicts are not submitted as native reviews
+	// (support.MapVerdictToReview returns ok=false for them). The native
+	// review surfaces the verdict in the platform's reviewer panel.
+	// Defaults to false so existing deployments keep their previous
+	// behaviour until operators explicitly opt in. Override via
 	// CODE_GURU_AI_SUBMIT_NATIVE_REVIEW=true.
 	SubmitNativeReview bool `yaml:"submit_native_review"`
 
