@@ -3,6 +3,7 @@
 package commands_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -408,5 +409,87 @@ func TestBuildReviewingMarkerBody(t *testing.T) {
 		// then
 		assert.NotContains(t, body, `\n`, "the body must contain real newlines, not the escape sequence")
 		assert.Contains(t, body, "\n\n", "the body must have at least one blank line for Markdown paragraph breaks")
+	})
+}
+
+func TestBuildReviewFailedBody(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should render the failure notice with the timestamp and the underlying error", func(t *testing.T) {
+		// given: a fixed timestamp + a representative claude failure
+		// (the canonical signature observed across PRs #NNNN /
+		// #NNNN / #NNNN / #NNNN / #NNNN on `2026-05-01`). The
+		// body must surface BOTH the timestamp (so the operator can
+		// correlate with the pod log line) AND the error text (so
+		// the PR author knows whether to retry or look at logs).
+		ts := time.Date(2026, 5, 1, 2, 51, 21, 0, time.UTC)
+		err := errors.New("AI review failed: claude CLI failed: exit status 1 (stderr: ; stdout: )")
+
+		// when
+		body := commands.BuildReviewFailedBody(ts, err)
+
+		// then
+		assert.Contains(t, body, "Code Guru review failed.",
+			"the headline must be unambiguous so the author does not confuse it with the marker")
+		assert.Contains(t, body, "Failed at 2026-05-01T02:51:21Z.",
+			"the timestamp must match the operator-log RFC 3339 UTC shape")
+		assert.Contains(t, body, "claude CLI failed",
+			"the error text must surface so the author knows whether this is transient or systemic")
+		assert.Contains(t, body, "review this PR manually",
+			"the body must tell the author what to do next")
+	})
+
+	t.Run("should normalise a non-UTC input to UTC so the printed timestamp ends in Z", func(t *testing.T) {
+		// given: defensive — same contract as `buildReviewingMarkerBody`
+		// (Copilot review on PR #102 thread `PRRT_kwDOJKAEo85-56Sq`).
+		// A future caller passing a non-UTC time must still produce
+		// a UTC-formatted body.
+		spLoc, _ := time.LoadLocation("America/Sao_Paulo")
+		ts := time.Date(2026, 4, 30, 23, 51, 21, 0, spLoc) // == 2026-05-01T02:51:21Z
+		err := errors.New("transient")
+
+		// when
+		body := commands.BuildReviewFailedBody(ts, err)
+
+		// then
+		assert.Contains(t, body, "Failed at 2026-05-01T02:51:21Z.",
+			"the helper must format in UTC regardless of the input Location")
+		assert.NotContains(t, body, "-03:00", "no timezone offset should leak into the body")
+	})
+
+	t.Run("should fall back to a placeholder when the error is nil (defensive)", func(t *testing.T) {
+		// given: callers should always pass a non-nil error, but
+		// belt-and-suspenders — a future caller mistakenly passing
+		// nil must not produce a body containing the literal `<nil>`.
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+
+		// when
+		body := commands.BuildReviewFailedBody(ts, nil)
+
+		// then
+		assert.Contains(t, body, "(no error details)",
+			"a nil error must surface a readable placeholder, never `<nil>`")
+		assert.NotContains(t, body, "<nil>")
+	})
+
+	t.Run("should truncate an oversized error so the PR thread stays bounded", func(t *testing.T) {
+		// given: a runaway claude that emits a 10 KB error envelope
+		// (e.g. multi-megabyte stdout truncated by PR #98's
+		// `support.TruncateBytesForLog` to its own cap, then echoed
+		// here a second time). The 2 KB cap on this side keeps the
+		// PR thread from turning into a wall of text.
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		oversized := errors.New(strings.Repeat("X", 10*1024))
+
+		// when
+		body := commands.BuildReviewFailedBody(ts, oversized)
+
+		// then
+		// 2 KB error + ~500 bytes envelope/markdown + sentinel
+		// fits comfortably below 4 KB.
+		assert.Less(t, len(body), 4*1024,
+			"the rendered body must respect the 2 KB error cap so a runaway claude cannot flood the PR thread")
+		assert.Contains(t, body, "...[truncated]",
+			"the truncation sentinel from support.TruncateForLog must be present so a reader knows the error was clipped")
 	})
 }
