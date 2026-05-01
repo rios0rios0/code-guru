@@ -287,7 +287,10 @@ new PR; without a shared lock the K8s `Service` round-robins one
 delivery to each replica and the bot posts duplicate reviews. The
 lease is named `code-guru-{sanitised-key}-{hash}` (the SHA-256 suffix
 prevents collisions from the lossy character substitution) and is
-created with `leaseDurationSeconds: 300` as freshness metadata —
+created with `leaseDurationSeconds: 900` (must exceed the bot's
+maximum review wall-time so the takeover path never steals an
+actively-held lease — the worst review observed was ≈8 minutes)
+as freshness metadata —
 Kubernetes does NOT auto-delete `Lease` objects when that duration
 elapses, so the dedup contract relies on two explicit pieces of work:
 

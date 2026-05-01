@@ -197,7 +197,7 @@ func TestK8sLeaseDedup(t *testing.T) {
 		client := newFakeLeaseClient()
 		podA := webhooks.NewK8sLeaseDedup(client, "pod-a-crashed")
 		require.False(t, podA.SeenRecently(context.Background(), key), "precondition: pod-a acquires before crashing")
-		client.AgeAllLeases(1000) // far past the 300-s freshness window
+		client.AgeAllLeases(2000) // far past the 900-s freshness window
 
 		podB := webhooks.NewK8sLeaseDedup(client, "pod-b")
 
