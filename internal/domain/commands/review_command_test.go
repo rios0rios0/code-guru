@@ -202,6 +202,32 @@ func TestFilterStaleComments(t *testing.T) {
 		assert.Empty(t, kept)
 		assert.Empty(t, dropped)
 	})
+
+	t.Run("should keep PR-wide comments even when their FilePath looks stale", func(t *testing.T) {
+		// given: PR-wide comments (`Line <= 0`) are posted via
+		// `PostPullRequestComment`, which renders them as repository-
+		// wide annotations with no file:line anchor — so they cannot
+		// produce ADO's "file no longer exists" warning. Dropping
+		// them on staleness grounds would silently delete legitimate
+		// summary feedback. Pinned per Copilot review on PR #99
+		// thread `PRRT_kwDOJKAEo85-5obu`.
+		comments := []entities.ReviewComment{
+			{FilePath: "removed.go", Line: 0, Body: "summary annotation, no anchor"},
+			{FilePath: "", Line: 0, Body: "no path at all"},
+			{FilePath: "removed.go", Line: 5, Body: "inline — must be dropped"},
+		}
+		live := map[string]struct{}{"main.go": {}}
+
+		// when
+		kept, dropped := commands.FilterStaleComments(comments, live)
+
+		// then
+		require.Len(t, kept, 2, "PR-wide annotations stay regardless of FilePath")
+		assert.Equal(t, "summary annotation, no anchor", kept[0].Body)
+		assert.Equal(t, "no path at all", kept[1].Body)
+		require.Len(t, dropped, 1, "only the inline reference to a removed file is dropped")
+		assert.Equal(t, "inline — must be dropped", dropped[0].Body)
+	})
 }
 
 func TestSummarizeStaleFilePaths(t *testing.T) {
@@ -243,6 +269,26 @@ func TestSummarizeStaleFilePaths(t *testing.T) {
 
 		// then
 		assert.Empty(t, got)
+	})
+
+	t.Run("should deduplicate by normalised path so leading-slash variants are not double-counted", func(t *testing.T) {
+		// given: the AI sometimes emits `internal/foo.go` and ADO's
+		// underlying paths look like `/internal/foo.go` — both
+		// references resolve to the same file, so the operator log
+		// must list each file once. Pinned per Copilot review on
+		// PR #99 thread `PRRT_kwDOJKAEo85-5obx`.
+		dropped := []entities.ReviewComment{
+			{FilePath: "internal/foo.go"},
+			{FilePath: "/internal/foo.go"},
+			{FilePath: "main.go"},
+		}
+
+		// when
+		got := commands.SummarizeStaleFilePaths(dropped)
+
+		// then
+		assert.Equal(t, "internal/foo.go, main.go", got,
+			"the normalised pair counts once and the first form encountered is the one printed")
 	})
 }
 

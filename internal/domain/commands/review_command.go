@@ -345,12 +345,23 @@ func (c *ReviewCommand) dropStaleComments(
 // longer there. Pure function — exposed via `export_test.go` so the
 // test suite can pin the contract without standing up a stub
 // `forgeEntities.ReviewProvider`.
+//
+// PR-wide comments (`Line <= 0`, posted via `PostPullRequestComment`)
+// and comments with no `FilePath` at all are always kept: they are
+// rendered as repository-wide annotations rather than inline threads,
+// so they cannot trigger ADO's "file no longer exists" warning even
+// if the path string happens to look stale. Only inline comments
+// (`Line > 0`) are subject to the staleness drop.
 func filterStaleComments(
 	comments []entities.ReviewComment,
 	livePaths map[string]struct{},
 ) ([]entities.ReviewComment, []entities.ReviewComment) {
 	var kept, dropped []entities.ReviewComment
 	for _, comment := range comments {
+		if comment.Line <= 0 || comment.FilePath == "" {
+			kept = append(kept, comment)
+			continue
+		}
 		if _, ok := livePaths[normalizeFilePath(comment.FilePath)]; ok {
 			kept = append(kept, comment)
 		} else {
@@ -372,15 +383,23 @@ func normalizeFilePath(p string) string { return strings.TrimPrefix(p, "/") }
 // drop a large batch (e.g. a squash that rewrites every file in the
 // PR). The trailing "(+N more)" sentinel preserves the count without
 // echoing the full list.
+//
+// Deduplication is keyed on the **normalised** path so an AI response
+// that mentions both `internal/foo.go` and `/internal/foo.go` is
+// counted once (`normalizeFilePath` strips a single leading `/`,
+// matching the rule used on the lookup side). The first form
+// encountered is the one printed, so the operator log preserves
+// whichever shape the AI actually emitted.
 func summarizeStaleFilePaths(dropped []entities.ReviewComment) string {
 	const maxShown = 8
 	seen := make(map[string]struct{}, len(dropped))
 	paths := make([]string, 0, len(dropped))
 	for _, c := range dropped {
-		if _, ok := seen[c.FilePath]; ok {
+		key := normalizeFilePath(c.FilePath)
+		if _, ok := seen[key]; ok {
 			continue
 		}
-		seen[c.FilePath] = struct{}{}
+		seen[key] = struct{}{}
 		paths = append(paths, c.FilePath)
 	}
 	if len(paths) <= maxShown {
