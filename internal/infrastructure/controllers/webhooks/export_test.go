@@ -16,4 +16,21 @@ var (
 	IsClosedADOPullRequestStatus = isClosedADOPullRequestStatus
 	IsSupportedADOEvent          = isSupportedADOEvent
 	RefToBranch                  = refToBranch
+	IsSkinnyADOResource          = isSkinnyADOResource
+	AppendAPIVersion             = appendAPIVersion
 )
+
+// ADOResource / ADORepository / ADOProject are test-only aliases for the
+// unexported wire-shape structs in `azuredevops.go`. External tests construct
+// payloads with these aliases to drive `isSkinnyADOResource` and
+// `mergeHydratedADOResource` without poking at internal names.
+type (
+	ADOResource   = adoResource
+	ADORepository = adoRepository
+	ADOProject    = adoProject
+)
+
+// MergeHydratedADOResource exposes the merge helper for tests.
+func MergeHydratedADOResource(original, hydrated ADOResource) ADOResource {
+	return mergeHydratedADOResource(original, hydrated)
+}
