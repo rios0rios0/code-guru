@@ -378,13 +378,20 @@ const reviewFailedBodyErrorLimit = 2048
 // clusters#NNNN` on `2026-05-01` where the author merged before
 // realising the bot had finished and missed the 3 review comments.
 //
-// The body surfaces the verdict, the count of inline comments, and
-// the started_at timestamp from the marker so the operator can
-// link the marker thread (`Started at <ts>`) to the completion
-// thread (`Completed at <ts>`) at a glance. Best-effort: a failure
-// to post logs at `Warn` and never blocks the worker — completion
-// notices are UX, not correctness. Wrapped in the same `5s` timeout
-// as the marker so a hung provider cannot stall the review pipeline.
+// The body surfaces the verdict, the count of inline (`Line > 0`)
+// comments, and the completion timestamp in the same RFC 3339 UTC
+// shape the marker uses (`Started at <ts>`) so a reader can pair
+// the marker thread with the completion thread at a glance.
+// Best-effort: a failure to post logs at `Warn` and never blocks
+// the worker — completion notices are UX, not correctness. Wrapped
+// in the same `5s` timeout as the marker so a hung provider cannot
+// stall the review pipeline.
+//
+// Both the log line and the body use `reviewCompletionStats` so a
+// nil `result` (defensive — production never passes one, but a
+// future refactor might) degrades gracefully instead of panicking
+// on `result.Verdict` / `len(result.Comments)` — pinned per
+// Copilot review on PR #104 thread `PRRT_kwDOJKAEo85-6Eqy`.
 func (c *ReviewCommand) postReviewCompleteAnnotation(
 	ctx context.Context,
 	provider forgeEntities.ReviewProvider,
@@ -392,15 +399,52 @@ func (c *ReviewCommand) postReviewCompleteAnnotation(
 	prID int,
 	result *entities.ReviewResult,
 ) {
+	stats := reviewCompletionStats(result)
 	body := buildReviewCompleteBody(time.Now().UTC(), result)
-	logger.Infof("PR #%d: posting 'review complete' annotation (verdict=%s, comments=%d)",
-		prID, result.Verdict, len(result.Comments))
+	logger.Infof("PR #%d: posting 'review complete' annotation (verdict=%s, inline_comments=%d)",
+		prID, stats.verdict, stats.inlineCommentCount)
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, reviewingMarkerPostTimeout)
 	defer cancel()
 	if err := provider.PostPullRequestComment(timeoutCtx, repo, prID, body); err != nil {
 		logger.Warnf("PR #%d: failed to post 'review complete' annotation: %v", prID, err)
 	}
+}
+
+// completionStats collapses the bits of `*entities.ReviewResult`
+// the completion notice cares about (verdict + inline-comment
+// count) into a value that is safe to consume even when the
+// caller's `result` pointer is nil. Defined as a type so the
+// `verdict` / `inlineCommentCount` pair stays self-documenting
+// at every call site.
+type completionStats struct {
+	verdict            string
+	inlineCommentCount int
+}
+
+// reviewCompletionStats reads the verdict + inline-comment count
+// off a `*entities.ReviewResult` defensively. A nil pointer or an
+// empty `Verdict` falls back to the canonical `comment` verdict.
+// The inline-comment count only counts comments with `Line > 0` —
+// PR-wide comments (`Line <= 0`) are repository-wide annotations
+// and don't render as "inline threads" in the bot's vocabulary, so
+// they shouldn't inflate the "X inline comments" label on the
+// completion notice — pinned per Copilot review on PR #104 thread
+// `PRRT_kwDOJKAEo85-6ErC`.
+func reviewCompletionStats(result *entities.ReviewResult) completionStats {
+	stats := completionStats{verdict: "comment"}
+	if result == nil {
+		return stats
+	}
+	if result.Verdict != "" {
+		stats.verdict = result.Verdict
+	}
+	for _, c := range result.Comments {
+		if c.Line > 0 {
+			stats.inlineCommentCount++
+		}
+	}
+	return stats
 }
 
 // buildReviewCompleteBody renders the PR-wide completion notice. Pure
@@ -412,24 +456,17 @@ func (c *ReviewCommand) postReviewCompleteAnnotation(
 // author can see the bot's conclusion without scrolling through
 // every thread.
 func buildReviewCompleteBody(now time.Time, result *entities.ReviewResult) string {
-	verdict := "comment"
-	commentCount := 0
-	if result != nil {
-		if result.Verdict != "" {
-			verdict = result.Verdict
-		}
-		commentCount = len(result.Comments)
-	}
+	stats := reviewCompletionStats(result)
 	commentsLabel := "comment"
-	if commentCount != 1 {
+	if stats.inlineCommentCount != 1 {
 		commentsLabel = "comments"
 	}
 	return fmt.Sprintf(
 		"\xe2\x9c\x85 **Code Guru review complete.**\n\n"+
 			"Verdict: `%s` \xc2\xb7 %d inline %s.\n\n"+
 			"_Completed at %s._",
-		verdict,
-		commentCount,
+		stats.verdict,
+		stats.inlineCommentCount,
 		commentsLabel,
 		now.UTC().Format(time.RFC3339),
 	)
