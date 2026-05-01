@@ -56,9 +56,9 @@ providers:
 
 ai:
   backend: 'claude'
-  # When the bot records a native pull request review (Approved / Changes
-  # Requested) on the platform's reviewer panel in addition to the text
-  # completion annotation. Defaults to true; set to false to opt out.
+  # When true, the bot also records a native pull request review (Approved /
+  # Changes Requested) on the platform's reviewer panel in addition to the
+  # text completion annotation. Defaults to true; set to false to opt out.
   submit_native_review: true
   # When false (the default), draft PRs are skipped entirely — set to true to
   # opt back in.
