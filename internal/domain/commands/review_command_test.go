@@ -338,9 +338,11 @@ func TestBuildReviewingMarkerBody(t *testing.T) {
 
 	t.Run("should render the marker with the start timestamp in RFC 3339 UTC", func(t *testing.T) {
 		// given: a fixed timestamp pinned in UTC so the formatting
-		// contract is deterministic. RFC 3339 matches the shape used
-		// in the operator log ("Started at <ts>"), so a reader can
-		// correlate the PR thread with the pod log line.
+		// contract is deterministic. RFC 3339 matches the shape on
+		// the corresponding `Info` log line emitted by
+		// `postReviewingMarker` (`started_at=<ts>`), so a reader can
+		// correlate the timestamp shown in the PR thread with the
+		// log entry produced for the same review.
 		ts := time.Date(2026, 5, 1, 1, 52, 21, 0, time.UTC)
 
 		// when
@@ -367,6 +369,28 @@ func TestBuildReviewingMarkerBody(t *testing.T) {
 		// then
 		assert.NotEmpty(t, body)
 		assert.Contains(t, body, "Code Guru is reviewing this PR.")
+	})
+
+	t.Run("should normalise a non-UTC input to UTC so the printed timestamp ends in Z", func(t *testing.T) {
+		// given: a caller passing in a localised `time.Time` (e.g. an
+		// `America/Sao_Paulo` clock that mistakenly skipped the
+		// `.UTC()` step). The helper must enforce its own contract
+		// rather than echoing the caller's location into the rendered
+		// body — pinned per Copilot review on PR #102 thread
+		// `PRRT_kwDOJKAEo85-56Sq`. Without the defensive `.UTC()`
+		// inside `buildReviewingMarkerBody`, the body would render
+		// `Started at 2026-04-30T22:52:21-03:00.` and the documented
+		// "RFC 3339 in UTC" contract would silently break.
+		spLoc, _ := time.LoadLocation("America/Sao_Paulo")
+		ts := time.Date(2026, 4, 30, 22, 52, 21, 0, spLoc) // == 2026-05-01T01:52:21Z
+
+		// when
+		body := commands.BuildReviewingMarkerBody(ts)
+
+		// then
+		assert.Contains(t, body, "Started at 2026-05-01T01:52:21Z.",
+			"the helper must format in UTC regardless of the input Location")
+		assert.NotContains(t, body, "-03:00", "no timezone offset should leak into the body")
 	})
 
 	t.Run("should not embed `\\n` literally (must use real newlines for Markdown rendering)", func(t *testing.T) {
