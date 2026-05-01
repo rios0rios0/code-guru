@@ -65,6 +65,13 @@ func NewDispatcher(
 // SetADOHydrator overrides the default HTTP-based ADO PR hydrator. Tests
 // substitute a stub that returns a canned `adoResource` without touching the
 // network; production code does not need to call this.
+//
+// **Concurrency contract:** must be called during initialisation, before
+// the HTTP server starts handling webhook requests. The setter does not
+// synchronise with `HandleAzureDevOps`, so swapping the hydrator at
+// runtime would race with in-flight deliveries. The same contract applies
+// to `SetSubmitter` and `SetGitHubTokenizer` — all three are wired once
+// during DI bootstrap and never touched again.
 func (d *Dispatcher) SetADOHydrator(h ADOResourceHydrator) {
 	d.adoHydrator = h
 }

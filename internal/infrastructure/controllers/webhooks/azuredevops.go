@@ -98,7 +98,14 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !d.hydrateSkinnyADOResource(w, r, &event) {
+	token := d.findToken("azuredevops")
+	if token == "" {
+		logger.Errorf("ADO webhook: no azuredevops PAT configured")
+		writeError(w, http.StatusInternalServerError, "no PAT configured")
+		return
+	}
+
+	if !d.hydrateSkinnyADOResource(w, r, &event, token) {
 		return
 	}
 
@@ -137,13 +144,6 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 			"parsed_org":   org,
 		}).Warnf("ADO webhook: org=%q project=%q not on allowlist", org, event.Resource.Repository.Project.Name)
 		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-
-	token := d.findToken("azuredevops")
-	if token == "" {
-		logger.Errorf("ADO webhook: no azuredevops PAT configured")
-		writeError(w, http.StatusInternalServerError, "no PAT configured")
 		return
 	}
 
@@ -254,6 +254,11 @@ func refToBranch(ref string) string {
 // Returns true when the caller should keep going, false when a response
 // has already been written and processing must stop.
 //
+// The token is supplied by the caller (`HandleAzureDevOps`) so the lookup
+// runs once per request — avoiding a duplicated `findToken("azuredevops")`
+// in both the hydration branch and the provider-construction branch
+// further down.
+//
 // The function is split out of HandleAzureDevOps to keep that handler's
 // cognitive complexity within the linter's 20-branch budget — the
 // hydration step is a self-contained pre-filter and tests cover it
@@ -262,6 +267,7 @@ func (d *Dispatcher) hydrateSkinnyADOResource(
 	w http.ResponseWriter,
 	r *http.Request,
 	event *adoEvent,
+	token string,
 ) bool {
 	if !isSkinnyADOResource(event.Resource) {
 		logger.Debugf(
@@ -276,12 +282,6 @@ func (d *Dispatcher) hydrateSkinnyADOResource(
 		event.Resource.PullRequestID,
 	)
 
-	token := d.findToken("azuredevops")
-	if token == "" {
-		logger.Errorf("ADO webhook: skinny payload but no azuredevops PAT configured")
-		writeError(w, http.StatusInternalServerError, "no PAT configured")
-		return false
-	}
 	if d.adoHydrator == nil {
 		logger.Errorf("ADO webhook: skinny payload but no hydrator wired")
 		writeError(w, http.StatusInternalServerError, "hydrator not wired")
