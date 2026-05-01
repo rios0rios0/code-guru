@@ -140,6 +140,7 @@ func TestWebhookDedupCache_SeenRecently(t *testing.T) {
 		now := time.Date(2026, 5, 1, 1, 0, 0, 0, time.UTC)
 		const goroutines = 50
 
+		// when
 		var notSeenCount int32
 		var mu sync.Mutex
 		var wg sync.WaitGroup
