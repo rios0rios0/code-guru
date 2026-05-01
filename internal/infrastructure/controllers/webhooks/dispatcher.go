@@ -101,10 +101,24 @@ func (d *Dispatcher) dedupSeen(ctx context.Context, key string) bool {
 // would still report the duplicate as seen. Tracked per Copilot
 // review on PR #100 thread `PRRT_kwDOJKAEo85-5zE-`.
 func (d *Dispatcher) dedupForget(ctx context.Context, key string) {
-	if d.dedup == nil {
+	if d.dedup == nil || key == "" {
 		return
 	}
 	d.dedup.Forget(ctx, key)
+}
+
+// ReleaseDedup is the worker-side counterpart to the dispatcher's
+// `dedupSeen` acquisition. The serve controller's pool handler must
+// `defer d.ReleaseDedup(ctx, job.DedupKey)` so a successful (or
+// failed) review releases the dedup record. Without the explicit
+// release the K8s-Lease backend would persist the lease in etcd
+// indefinitely (Kubernetes does NOT auto-delete `Lease` objects when
+// `spec.leaseDurationSeconds` elapses — that field is metadata only),
+// and a real follow-up push for the same PR would be silently dropped
+// as a "duplicate". Safe to call with an empty key (no-op) so tests
+// that build a `Job` without going through the handlers stay simple.
+func (d *Dispatcher) ReleaseDedup(ctx context.Context, key string) {
+	d.dedupForget(ctx, key)
 }
 
 // SetDedup overrides the default in-memory dedup backend. The serve

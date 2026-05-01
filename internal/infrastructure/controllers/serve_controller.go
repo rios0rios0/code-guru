@@ -76,6 +76,13 @@ func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
 		c.settings.Server.Workers,
 		c.settings.Server.QueueSize,
 		func(ctx context.Context, job webhooks.Job) error {
+			// Release the dedup record AFTER the review completes
+			// (success or failure). The K8s-Lease backend needs this
+			// explicit release because Kubernetes does not auto-delete
+			// `Lease` objects when `leaseDurationSeconds` elapses; without
+			// it a successful review would leak its lease in etcd forever
+			// and block all future webhook deliveries for the same PR.
+			defer c.dispatcher.ReleaseDedup(ctx, job.DedupKey)
 			return c.dispatcher.HandlePR(ctx, job.Provider, job.Repo, job.PR, job.CIPassed)
 		},
 	)
