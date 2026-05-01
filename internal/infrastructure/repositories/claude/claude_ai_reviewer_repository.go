@@ -91,12 +91,16 @@ func (r *AIReviewerRepository) ReviewDiff(
 		// every claude crash look like `(stderr: )` in production logs
 		// — captured live across PRs #12009 / #12050 / #12076 / #12095
 		// / #12100 on `2026-05-01`. Truncate each stream to keep the
-		// error line bounded.
+		// error line bounded; pass the byte slice (`*.Bytes()`) so the
+		// full buffer is not stringified before truncation — under a
+		// failure mode that produces megabytes of output (large diff,
+		// runaway log) the `string(...)` conversion would copy the whole
+		// payload to the heap before the cap fired.
 		return nil, fmt.Errorf(
 			"claude CLI failed: %w (stderr: %s; stdout: %s)",
 			err,
-			support.TruncateForLog(stderr.String(), claudeFailureLogLimit),
-			support.TruncateForLog(stdout.String(), claudeFailureLogLimit),
+			support.TruncateBytesForLog(stderr.Bytes(), claudeFailureLogLimit),
+			support.TruncateBytesForLog(stdout.Bytes(), claudeFailureLogLimit),
 		)
 	}
 
