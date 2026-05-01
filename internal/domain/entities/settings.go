@@ -255,9 +255,11 @@ func envOrDefault(key, fallback string) string {
 // parseBoolEnv reads a boolean environment variable. Truthy values are the
 // strconv defaults (`1`, `t`, `true` — case-insensitive); any non-empty value
 // the parser rejects falls back to the provided default rather than panicking,
-// so a typo does not silently flip behaviour.
+// so a typo does not silently flip behaviour. Surrounding whitespace is
+// trimmed before parsing so values shipped via Helm/templating (which often
+// leave a trailing newline or space, e.g. `"false "`) parse correctly.
 func parseBoolEnv(key string, fallback bool) bool {
-	raw := os.Getenv(key)
+	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
 		return fallback
 	}
@@ -269,12 +271,17 @@ func parseBoolEnv(key string, fallback bool) bool {
 }
 
 // parseOptionalBoolEnv reads a tri-state boolean env var. An unset variable
-// returns nil so downstream resolvers (e.g. NativeReviewSubmissionEnabled)
-// can apply their default. A set-but-unparseable value also returns nil so
-// a typo does not silently flip behaviour — operators see the default
-// instead. Truthy values follow the [strconv.ParseBool] defaults.
+// (or one that is whitespace-only after trimming) returns nil so downstream
+// resolvers (e.g. NativeReviewSubmissionEnabled) can apply their default. A
+// set-but-unparseable value also returns nil so a typo does not silently
+// flip behaviour — operators see the default instead. Truthy values follow
+// the [strconv.ParseBool] defaults. Surrounding whitespace is trimmed before
+// parsing so Helm-rendered values like `"false "` survive the round-trip and
+// the operator's explicit opt-out is honoured (without trimming, ParseBool
+// would reject the trailing space and the resolver would fall back to the
+// default ON, which is exactly the silent flip this branch tries to avoid).
 func parseOptionalBoolEnv(key string) *bool {
-	raw := os.Getenv(key)
+	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
 		return nil
 	}
