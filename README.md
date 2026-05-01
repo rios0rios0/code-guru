@@ -56,10 +56,10 @@ providers:
 
 ai:
   backend: 'claude'
-  # When true, the bot also records a native pull request review (Approved /
-  # Changes Requested) on the platform's reviewer panel in addition to the
-  # text completion annotation. Defaults to false.
-  submit_native_review: false
+  # When the bot records a native pull request review (Approved / Changes
+  # Requested) on the platform's reviewer panel in addition to the text
+  # completion annotation. Defaults to true; set to false to opt out.
+  submit_native_review: true
   # When false (the default), draft PRs are skipped entirely — set to true to
   # opt back in.
   review_drafts: false
@@ -362,7 +362,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_RULES_PATH`                | Path to rules directory                                                  |                      |
 | `CODE_GURU_PROVIDER_TOKEN`            | Git provider token                                                       |                      |
 | `CODE_GURU_TRIVIAL_ADAPTERS`          | Comma-separated adapter names                                            |                      |
-| `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW`   | When `true`, also records a native review (Approved / Changes Requested) on the platform's reviewer panel | `false`              |
+| `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW`   | Records a native review (Approved / Changes Requested) on the platform's reviewer panel; set to `false` to opt out | `true`               |
 | `CODE_GURU_AI_REVIEW_DRAFTS`          | When `true`, the bot reviews draft PRs as well — by default drafts are skipped | `false`              |
 
 ## Rules
