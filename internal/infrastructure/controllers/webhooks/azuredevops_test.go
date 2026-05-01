@@ -718,3 +718,74 @@ func TestHandleAzureDevOps(t *testing.T) {
 		assert.Len(t, sub.Jobs(), 1)
 	})
 }
+
+// adoDraftPRPayload renders the canonical ADO PR payload with `isDraft=true`
+// alongside the active status, mirroring the shape ADO sends when a draft
+// PR fires `git.pullrequest.created`.
+func adoDraftPRPayload() string {
+	return fmt.Sprintf(`{
+  "eventType": "git.pullrequest.created",
+  "resource": {
+    "pullRequestId": 43,
+    "status": "active",
+    "title": "WIP: rework",
+    "url": "https://dev.azure.com/ExampleOrg/Platform/_git/demo-repo/pullrequest/43",
+    "isDraft": true,
+    "sourceRefName": "refs/heads/feat/x",
+    "targetRefName": "refs/heads/main",
+    "repository": {
+      "id": %q,
+      "name": "demo-repo",
+      "remoteUrl": "https://dev.azure.com/ExampleOrg/Platform/_git/demo-repo",
+      "project": {"name": "Platform"}
+    }
+  }
+}`, adoRepoUUID)
+}
+
+func TestHandleAzureDevOpsPropagatesIsDraft(t *testing.T) {
+	t.Parallel()
+
+	// Pin the wiring contract: when ADO sends `resource.isDraft=true`, the
+	// dispatched Job must carry `PR.IsDraft=true` so the downstream
+	// ReviewCommand can apply its draft-skip policy. Without this, gitforge
+	// PR #89's removal of the client-side draft filter would silently let
+	// every ADO draft through to the AI path under the new default.
+	t.Run("should set Job.PR.IsDraft when the ADO payload reports isDraft=true", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoDraftPRPayload()))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		require.Equal(t, http.StatusAccepted, w.Code)
+		jobs := sub.Jobs()
+		require.Len(t, jobs, 1)
+		assert.True(t, jobs[0].PR.IsDraft, "draft ADO payload must set PR.IsDraft on the dispatched Job")
+	})
+
+	t.Run("should leave Job.PR.IsDraft false when the ADO payload omits isDraft", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		require.Equal(t, http.StatusAccepted, w.Code)
+		jobs := sub.Jobs()
+		require.Len(t, jobs, 1)
+		assert.False(t, jobs[0].PR.IsDraft, "non-draft ADO payload must keep PR.IsDraft=false")
+	})
+}

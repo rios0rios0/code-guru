@@ -88,8 +88,10 @@ func (c *ReviewAllController) Execute(cmd *cobra.Command, _ []string) {
 	reviewAllCmd := commands.NewReviewAllCommand(c.providerRegistry, reviewCmd)
 
 	results, err := reviewAllCmd.Execute(ctx, settings, commands.ReviewOptions{
-		DryRun:  dryRun,
-		Verbose: verbose,
+		DryRun:             dryRun,
+		Verbose:            verbose,
+		SubmitNativeReview: settings.AI.SubmitNativeReview,
+		ReviewDrafts:       settings.AI.ReviewDrafts,
 	})
 	if err != nil {
 		logger.Warnf("batch review completed with errors: %v", err)
