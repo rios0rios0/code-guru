@@ -147,7 +147,7 @@ func adoSkinnyPRPayload(eventType string, prID int) string {
   "id": "00000000-0000-0000-0000-000000000000",
   "eventType": %q,
   "publisherId": "tfs",
-  "message": {"text": "Felipe Rios created pull request NNNN"},
+  "message": {"text": "Felipe Rios created pull request 99999"},
   "detailedMessage": {"text": "..."},
   "resource": {
     "url": "https://dev.azure.com/ExampleOrg/project-uuid-B/_apis/git/repositories/project-uuid-C/pullRequests/%d",
@@ -161,10 +161,10 @@ func adoSkinnyPRPayload(eventType string, prID int) string {
 // `adoPRPayload` produces inline.
 func hydratedFullResource() webhooks.ADOResource {
 	return webhooks.ADOResource{
-		PullRequestID: NNNN,
+		PullRequestID: 99999,
 		Status:        "active",
 		Title:         "smoke",
-		URL:           "https://dev.azure.com/ExampleOrg/Platform/_git/demo-repo/pullrequest/NNNN",
+		URL:           "https://dev.azure.com/ExampleOrg/Platform/_git/demo-repo/pullrequest/99999",
 		SourceRefName: "refs/heads/feat/x",
 		TargetRefName: "refs/heads/main",
 		Repository: webhooks.ADORepository{
@@ -315,7 +315,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 	t.Run("should respond 202 (Accepted) when status is empty", func(t *testing.T) {
 		// given: ADO's `git.pullrequest.updated` payload is observed in
 		// the wild to ship `resource.status: ""` on commit-only updates —
-		// captured live on internal-terraform PR #NNNN where every push was
+		// captured live on internal-terraform PR #99999 where every push was
 		// silently 204'd. The handler's old strict-active check rejected
 		// every such delivery; the new check only rejects KNOWN closed
 		// states, so an empty (or any unknown) status proceeds and the
@@ -463,7 +463,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 		hydrator := newStubADOHydrator(hydratedFullResource())
 		d.SetADOHydrator(hydrator)
 		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops",
-			bytes.NewBufferString(adoSkinnyPRPayload("git.pullrequest.created", NNNN)))
+			bytes.NewBufferString(adoSkinnyPRPayload("git.pullrequest.created", 99999)))
 		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
 		w := httptest.NewRecorder()
 
@@ -474,13 +474,13 @@ func TestHandleAzureDevOps(t *testing.T) {
 		assert.Equal(t, http.StatusAccepted, w.Code)
 		require.Equal(t, int32(1), hydrator.Calls(),
 			"hydrator must be invoked exactly once for a skinny payload")
-		assert.Contains(t, hydrator.LastURL(), "/pullRequests/NNNN",
+		assert.Contains(t, hydrator.LastURL(), "/pullRequests/99999",
 			"hydrator must receive the resource.url straight from the wire payload")
 		assert.Equal(t, "ado-pat-test", hydrator.LastToken(),
 			"hydrator must receive the configured azuredevops PAT")
 		jobs := sub.Jobs()
 		require.Len(t, jobs, 1)
-		assert.Equal(t, NNNN, jobs[0].PR.ID)
+		assert.Equal(t, 99999, jobs[0].PR.ID)
 		assert.Equal(t, adoRepoUUID, jobs[0].Repo.ID,
 			"after hydration the worker job must carry the canonical repository UUID")
 		assert.Equal(t, adoProjectName, jobs[0].Repo.Project)
@@ -548,7 +548,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 		hydrator := newStubADOHydrator(hydrated)
 		d.SetADOHydrator(hydrator)
 		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops",
-			bytes.NewBufferString(adoSkinnyPRPayload("git.pullrequest.updated", NNNN)))
+			bytes.NewBufferString(adoSkinnyPRPayload("git.pullrequest.updated", 99999)))
 		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
 		w := httptest.NewRecorder()
 
@@ -572,7 +572,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 		hydrator := newStubADOHydrator(hydratedFullResource())
 		d.SetADOHydrator(hydrator)
 		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops",
-			bytes.NewBufferString(adoSkinnyPRPayload("git.pullrequest.created", NNNN)))
+			bytes.NewBufferString(adoSkinnyPRPayload("git.pullrequest.created", 99999)))
 		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
 		w := httptest.NewRecorder()
 
@@ -600,7 +600,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 		hydrator := newStubADOHydrator(hydratedFullResource())
 		d.SetADOHydrator(hydrator)
 		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops",
-			bytes.NewBufferString(adoSkinnyPRPayload("git.pullrequest.created", NNNN)))
+			bytes.NewBufferString(adoSkinnyPRPayload("git.pullrequest.created", 99999)))
 		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
 		w := httptest.NewRecorder()
 
@@ -620,7 +620,7 @@ func TestHandleAzureDevOps(t *testing.T) {
 		// same PR within seconds, both routed to the same pod. The
 		// dedup cache must accept the first and refuse the second.
 		// Pinned per the duplicate-comment incident on
-		// `internal-terraform/pipelines#NNNN` on `2026-05-01`.
+		// `internal-terraform/pipelines#99999` on `2026-05-01`.
 		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
 		req1 := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
 		req1.Header.Set("Authorization", adoBasicAuth(adoSecret))
