@@ -136,8 +136,9 @@ func (c *ReviewCommand) Execute(
 		// review per PR, so a single failure means total silence
 		// unless we annotate. Best-effort: a failure to post the
 		// annotation logs at `Warn` and the original error still
-		// bubbles up to the worker.
-		if !opts.DryRun {
+		// bubbles up to the worker. Skipped when the PR has been
+		// closed mid-flight — same gate as the success path below.
+		if !opts.DryRun && !isPullRequestClosed(ctx, provider, repo, pr.ID) {
 			c.postReviewFailedAnnotation(ctx, provider, repo, pr.ID, err)
 		}
 		return nil, fmt.Errorf("AI review failed: %w", err)
@@ -146,17 +147,34 @@ func (c *ReviewCommand) Execute(
 	result.PullRequestURL = pr.URL
 
 	if !opts.DryRun {
-		c.postComments(ctx, provider, repo, pr.ID, result)
-		// After the inline / summary comments land, post a tiny
-		// completion notice so the PR author sees a visible
-		// transition from "🤖 reviewing" (PR #102) to "✅ done".
-		// Without this, the marker stays open-ended and the author
-		// has to count comments to infer the bot finished. The
-		// notice is intentionally a separate thread (not an edit of
-		// the marker) because gitforge does not yet expose a thread-
-		// update method — see task `#47`. Once that lands, this can
-		// be replaced with marker-thread auto-close.
-		c.postReviewCompleteAnnotation(ctx, provider, repo, pr.ID, result)
+		// One PR-status check gates BOTH `postComments` AND the
+		// completion annotation — without the unified gate the bot
+		// would still post the "review complete" notice on a merged
+		// PR, undermining the skip (Copilot review on PR #105
+		// thread `PRRT_kwDOJKAEo85-6f_Y`). Doing the check once at
+		// the call site (instead of inside `postComments`) also
+		// halves the API calls on the success path.
+		if isPullRequestClosed(ctx, provider, repo, pr.ID) {
+			logger.Warnf(
+				"PR #%d: closed mid-flight, skipping review post (verdict=%s, comments=%d would have been posted)",
+				pr.ID,
+				result.Verdict,
+				len(result.Comments),
+			)
+		} else {
+			c.postComments(ctx, provider, repo, pr.ID, result)
+			// After the inline / summary comments land, post a tiny
+			// completion notice so the PR author sees a visible
+			// transition from "reviewing" (PR #102) to "done".
+			// Without this, the marker stays open-ended and the
+			// author has to count comments to infer the bot
+			// finished. The notice is intentionally a separate
+			// thread (not an edit of the marker) because gitforge
+			// does not yet expose a thread-update method — see
+			// task `#47`. Once that lands, this can be replaced
+			// with marker-thread auto-close.
+			c.postReviewCompleteAnnotation(ctx, provider, repo, pr.ID, result)
+		}
 	}
 
 	return result, nil
@@ -544,6 +562,17 @@ func (c *ReviewCommand) postComments(
 	prID int,
 	result *entities.ReviewResult,
 ) {
+	// Note: the closed-PR re-check that decides whether to post at
+	// all lives in `Execute` so a single `GetPullRequestStatus` call
+	// gates BOTH `postComments` and the sibling
+	// `postReviewCompleteAnnotation`. Originally added per task
+	// `#43` and refined per Copilot review on PR #105 thread
+	// `PRRT_kwDOJKAEo85-6f_Y`. The webhook payload's `status` is
+	// captured at delivery time, but the AI step can take 5–10
+	// minutes on complex diffs (PR `#NNNN` on `2026-05-01` took
+	// 8.5 minutes), and the PR may have been merged or abandoned in
+	// the meantime — the call site re-check catches that.
+
 	// Post the PR-wide summary only when there are no per-issue comments
 	// (neither inline `Line > 0` threads nor PR-wide `Line <= 0`
 	// annotations). The per-issue comments already carry the feedback, so
@@ -561,7 +590,14 @@ func (c *ReviewCommand) postComments(
 
 	for _, comment := range comments {
 		if comment.Line > 0 {
-			err := provider.PostPullRequestThreadComment(
+			// `_` discards the new thread ID gitforge returns (post
+			// `0.9.7`). The inline comment threads are not currently
+			// updated after creation — the marker thread (PR #102) is
+			// the only candidate for auto-close, and it goes through
+			// `PostPullRequestComment`, not this path. Capturing the
+			// ID here is reserved for a future "edit on second push"
+			// feature.
+			_, err := provider.PostPullRequestThreadComment(
 				ctx, repo, prID, comment.FilePath, comment.Line, comment.Body,
 			)
 			if err != nil {
@@ -573,6 +609,50 @@ func (c *ReviewCommand) postComments(
 				logger.Errorf("failed to post comment: %v", err)
 			}
 		}
+	}
+}
+
+// pullRequestStatusGetter is the narrow subset of
+// `forgeEntities.ReviewProvider` that `isPullRequestClosed` consumes.
+// Defined here so the test can pass a 1-method stub rather than
+// build a full `ReviewProvider` for every row.
+type pullRequestStatusGetter interface {
+	GetPullRequestStatus(ctx context.Context, repo forgeEntities.Repository, prID int) (string, error)
+}
+
+// isPullRequestClosed re-checks the PR's status via the provider and
+// returns true when the PR is no longer eligible for review comments.
+// Best-effort: a fetch failure logs `Warn` and the function returns
+// false so the caller proceeds with posting (the bot is never worse
+// than today's baseline). The closed-status set covers both Azure
+// DevOps' enum (`completed`, `abandoned`) and GitHub's mapped values
+// from `gitforge.GetPullRequestStatus` (`closed`, `merged`). The
+// comparison is case-/whitespace-tolerant for those known closed
+// values; any other status — including `active`, `open`, an empty
+// string, or a future enum addition the bot has not been taught
+// about — is treated as not closed so posting proceeds under the
+// same best-effort contract. Pinned per task `#43` and Copilot
+// review on PR #105 thread `PRRT_kwDOJKAEo85-6f_d`.
+func isPullRequestClosed(
+	ctx context.Context,
+	getter pullRequestStatusGetter,
+	repo forgeEntities.Repository,
+	prID int,
+) bool {
+	status, err := getter.GetPullRequestStatus(ctx, repo, prID)
+	if err != nil {
+		logger.Warnf(
+			"PR #%d: GetPullRequestStatus failed (%v); proceeding with post under the assumption the PR is still active",
+			prID,
+			err,
+		)
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "abandoned", "completed", "closed", "merged":
+		return true
+	default:
+		return false
 	}
 }
 
