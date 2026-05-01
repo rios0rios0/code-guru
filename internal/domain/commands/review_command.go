@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	logger "github.com/sirupsen/logrus"
 
@@ -271,7 +272,9 @@ func (c *ReviewCommand) postComments(
 		}
 	}
 
-	for _, comment := range result.Comments {
+	comments := c.dropStaleComments(ctx, provider, repo, prID, result.Comments)
+
+	for _, comment := range comments {
 		if comment.Line > 0 {
 			err := provider.PostPullRequestThreadComment(
 				ctx, repo, prID, comment.FilePath, comment.Line, comment.Body,
@@ -286,6 +289,104 @@ func (c *ReviewCommand) postComments(
 			}
 		}
 	}
+}
+
+// dropStaleComments removes any review comment whose `FilePath` is not in
+// the current set of changed files on the PR. The AI's response is built
+// from a diff snapshot taken at the start of `Execute`; if the user
+// pushes another commit (or rebases / squashes) between that snapshot
+// and `postComments`, the AI's findings can reference files the latest
+// iteration no longer touches. ADO renders such comments with a
+// "this file no longer exists in the latest pull request changes"
+// warning — observed live on `Zest-App/integrator-tenablevm#12095`
+// where every bot comment carried that banner because the PR had been
+// rewritten between the webhook firing and the review completing.
+//
+// The check is best-effort: if `GetPullRequestFiles` fails (e.g.
+// transient ADO outage) we fall back to posting all comments so the
+// behaviour never regresses below today's baseline. The path
+// comparison normalises a leading `/` so an AI response with
+// `internal/foo.go` matches an ADO-style `/internal/foo.go` (the same
+// normalisation `support.LookupChunkByPath` uses on the diff side).
+func (c *ReviewCommand) dropStaleComments(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+	comments []entities.ReviewComment,
+) []entities.ReviewComment {
+	if len(comments) == 0 {
+		return comments
+	}
+	files, err := provider.GetPullRequestFiles(ctx, repo, prID)
+	if err != nil {
+		logger.Warnf(
+			"PR #%d: skipping staleness check, GetPullRequestFiles failed: %v — posting all %d comments",
+			prID, err, len(comments),
+		)
+		return comments
+	}
+	live := make(map[string]struct{}, len(files))
+	for _, f := range files {
+		live[normalizeFilePath(f.Path)] = struct{}{}
+	}
+	kept, dropped := filterStaleComments(comments, live)
+	if len(dropped) > 0 {
+		logger.Warnf(
+			"PR #%d: dropped %d stale comment(s) referencing files no longer in the latest iteration: %s",
+			prID, len(dropped), summarizeStaleFilePaths(dropped),
+		)
+	}
+	return kept
+}
+
+// filterStaleComments partitions `comments` into the ones whose
+// `FilePath` is present in `livePaths` and the ones whose path is no
+// longer there. Pure function — exposed via `export_test.go` so the
+// test suite can pin the contract without standing up a stub
+// `forgeEntities.ReviewProvider`.
+func filterStaleComments(
+	comments []entities.ReviewComment,
+	livePaths map[string]struct{},
+) ([]entities.ReviewComment, []entities.ReviewComment) {
+	var kept, dropped []entities.ReviewComment
+	for _, comment := range comments {
+		if _, ok := livePaths[normalizeFilePath(comment.FilePath)]; ok {
+			kept = append(kept, comment)
+		} else {
+			dropped = append(dropped, comment)
+		}
+	}
+	return kept, dropped
+}
+
+// normalizeFilePath strips a leading `/` so AI responses
+// (`internal/foo.go`) match ADO-shape paths (`/internal/foo.go`)
+// when the staleness filter compares them. Mirrors the same
+// normalisation `support.LookupChunkByPath` performs on the diff
+// side so both halves of the pipeline use one rule.
+func normalizeFilePath(p string) string { return strings.TrimPrefix(p, "/") }
+
+// summarizeStaleFilePaths joins up to the first eight unique dropped
+// file paths so the operator log line stays bounded under runs that
+// drop a large batch (e.g. a squash that rewrites every file in the
+// PR). The trailing "(+N more)" sentinel preserves the count without
+// echoing the full list.
+func summarizeStaleFilePaths(dropped []entities.ReviewComment) string {
+	const maxShown = 8
+	seen := make(map[string]struct{}, len(dropped))
+	paths := make([]string, 0, len(dropped))
+	for _, c := range dropped {
+		if _, ok := seen[c.FilePath]; ok {
+			continue
+		}
+		seen[c.FilePath] = struct{}{}
+		paths = append(paths, c.FilePath)
+	}
+	if len(paths) <= maxShown {
+		return strings.Join(paths, ", ")
+	}
+	return fmt.Sprintf("%s (+%d more)", strings.Join(paths[:maxShown], ", "), len(paths)-maxShown)
 }
 
 // shouldPostSummary decides whether the PR-wide summary thread should be
