@@ -726,3 +726,115 @@ func TestIsPullRequestClosed(t *testing.T) {
 		assert.Equal(t, 1, getter.calls)
 	})
 }
+
+// recordingReviewProvider satisfies `forgeEntities.ReviewProvider` by
+// embedding the interface (zero value is nil) and overriding only
+// `PostPullRequestComment`. Any other method call would panic, which
+// is fine because the marker post helpers never touch the rest of
+// the surface — and a future refactor that DOES introduce another
+// call would surface immediately as a panic during this test rather
+// than as a silent stub.
+type recordingReviewProvider struct {
+	forgeEntities.ReviewProvider
+	calls []recordedPRComment
+}
+
+type recordedPRComment struct {
+	body string
+	opts []forgeEntities.CommentOption
+}
+
+func (r *recordingReviewProvider) PostPullRequestComment(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	_ int,
+	body string,
+	opts ...forgeEntities.CommentOption,
+) error {
+	r.calls = append(r.calls, recordedPRComment{body: body, opts: opts})
+	return nil
+}
+
+func TestAnnotationThreadStatusContract(t *testing.T) {
+	t.Parallel()
+
+	// The constant pins the ADO thread-status string the bot sends.
+	// `"closed"` is what ADO renders as "discussion ended" — the
+	// right shape for purely informational threads (start marker,
+	// review-complete notice, review-failed notice). Without this
+	// pin a future "let me try `fixed` instead" refactor would land
+	// without a test failure even though it would change how the PR
+	// author perceives every annotation we post.
+	t.Run("should be 'closed' so ADO renders annotations as ended discussions", func(t *testing.T) {
+		// given / when / then
+		assert.Equal(t, "closed", commands.AnnotationThreadStatus,
+			"the constant must remain 'closed' — see the doc on annotationThreadStatus for why")
+	})
+}
+
+func TestMarkerHelpersForwardThreadStatusOption(t *testing.T) {
+	t.Parallel()
+
+	// Pin the wiring contract: each of the three PR-wide annotation
+	// helpers MUST forward `forgeEntities.WithThreadStatus(commands.AnnotationThreadStatus)`
+	// on every call to `PostPullRequestComment`. Without this, ADO
+	// renders every marker / completion / failure notice as an
+	// active thread the PR author has to dismiss by hand — the
+	// failure mode operationally observed before gitforge PR #87
+	// landed.
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	prID := 4242
+
+	tests := []struct {
+		name   string
+		invoke func(rc *commands.ReviewCommand, p *recordingReviewProvider)
+	}{
+		{
+			name: "should forward WithThreadStatus(closed) from postReviewingMarker",
+			invoke: func(rc *commands.ReviewCommand, p *recordingReviewProvider) {
+				commands.PostReviewingMarker(rc, context.Background(), p, repo, prID)
+			},
+		},
+		{
+			name: "should forward WithThreadStatus(closed) from postReviewCompleteAnnotation",
+			invoke: func(rc *commands.ReviewCommand, p *recordingReviewProvider) {
+				result := &entities.ReviewResult{Verdict: "comment", Summary: "ok"}
+				commands.PostReviewCompleteAnnotation(rc, context.Background(), p, repo, prID, result)
+			},
+		},
+		{
+			name: "should forward WithThreadStatus(closed) from postReviewFailedAnnotation",
+			invoke: func(rc *commands.ReviewCommand, p *recordingReviewProvider) {
+				commands.PostReviewFailedAnnotation(rc, context.Background(), p, repo, prID, errors.New("claude crashed"))
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given: a ReviewCommand built with nil dependencies —
+			// the helpers never touch them, and a constructor change
+			// that introduces a new dependency would surface as a
+			// nil-pointer panic here, not as a silent regression.
+			rc := commands.NewReviewCommand(nil, nil, nil)
+			provider := &recordingReviewProvider{}
+
+			// when
+			tc.invoke(rc, provider)
+
+			// then
+			require.Len(t, provider.calls, 1, "each helper must call PostPullRequestComment exactly once")
+			require.Len(t, provider.calls[0].opts, 1, "each helper must forward exactly one CommentOption")
+
+			// Resolve the option through gitforge's helper to confirm
+			// the encoded status value is `closed` — without this we
+			// would be asserting that an opaque function was passed,
+			// not that the right status string lands on the wire.
+			resolved := forgeEntities.ResolveCommentOptions(provider.calls[0].opts...)
+			assert.Equal(t, commands.AnnotationThreadStatus, resolved,
+				"the option must resolve to the AnnotationThreadStatus constant ('closed')")
+		})
+	}
+}
