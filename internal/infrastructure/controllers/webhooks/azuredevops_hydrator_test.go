@@ -110,6 +110,10 @@ func TestAppendAPIVersion(t *testing.T) {
 	})
 
 	t.Run("should reject a relative URL (only an absolute one identifies the org)", func(t *testing.T) {
+		// given: a path-only input (no scheme/host). CLAUDE.md
+		// requires the BDD `given/when/then` triplet on every
+		// subtest; the input here is the precondition under test.
+
 		// when
 		got, err := webhooks.AppendAPIVersion("/_apis/git/pullRequests/1", "7.1-preview.1")
 
@@ -119,6 +123,12 @@ func TestAppendAPIVersion(t *testing.T) {
 	})
 
 	t.Run("should reject a URL with a control character that fails url.Parse", func(t *testing.T) {
+		// given: a URL ending in `\x7f` (DEL). `url.Parse` is
+		// otherwise lenient — most strings parse — so a control
+		// character is the canonical "make Go's parser actually
+		// error" trigger. CLAUDE.md requires the BDD triplet on
+		// every subtest even when the setup is trivial.
+
 		// when
 		got, err := webhooks.AppendAPIVersion("https://dev.azure.com/\x7f", "7.1-preview.1")
 
