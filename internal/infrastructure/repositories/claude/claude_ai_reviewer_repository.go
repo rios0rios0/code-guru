@@ -85,11 +85,30 @@ func (r *AIReviewerRepository) ReviewDiff(
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("claude CLI failed: %w (stderr: %s)", err, stderr.String())
+		// `claude --print --output-format json` writes its error envelope
+		// to stdout (the JSON the CLI promises) AND any auxiliary message
+		// to stderr. Discarding stdout on a non-zero exit is what made
+		// every claude crash look like `(stderr: )` in production logs
+		// — captured live across PRs #NNNN / #NNNN / #NNNN / #NNNN
+		// / #NNNN on `2026-05-01`. Truncate each stream to keep the
+		// error line bounded.
+		return nil, fmt.Errorf(
+			"claude CLI failed: %w (stderr: %s; stdout: %s)",
+			err,
+			support.TruncateForLog(stderr.String(), claudeFailureLogLimit),
+			support.TruncateForLog(stdout.String(), claudeFailureLogLimit),
+		)
 	}
 
 	return ParseClaudeResponse(stdout.Bytes())
 }
+
+// claudeFailureLogLimit caps each captured stream when claude exits
+// non-zero. 4 KB per stream is enough to fit the typical CLI JSON error
+// envelope (a couple hundred bytes) plus a short stderr backtrace; both
+// are quoted via `support.TruncateForLog` so newlines / tabs cannot
+// inject log lines.
+const claudeFailureLogLimit = 4096
 
 // ParseClaudeResponse parses the Claude CLI JSON output into a ReviewResult.
 func ParseClaudeResponse(output []byte) (*entities.ReviewResult, error) {
