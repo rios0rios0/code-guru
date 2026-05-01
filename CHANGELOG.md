@@ -16,6 +16,15 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added native pull request review submission so the bot's verdict surfaces in the platform's reviewer panel (Approved / Changes Requested) instead of only inside the completion annotation. After every trivial-detector verdict and every successful AI review, `ReviewCommand` now also calls `gitforge.SubmitPullRequestReview` — GitHub uses the `event` field on `POST /pulls/:n/reviews` (`APPROVE` / `REQUEST_CHANGES`), Azure DevOps uses the integer reviewer vote on `PUT /pullrequests/:id/reviewers/:reviewerId` (`10` / `-10`). Gated by the new `ai.submit_native_review` setting (default `false`); flip via YAML or `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW=true`. Best-effort: a provider failure logs at `Warn` and the existing text annotation still posts. The `comment` verdict deliberately skips the API call so an AI review with no opinion does not flip a previous Approved/Changes-Requested vote on the next push. The verdict-to-`forgeEntities.ReviewSubmission` translation lives in the new `support.MapVerdictToReview` helper, covered by table-driven unit tests in `internal/support/verdict_mapper_test.go`
+- added a draft-PR skip so the bot no longer spends AI budget reviewing pull requests that the author has explicitly marked work-in-progress. `ReviewCommand.Execute` short-circuits with `verdict=comment` and a `"skipped: pull request is a draft"` summary BEFORE fetching files or posting the "reviewing" marker — a draft never accumulates a marker thread that would never get a completion annotation. Gated by the new `ai.review_drafts` setting (default `false`); flip via YAML or `CODE_GURU_AI_REVIEW_DRAFTS=true` to opt back in. The skip honours the `IsDraft` field on `forgeEntities.PullRequestDetail`; both webhook handlers (`webhooks/github.go` reads `pull_request.draft`, `webhooks/azuredevops.go` reads `resource.isDraft`) now propagate the flag onto the dispatched `Job`. Pinned by four new test rows in `webhooks/github_test.go` + `webhooks/azuredevops_test.go` (draft payload sets `Job.PR.IsDraft=true`, non-draft keeps it false) and two rows in `commands/review_command_test.go` (draft skip short-circuits with a draft summary; `ReviewDrafts: true` bypasses the gate)
+
+### Changed
+
+- bumped `gitforge` to the post-`SubmitPullRequestReview` revision so the new `ReviewProvider.SubmitPullRequestReview` method and `PullRequestDetail.IsDraft` field are available; this is also the breaking-change boundary where Azure DevOps' `ListOpenPullRequests` stopped filtering drafts client-side (the policy now lives in `ReviewCommand`)
+
 ## [1.5.0] - 2026-05-01
 
 ### Added
