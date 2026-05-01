@@ -502,3 +502,153 @@ func TestBuildReviewFailedBody(t *testing.T) {
 			"the truncation sentinel from support.TruncateForLog must be present so a reader knows the error was clipped")
 	})
 }
+
+func TestBuildReviewCompleteBody(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should render the completion notice with verdict, comment count and timestamp", func(t *testing.T) {
+		// given: a typical AI review result — `request_changes`
+		// verdict with 3 inline comments. The body must surface
+		// each so the author can see the conclusion at a glance
+		// without scrolling.
+		ts := time.Date(2026, 5, 1, 2, 51, 21, 0, time.UTC)
+		result := &entities.ReviewResult{
+			Verdict: "request_changes",
+			Comments: []entities.ReviewComment{
+				{FilePath: "a.go", Line: 1, Body: "..."},
+				{FilePath: "b.go", Line: 2, Body: "..."},
+				{FilePath: "c.go", Line: 3, Body: "..."},
+			},
+		}
+
+		// when
+		body := commands.BuildReviewCompleteBody(ts, result)
+
+		// then
+		assert.Contains(t, body, "Code Guru review complete.")
+		assert.Contains(t, body, "request_changes",
+			"the verdict must surface so the author knows the bot's conclusion")
+		assert.Contains(t, body, "3 inline comments",
+			"the comment count must surface so the author can locate the threads")
+		assert.Contains(t, body, "Completed at 2026-05-01T02:51:21Z.",
+			"the timestamp must be RFC 3339 UTC matching the marker's `Started at <ts>` shape so a reader can pair them")
+	})
+
+	t.Run("should pluralise the comment label correctly for exactly 1 inline comment", func(t *testing.T) {
+		// given: pluralisation is the kind of thing that's quiet
+		// until a reader notices "1 inline comments" looks broken.
+		// Pin "1 inline comment" / "0 inline comments" /
+		// "2 inline comments" so a future formatting refactor
+		// preserves grammar.
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		result := &entities.ReviewResult{
+			Verdict:  "comment",
+			Comments: []entities.ReviewComment{{FilePath: "x.go", Line: 1, Body: "."}},
+		}
+
+		// when
+		body := commands.BuildReviewCompleteBody(ts, result)
+
+		// then
+		assert.Contains(t, body, "1 inline comment.",
+			"singular comment count must use the singular noun")
+		assert.NotContains(t, body, "1 inline comments")
+	})
+
+	t.Run("should render `0 inline comments` when the AI returned no findings", func(t *testing.T) {
+		// given: a clean review — `verdict=approve` and zero
+		// inline findings. The completion notice must still post
+		// (it's the bot's "done" signal) and must read naturally.
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		result := &entities.ReviewResult{Verdict: "approve", Comments: nil}
+
+		// when
+		body := commands.BuildReviewCompleteBody(ts, result)
+
+		// then
+		assert.Contains(t, body, "approve")
+		assert.Contains(t, body, "0 inline comments.",
+			"plural form covers zero too — `0 inline comment` would read as broken grammar")
+	})
+
+	t.Run("should fall back to `comment` verdict when the result's verdict is empty", func(t *testing.T) {
+		// given: the AI parser sometimes yields an empty Verdict
+		// (e.g. malformed JSON repaired but missing the field).
+		// The completion notice must still render something
+		// meaningful rather than `Verdict: \`\`` which looks broken.
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		result := &entities.ReviewResult{Verdict: "", Comments: nil}
+
+		// when
+		body := commands.BuildReviewCompleteBody(ts, result)
+
+		// then
+		assert.Contains(t, body, "comment",
+			"empty verdict must fall back to the `comment` literal")
+		assert.NotContains(t, body, "``", "no empty backtick block must leak into the body")
+	})
+
+	t.Run("should normalise a non-UTC input to UTC so the printed timestamp ends in Z", func(t *testing.T) {
+		// given: defensive — same contract as the other body
+		// builders (per Copilot review on PR #102 thread
+		// `PRRT_kwDOJKAEo85-56Sq`). Use `time.FixedZone` rather
+		// than `time.LoadLocation` for hermeticity (matching the
+		// pattern fixed across the rest of this file in PR #103
+		// thread `PRRT_kwDOJKAEo85-6Cu4`).
+		spLoc := time.FixedZone("America/Sao_Paulo", -3*60*60)
+		ts := time.Date(2026, 4, 30, 23, 51, 21, 0, spLoc) // == 2026-05-01T02:51:21Z
+		result := &entities.ReviewResult{Verdict: "comment", Comments: nil}
+
+		// when
+		body := commands.BuildReviewCompleteBody(ts, result)
+
+		// then
+		assert.Contains(t, body, "Completed at 2026-05-01T02:51:21Z.",
+			"the helper must format in UTC regardless of the input Location")
+		assert.NotContains(t, body, "-03:00", "no timezone offset should leak into the body")
+	})
+
+	t.Run("should not panic and produce a usable body when the result is nil (defensive)", func(t *testing.T) {
+		// given: the production caller never passes nil, but a
+		// future refactor that, e.g., skips the AI call for trivial
+		// detection and still wires the completion notice could
+		// pass `nil`. The helper must degrade gracefully rather
+		// than panic on a nil dereference.
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+
+		// when
+		body := commands.BuildReviewCompleteBody(ts, nil)
+
+		// then
+		assert.NotEmpty(t, body)
+		assert.Contains(t, body, "Code Guru review complete.")
+	})
+
+	t.Run("should count only inline (Line > 0) comments — PR-wide annotations don't inflate the count", func(t *testing.T) {
+		// given: a review with 2 inline (`Line > 0`) findings and
+		// 3 PR-wide annotations (`Line <= 0`). The body says
+		// "X inline comments", so only the inline ones count
+		// against that label — pinned per Copilot review on PR #104
+		// thread `PRRT_kwDOJKAEo85-6ErC`.
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		result := &entities.ReviewResult{
+			Verdict: "request_changes",
+			Comments: []entities.ReviewComment{
+				{FilePath: "a.go", Line: 1, Body: "inline 1"},
+				{FilePath: "b.go", Line: 5, Body: "inline 2"},
+				{FilePath: "c.go", Line: 0, Body: "PR-wide"},
+				{FilePath: "", Line: 0, Body: "PR-wide annotation"},
+				{FilePath: "d.go", Line: -1, Body: "negative-line PR-wide"},
+			},
+		}
+
+		// when
+		body := commands.BuildReviewCompleteBody(ts, result)
+
+		// then
+		assert.Contains(t, body, "2 inline comments.",
+			"only the two `Line > 0` comments must show up against the `inline` label")
+		assert.NotContains(t, body, "5 inline comments",
+			"the three PR-wide annotations must NOT inflate the count")
+	})
+}
