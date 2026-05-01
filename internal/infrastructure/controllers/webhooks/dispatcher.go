@@ -45,7 +45,7 @@ type Dispatcher struct {
 	submitter             Submitter
 	githubTokenizer       GitHubTokenizer
 	adoHydrator           ADOResourceHydrator
-	dedupCache            *webhookDedupCache
+	dedup                 WebhookDedup
 	allowedSourcePrefixes []netip.Prefix
 }
 
@@ -70,38 +70,72 @@ func NewDispatcher(
 		settings:              settings,
 		providerRegistry:      providerRegistry,
 		adoHydrator:           NewHTTPADOHydrator(nil),
-		dedupCache:            newWebhookDedupCache(webhookDedupTTL),
+		dedup:                 newInMemoryDedup(webhookDedupTTL),
 		allowedSourcePrefixes: parseAllowedCIDRs(settings.Server.AllowedSourceCIDRs),
 	}
 }
 
 // dedupSeen returns true when a webhook delivery for the same
-// caller-supplied key has already been processed inside the TTL
+// caller-supplied key has already been processed inside the dedup
 // window — the caller should short-circuit in that case. Each
 // handler picks its own key shape (ADO uses
 // `ado:<repo_uuid>:<pr_id>`; GitHub uses
-// `gh:<owner>/<repo>:<pr_id>`), so the cache itself stays
-// provider-agnostic. Hides the cache nil-check so handler code
-// stays linear; the nil branch only matters in tests that build a
+// `gh:<owner>/<repo>:<pr_id>`), so the dedup backend itself stays
+// provider-agnostic. Hides the nil-check so handler code stays
+// linear; the nil branch only matters in tests that build a
 // `Dispatcher` without the constructor.
-func (d *Dispatcher) dedupSeen(key string) bool {
-	if d.dedupCache == nil {
+//
+// `ctx` is forwarded to the backend so the K8s-Lease implementation
+// can bound its API-server calls; the in-memory backend ignores it.
+func (d *Dispatcher) dedupSeen(ctx context.Context, key string) bool {
+	if d.dedup == nil {
 		return false
 	}
-	return d.dedupCache.seenRecently(key, time.Now())
+	return d.dedup.SeenRecently(ctx, key)
 }
 
 // dedupForget rolls back a record made by `dedupSeen` when the work
 // the caller intended to gate (typically `submitter.Submit`) fails
-// AFTER the cache check. Without rollback, a webhook retry inside
-// the TTL window would be silently dropped because the cache would
-// still report the duplicate as seen. Tracked per Copilot review on
-// PR #100 thread `PRRT_kwDOJKAEo85-5zE-`.
-func (d *Dispatcher) dedupForget(key string) {
-	if d.dedupCache == nil {
+// AFTER the dedup check. Without rollback, a webhook retry inside
+// the dedup window would be silently dropped because the backend
+// would still report the duplicate as seen. Tracked per Copilot
+// review on PR #100 thread `PRRT_kwDOJKAEo85-5zE-`.
+func (d *Dispatcher) dedupForget(ctx context.Context, key string) {
+	if d.dedup == nil || key == "" {
 		return
 	}
-	d.dedupCache.forget(key)
+	d.dedup.Forget(ctx, key)
+}
+
+// ReleaseDedup is the worker-side counterpart to the dispatcher's
+// `dedupSeen` acquisition. The serve controller's pool handler must
+// `defer d.ReleaseDedup(ctx, job.DedupKey)` so a successful (or
+// failed) review releases the dedup record. Without the explicit
+// release the K8s-Lease backend would persist the lease in etcd
+// indefinitely (Kubernetes does NOT auto-delete `Lease` objects when
+// `spec.leaseDurationSeconds` elapses — that field is metadata only),
+// and a real follow-up push for the same PR would be silently dropped
+// as a "duplicate". Safe to call with an empty key (no-op) so tests
+// that build a `Job` without going through the handlers stay simple.
+func (d *Dispatcher) ReleaseDedup(ctx context.Context, key string) {
+	d.dedupForget(ctx, key)
+}
+
+// SetDedup overrides the default in-memory dedup backend. The serve
+// controller uses this to swap in `K8sLeaseDedup` when the bot is
+// running inside a Kubernetes pod (detected via
+// `KUBERNETES_SERVICE_HOST`), so cross-pod duplicate webhook
+// deliveries are gated by the API server instead of a per-pod cache.
+//
+// **Concurrency contract:** must be called during initialisation,
+// before the HTTP server starts handling webhook requests. The
+// setter does not synchronise with `HandleAzureDevOps` /
+// `HandleGitHub`, so swapping the backend at runtime would race with
+// in-flight deliveries. The same contract applies to
+// `SetADOHydrator`, `SetSubmitter`, and `SetGitHubTokenizer` — all
+// four are wired once during DI bootstrap and never touched again.
+func (d *Dispatcher) SetDedup(dedup WebhookDedup) {
+	d.dedup = dedup
 }
 
 // SetADOHydrator overrides the default HTTP-based ADO PR hydrator. Tests
