@@ -5,6 +5,7 @@ package commands_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -330,4 +331,58 @@ func TestNormalizeFilePath(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestBuildReviewingMarkerBody(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should render the marker with the start timestamp in RFC 3339 UTC", func(t *testing.T) {
+		// given: a fixed timestamp pinned in UTC so the formatting
+		// contract is deterministic. RFC 3339 matches the shape used
+		// in the operator log ("Started at <ts>"), so a reader can
+		// correlate the PR thread with the pod log line.
+		ts := time.Date(2026, 5, 1, 1, 52, 21, 0, time.UTC)
+
+		// when
+		body := commands.BuildReviewingMarkerBody(ts)
+
+		// then
+		assert.Contains(t, body, "Code Guru is reviewing this PR.",
+			"the marker headline must explicitly tell the author the bot has the PR")
+		assert.Contains(t, body, "Started at 2026-05-01T01:52:21Z.",
+			"the timestamp must be RFC 3339 UTC so it matches the operator log shape")
+		assert.Contains(t, body, "Comments will be posted as inline threads",
+			"the body must set expectations on what the eventual review looks like")
+	})
+
+	t.Run("should always emit a non-empty body even at the zero time (defensive)", func(t *testing.T) {
+		// given: the zero `time.Time` shouldn't crash or produce an
+		// empty body — pin the contract so a future refactor that
+		// (e.g.) reads the year off the timestamp doesn't panic on
+		// an uninitialised value.
+
+		// when
+		body := commands.BuildReviewingMarkerBody(time.Time{})
+
+		// then
+		assert.NotEmpty(t, body)
+		assert.Contains(t, body, "Code Guru is reviewing this PR.")
+	})
+
+	t.Run("should not embed `\\n` literally (must use real newlines for Markdown rendering)", func(t *testing.T) {
+		// given: ADO and GitHub render the marker as Markdown — the
+		// blank line between the headline and the explanatory
+		// paragraph requires an actual `\n\n` so the renderer treats
+		// them as separate paragraphs. A literal "\n" string would
+		// render as the four characters `\`, `n`, `\`, `n` and the
+		// PR thread would look like a single squashed line.
+		ts := time.Date(2026, 5, 1, 1, 0, 0, 0, time.UTC)
+
+		// when
+		body := commands.BuildReviewingMarkerBody(ts)
+
+		// then
+		assert.NotContains(t, body, `\n`, "the body must contain real newlines, not the escape sequence")
+		assert.Contains(t, body, "\n\n", "the body must have at least one blank line for Markdown paragraph breaks")
+	})
 }
