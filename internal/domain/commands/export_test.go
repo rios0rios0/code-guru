@@ -42,7 +42,28 @@ var (
 	BuildReviewFailedBody    = buildReviewFailedBody
 	BuildReviewCompleteBody  = buildReviewCompleteBody
 	IsPullRequestClosed      = isPullRequestClosed
+
+	// PostReviewingMarker / PostReviewCompleteAnnotation /
+	// PostReviewFailedAnnotation are method-value re-exports of the
+	// `*ReviewCommand` post helpers so external tests can pin the
+	// option-forwarding contract without going through the full
+	// `Execute` flow (which would require a stub for every
+	// repository, registry, and provider method). A regression in
+	// the `WithThreadStatus("closed")` wiring would surface as the
+	// recorded option list in the test stub no longer matching the
+	// expected value — the contract that tells ADO to render every
+	// informational annotation as a closed thread instead of one
+	// the PR author has to dismiss by hand.
+	PostReviewingMarker          = (*ReviewCommand).postReviewingMarker
+	PostReviewCompleteAnnotation = (*ReviewCommand).postReviewCompleteAnnotation
+	PostReviewFailedAnnotation   = (*ReviewCommand).postReviewFailedAnnotation
 )
+
+// AnnotationThreadStatus re-exports the unexported package constant
+// so tests can pin the value the post helpers forward to gitforge —
+// `"closed"` is what ADO treats as "discussion ended", which is the
+// shape the PR author should see for purely informational threads.
+const AnnotationThreadStatus = annotationThreadStatus
 
 // PullRequestStatusGetter is the test-only alias for the unexported
 // `pullRequestStatusGetter` interface so external tests can build a

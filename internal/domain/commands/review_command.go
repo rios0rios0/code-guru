@@ -340,7 +340,13 @@ func (c *ReviewCommand) postReviewFailedAnnotation(
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, reviewingMarkerPostTimeout)
 	defer cancel()
-	if err := provider.PostPullRequestComment(timeoutCtx, repo, prID, body); err != nil {
+	if err := provider.PostPullRequestComment(
+		timeoutCtx,
+		repo,
+		prID,
+		body,
+		forgeEntities.WithThreadStatus(annotationThreadStatus),
+	); err != nil {
 		logger.Warnf("PR #%d: failed to post 'review failed' annotation: %v", prID, err)
 	}
 }
@@ -424,7 +430,13 @@ func (c *ReviewCommand) postReviewCompleteAnnotation(
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, reviewingMarkerPostTimeout)
 	defer cancel()
-	if err := provider.PostPullRequestComment(timeoutCtx, repo, prID, body); err != nil {
+	if err := provider.PostPullRequestComment(
+		timeoutCtx,
+		repo,
+		prID,
+		body,
+		forgeEntities.WithThreadStatus(annotationThreadStatus),
+	); err != nil {
 		logger.Warnf("PR #%d: failed to post 'review complete' annotation: %v", prID, err)
 	}
 }
@@ -524,10 +536,32 @@ func (c *ReviewCommand) postReviewingMarker(
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, reviewingMarkerPostTimeout)
 	defer cancel()
-	if err := provider.PostPullRequestComment(timeoutCtx, repo, prID, body); err != nil {
+	if err := provider.PostPullRequestComment(
+		timeoutCtx,
+		repo,
+		prID,
+		body,
+		forgeEntities.WithThreadStatus(annotationThreadStatus),
+	); err != nil {
 		logger.Warnf("PR #%d: failed to post 'reviewing' marker: %v", prID, err)
 	}
 }
+
+// annotationThreadStatus is the initial thread status used for every
+// PR-wide informational annotation the bot posts (the "reviewing"
+// marker, the "review complete" notice, and the "review failed"
+// notice). Azure DevOps treats `closed` as "the discussion is done"
+// — exactly the right shape because none of these threads ask the
+// reviewer for action; they exist purely to give the PR author a
+// status signal in line with the rest of the comment activity.
+// Without this, every successful review left two unresolved
+// "informational" threads on the PR (the marker + the completion
+// notice) that the author had to dismiss by hand. GitHub's REST
+// review surface has no per-comment status and silently ignores the
+// option (`forgeEntities.WithThreadStatus` is documented as no-op there),
+// so this is effectively ADO-only behaviour with provider-agnostic
+// wiring.
+const annotationThreadStatus = "closed"
 
 // reviewingMarkerPostTimeout caps how long a single marker post can
 // hold the worker. The marker is UX, not a correctness gate, so a
