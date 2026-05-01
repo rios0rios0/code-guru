@@ -2,7 +2,10 @@
 
 package webhooks
 
-import "net/http"
+import (
+	"net/http"
+	"time"
+)
 
 // Re-exports of the unexported parsing/normalisation helpers in the ADO
 // handler so the external `webhooks_test` package can pin their contracts
@@ -53,3 +56,30 @@ type (
 func MergeHydratedADOResource(original, hydrated ADOResource) ADOResource {
 	return mergeHydratedADOResource(original, hydrated)
 }
+
+// WebhookDedupCache is the test-only alias for the unexported
+// `webhookDedupCache` so external tests can drive the cache with a
+// frozen clock instead of `time.Now()` (deterministic, no flakes).
+type WebhookDedupCache = webhookDedupCache
+
+// NewWebhookDedupCache constructs a cache with the supplied TTL. The
+// production path uses the package-level `webhookDedupTTL` constant;
+// tests use shorter TTLs so a single test run can exercise the
+// expiry branch without a real-time wait.
+func NewWebhookDedupCache(ttl time.Duration) *WebhookDedupCache {
+	return newWebhookDedupCache(ttl)
+}
+
+// SeenRecently exposes the unexported `seenRecently` method on the
+// cache so external tests can drive both the "first call records"
+// and "subsequent within TTL returns true" branches.
+func (c *WebhookDedupCache) SeenRecently(key string, now time.Time) bool {
+	return c.seenRecently(key, now)
+}
+
+// Forget exposes the unexported `forget` method on the cache so
+// external tests can verify the rollback contract — when a caller
+// records a key but the work it intended to gate (typically
+// `submitter.Submit`) fails, calling Forget puts the cache back to
+// the state that lets a retry through.
+func (c *WebhookDedupCache) Forget(key string) { c.forget(key) }

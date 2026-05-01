@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -79,6 +80,13 @@ const (
 	adoProjectName = "Platform"
 	adoRepoName    = "demo-repo"
 )
+
+// errSubmitterFull is the sentinel injected into a stub submitter to
+// simulate a saturated worker queue, so handler tests can drive the
+// "Submit failed → 503 → dedup rollback" branch without needing a
+// real worker pool. Shared between `azuredevops_test.go` and
+// `github_test.go` because both providers exercise the same wiring.
+var errSubmitterFull = errors.New("worker queue full (test sentinel)")
 
 func newTestRegistry() *registry.ProviderRegistry {
 	r := registry.NewProviderRegistry()
@@ -604,6 +612,91 @@ func TestHandleAzureDevOps(t *testing.T) {
 		assert.Equal(t, int32(1), hydrator.Calls(),
 			"hydration runs first; the allowlist check then trims the delivery")
 		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should short-circuit a duplicate webhook delivery without enqueueing a second job", func(t *testing.T) {
+		// given: simulating ADO's `pullrequest.created` +
+		// `pullrequest.updated` double-fire — both events for the
+		// same PR within seconds, both routed to the same pod. The
+		// dedup cache must accept the first and refuse the second.
+		// Pinned per the duplicate-comment incident on
+		// `internal-terraform/pipelines#NNNN` on `2026-05-01`.
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		req1 := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
+		req1.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		req2 := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
+		req2.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w1 := httptest.NewRecorder()
+		w2 := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w1, req1)
+		d.HandleAzureDevOps(w2, req2)
+
+		// then
+		assert.Equal(t, http.StatusAccepted, w1.Code, "the first delivery enqueues normally")
+		assert.Equal(t, http.StatusOK, w2.Code, "the duplicate returns 200 (acknowledged) without enqueueing")
+		assert.Contains(t, w2.Body.String(), "duplicate")
+		assert.Len(t, sub.Jobs(), 1, "exactly one job survives the dedup gate")
+	})
+
+	t.Run("should let a webhook retry through after Submit fails (rollback contract)", func(t *testing.T) {
+		// given: ADO retries on 5xx. If the first delivery hits a
+		// saturated worker queue and we recorded the dedup key
+		// before discovering that, the retry inside the TTL would
+		// be silently dropped. The handler now rolls back the
+		// record on Submit failure. Pinned per Copilot review on
+		// PR #100 thread `PRRT_kwDOJKAEo85-5zE-`.
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		failing := doubles.NewStubWebhookSubmitter().WithError(errSubmitterFull)
+		d.SetSubmitter(failing)
+		req1 := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
+		req1.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w1 := httptest.NewRecorder()
+
+		// when (1)
+		d.HandleAzureDevOps(w1, req1)
+
+		// then (1)
+		require.Equal(t, http.StatusServiceUnavailable, w1.Code)
+		require.Empty(t, failing.Jobs())
+
+		// when (2): retry against a healthy submitter
+		d.SetSubmitter(sub)
+		req2 := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
+		req2.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w2 := httptest.NewRecorder()
+		d.HandleAzureDevOps(w2, req2)
+
+		// then (2)
+		assert.Equal(t, http.StatusAccepted, w2.Code, "retry within TTL must reach the worker queue")
+		assert.Len(t, sub.Jobs(), 1)
+	})
+
+	t.Run("should NOT short-circuit two distinct PRs that arrive in quick succession", func(t *testing.T) {
+		// given: defensive — the dedup key is `(provider, repo_id, pr_id)`,
+		// so a real second PR with a different `pullRequestId` must
+		// always pass through. Without this row a future "let me
+		// widen the dedup key" refactor would silently swallow real
+		// traffic.
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		req1 := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
+		req1.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		// distinct PR ID = 43
+		payload2 := strings.Replace(adoActivePRPayload(), `"pullRequestId": 42`, `"pullRequestId": 43`, 1)
+		req2 := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(payload2))
+		req2.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w1 := httptest.NewRecorder()
+		w2 := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w1, req1)
+		d.HandleAzureDevOps(w2, req2)
+
+		// then
+		assert.Equal(t, http.StatusAccepted, w1.Code)
+		assert.Equal(t, http.StatusAccepted, w2.Code, "PR #43 is a different key — must be enqueued")
+		assert.Len(t, sub.Jobs(), 2, "both distinct PRs reach the worker queue")
 	})
 
 	t.Run("should fall back to X-Forwarded-For when CF-Connecting-IP is absent", func(t *testing.T) {

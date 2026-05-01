@@ -252,4 +252,59 @@ func TestHandleGitHub(t *testing.T) {
 		assert.Equal(t, http.StatusAccepted, w.Code)
 		assert.Len(t, sub.Jobs(), 1)
 	})
+
+	t.Run("should short-circuit a duplicate webhook delivery without enqueueing a second job", func(t *testing.T) {
+		// given: GitHub sometimes redelivers a webhook (e.g. on a 5xx
+		// response). The dedup cache must accept the first and refuse
+		// the second, mirroring the ADO contract. Pinned per Copilot
+		// review on PR #100 thread `PRRT_kwDOJKAEo85-5zEz`.
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+		req1 := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		req2 := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		w1 := httptest.NewRecorder()
+		w2 := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w1, req1)
+		d.HandleGitHub(w2, req2)
+
+		// then
+		assert.Equal(t, http.StatusAccepted, w1.Code)
+		assert.Equal(t, http.StatusOK, w2.Code, "the duplicate must return 200 (acknowledged) without enqueueing")
+		assert.Contains(t, w2.Body.String(), "duplicate")
+		assert.Len(t, sub.Jobs(), 1, "exactly one job survives the dedup gate")
+	})
+
+	t.Run("should let a webhook retry through after Submit fails (rollback contract)", func(t *testing.T) {
+		// given: a submitter wired to fail the first call, succeed
+		// the second. Without the rollback in `dedupForget`, the
+		// retry inside the TTL would be silently dropped because
+		// the cache would still say "duplicate". Pinned per Copilot
+		// review on PR #100 thread `PRRT_kwDOJKAEo85-5zE-`.
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+		// Wire the dispatcher to a fresh stub that fails the first
+		// Submit; we override the default stub here so the saturation
+		// behaviour is local to this row.
+		failing := doubles.NewStubWebhookSubmitter().WithError(errSubmitterFull)
+		d.SetSubmitter(failing)
+		req1 := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		w1 := httptest.NewRecorder()
+
+		// when (1): first delivery fails at Submit
+		d.HandleGitHub(w1, req1)
+
+		// then (1)
+		require.Equal(t, http.StatusServiceUnavailable, w1.Code)
+		require.Empty(t, failing.Jobs(), "Submit failed so no job is captured")
+
+		// when (2): retry now hits a healthy submitter — must be allowed through
+		d.SetSubmitter(sub)
+		req2 := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		w2 := httptest.NewRecorder()
+		d.HandleGitHub(w2, req2)
+
+		// then (2)
+		assert.Equal(t, http.StatusAccepted, w2.Code, "retry within TTL must NOT be dropped just because the previous attempt was recorded")
+		assert.Len(t, sub.Jobs(), 1, "the retry reaches the worker queue")
+	})
 }

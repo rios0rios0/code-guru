@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"time"
 
 	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
 	registry "github.com/rios0rios0/gitforge/pkg/registry/infrastructure"
@@ -17,6 +18,16 @@ import (
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 	infraRepos "github.com/rios0rios0/codeguru/internal/infrastructure/repositories"
 )
+
+// webhookDedupTTL bounds how long a `(provider, repo_id, pr_id)`
+// triple suppresses a duplicate webhook delivery. ADO routinely
+// double-fires `pullrequest.created` + `pullrequest.updated` for new
+// PRs (verified live across `#NNNN`, `#NNNN`, `#NNNN` on
+// `2026-05-01`); the longest observed gap between sibling deliveries
+// was 4 seconds. 30 s gives headroom for ADO retry storms while
+// staying far below any realistic real-follow-up-push interval (which
+// is minutes, not seconds), so a real new commit never gets dedup'd.
+const webhookDedupTTL = 30 * time.Second
 
 // Submitter is the subset of *Pool used by handlers; defining it here lets tests
 // substitute the pool without spinning up real workers.
@@ -34,6 +45,7 @@ type Dispatcher struct {
 	submitter             Submitter
 	githubTokenizer       GitHubTokenizer
 	adoHydrator           ADOResourceHydrator
+	dedupCache            *webhookDedupCache
 	allowedSourcePrefixes []netip.Prefix
 }
 
@@ -58,8 +70,38 @@ func NewDispatcher(
 		settings:              settings,
 		providerRegistry:      providerRegistry,
 		adoHydrator:           NewHTTPADOHydrator(nil),
+		dedupCache:            newWebhookDedupCache(webhookDedupTTL),
 		allowedSourcePrefixes: parseAllowedCIDRs(settings.Server.AllowedSourceCIDRs),
 	}
+}
+
+// dedupSeen returns true when a webhook delivery for the same
+// caller-supplied key has already been processed inside the TTL
+// window — the caller should short-circuit in that case. Each
+// handler picks its own key shape (ADO uses
+// `ado:<repo_uuid>:<pr_id>`; GitHub uses
+// `gh:<owner>/<repo>:<pr_id>`), so the cache itself stays
+// provider-agnostic. Hides the cache nil-check so handler code
+// stays linear; the nil branch only matters in tests that build a
+// `Dispatcher` without the constructor.
+func (d *Dispatcher) dedupSeen(key string) bool {
+	if d.dedupCache == nil {
+		return false
+	}
+	return d.dedupCache.seenRecently(key, time.Now())
+}
+
+// dedupForget rolls back a record made by `dedupSeen` when the work
+// the caller intended to gate (typically `submitter.Submit`) fails
+// AFTER the cache check. Without rollback, a webhook retry inside
+// the TTL window would be silently dropped because the cache would
+// still report the duplicate as seen. Tracked per Copilot review on
+// PR #100 thread `PRRT_kwDOJKAEo85-5zE-`.
+func (d *Dispatcher) dedupForget(key string) {
+	if d.dedupCache == nil {
+		return
+	}
+	d.dedupCache.forget(key)
 }
 
 // SetADOHydrator overrides the default HTTP-based ADO PR hydrator. Tests
