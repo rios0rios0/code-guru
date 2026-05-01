@@ -67,13 +67,13 @@ func TestWebhookDedupCache_SeenRecently(t *testing.T) {
 	})
 
 	t.Run("should treat distinct keys as independent (one PR's duplicate does not block another)", func(t *testing.T) {
-		// given: PR #NNNN was already enqueued
+		// given: one PR was already enqueued
 		cache := webhooks.NewWebhookDedupCache(time.Minute)
 		now := time.Date(2026, 5, 1, 1, 0, 0, 0, time.UTC)
-		_ = cache.SeenRecently("ado:repo-id:NNNN", now)
+		_ = cache.SeenRecently("ado:repo-id:99999", now)
 
-		// when: PR #NNNN arrives 1 second later (different key)
-		other := cache.SeenRecently("ado:repo-id:NNNN", now.Add(time.Second))
+		// when: a different PR arrives 1 second later (different key)
+		other := cache.SeenRecently("ado:repo-id:99998", now.Add(time.Second))
 
 		// then
 		assert.False(t, other, "different (repo, pr) pairs must not poison each other's first-call flag")

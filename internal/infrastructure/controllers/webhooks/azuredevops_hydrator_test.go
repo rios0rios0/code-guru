@@ -33,16 +33,16 @@ func TestIsSkinnyADOResource(t *testing.T) {
 		{
 			name: "should detect the org-wide skinny shape (only url + pullRequestId)",
 			resource: webhooks.ADOResource{
-				PullRequestID: NNNN,
-				URL:           "https://dev.azure.com/ExampleOrg/project-uuid-B/_apis/git/repositories/project-uuid-C/pullRequests/NNNN",
+				PullRequestID: 99999,
+				URL:           "https://dev.azure.com/ExampleOrg/project-uuid-B/_apis/git/repositories/project-uuid-C/pullRequests/99999",
 			},
 			want: true,
 		},
 		{
 			name: "should NOT flag a hydrated/full resource (repository.id present)",
 			resource: webhooks.ADOResource{
-				PullRequestID: NNNN,
-				URL:           "https://dev.azure.com/ExampleOrg/_apis/.../pullRequests/NNNN",
+				PullRequestID: 99999,
+				URL:           "https://dev.azure.com/ExampleOrg/_apis/.../pullRequests/99999",
 				Repository:    webhooks.ADORepository{ID: "project-uuid-C"},
 			},
 			want: false,
@@ -62,7 +62,7 @@ func TestIsSkinnyADOResource(t *testing.T) {
 		{
 			name: "should NOT flag a payload whose url is whitespace-only",
 			resource: webhooks.ADOResource{
-				PullRequestID: NNNN,
+				PullRequestID: 99999,
 				URL:           "   ",
 			},
 			want: false,
@@ -143,9 +143,9 @@ func TestMergeHydratedADOResource(t *testing.T) {
 
 	t.Run("should prefer hydrated fields when both sides supply them", func(t *testing.T) {
 		// given
-		original := webhooks.ADOResource{PullRequestID: NNNN, URL: "https://orig"}
+		original := webhooks.ADOResource{PullRequestID: 99999, URL: "https://orig"}
 		hydrated := webhooks.ADOResource{
-			PullRequestID: NNNN,
+			PullRequestID: 99999,
 			URL:           "https://hydrated",
 			Status:        "active",
 			Title:         "smoke",
@@ -169,7 +169,7 @@ func TestMergeHydratedADOResource(t *testing.T) {
 
 	t.Run("should fall back to original pullRequestId when hydrated body omitted it", func(t *testing.T) {
 		// given
-		original := webhooks.ADOResource{PullRequestID: NNNN, URL: "https://orig"}
+		original := webhooks.ADOResource{PullRequestID: 99999, URL: "https://orig"}
 		hydrated := webhooks.ADOResource{Status: "active"}
 		hydrated.Repository.ID = "e3555597"
 
@@ -177,7 +177,7 @@ func TestMergeHydratedADOResource(t *testing.T) {
 		merged := webhooks.MergeHydratedADOResource(original, hydrated)
 
 		// then
-		assert.Equal(t, NNNN, merged.PullRequestID)
+		assert.Equal(t, 99999, merged.PullRequestID)
 		assert.Equal(t, "https://orig", merged.URL)
 		assert.Equal(t, "e3555597", merged.Repository.ID)
 	})
@@ -202,12 +202,12 @@ func TestHTTPADOHydrator(t *testing.T) {
 			assert.Contains(t, auth, "Basic ", "auth must use HTTP Basic per ADO PAT scheme")
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
-				"pullRequestId": NNNN,
+				"pullRequestId": 99999,
 				"status": "active",
 				"title": "smoke",
 				"sourceRefName": "refs/heads/chore/smoke-test-6",
 				"targetRefName": "refs/heads/main",
-				"url": "https://dev.azure.com/ExampleOrg/_apis/git/repositories/abc/pullRequests/NNNN",
+				"url": "https://dev.azure.com/ExampleOrg/_apis/git/repositories/abc/pullRequests/99999",
 				"repository": {
 					"id": "project-uuid-C",
 					"name": "catalog",
@@ -221,11 +221,11 @@ func TestHTTPADOHydrator(t *testing.T) {
 		hydrator := webhooks.NewTestHTTPADOHydrator(&http.Client{Timeout: 2 * time.Second})
 
 		// when
-		got, err := hydrator.Hydrate(context.Background(), server.URL+"/_apis/git/pullRequests/NNNN", "test-pat")
+		got, err := hydrator.Hydrate(context.Background(), server.URL+"/_apis/git/pullRequests/99999", "test-pat")
 
 		// then
 		require.NoError(t, err)
-		assert.Equal(t, NNNN, got.PullRequestID)
+		assert.Equal(t, 99999, got.PullRequestID)
 		assert.Equal(t, "active", got.Status)
 		assert.Equal(t, "catalog", got.Repository.Name)
 		assert.Equal(t, "backend", got.Repository.Project.Name)

@@ -274,6 +274,75 @@ code-guru health --url http://127.0.0.1:8080/health --timeout 4s
 Exit codes: `0` on `200`, `1` on any other status, network error, or
 timeout.
 
+### Kubernetes deployment
+
+When the `serve` controller starts inside a Kubernetes pod (detected
+via the standard `KUBERNETES_SERVICE_HOST` env var that the kubelet
+always injects), the dispatcher automatically swaps its default
+per-pod in-memory webhook dedup for a cross-pod backend backed by
+`coordination.k8s.io/v1` `Lease` objects. This is required when the
+deployment runs with `replicas > 1` because Azure DevOps fires both
+`git.pullrequest.created` and `git.pullrequest.updated` for every
+new PR; without a shared lock the K8s `Service` round-robins one
+delivery to each replica and the bot posts duplicate reviews. The
+lease is named `code-guru-{sanitised-key}-{hash}` (the SHA-256 suffix
+prevents collisions from the lossy character substitution) and is
+created with `leaseDurationSeconds: 900` (must exceed the bot's
+maximum review wall-time so the takeover path never steals an
+actively-held lease — the worst review observed was ≈8 minutes)
+as freshness metadata —
+Kubernetes does NOT auto-delete `Lease` objects when that duration
+elapses, so the dedup contract relies on two explicit pieces of work:
+
+- The owning pod `Delete`s the lease after the worker finishes
+  (success or failure), so a real follow-up push minutes later
+  re-acquires immediately.
+- A subsequent webhook delivery whose `Create` returns
+  `AlreadyExists` runs a stale-lease takeover: it `Get`s the holding
+  lease, checks whether `acquireTime + leaseDurationSeconds` has
+  already passed, and if so `Delete`s the stale lease (with a UID
+  precondition for race safety) and retries `Create`. This recovers
+  from a pod crash mid-review — the maximum window during which a
+  crashed lease blocks new work is `leaseDurationSeconds`.
+
+The K8s API server's optimistic concurrency on `Create` is what
+makes the dedup atomic across replicas: exactly one `Create` for a
+given `(namespace, name)` succeeds and every concurrent `Create`
+returns `409 AlreadyExists`.
+
+Required RBAC (apply once per namespace the bot runs in):
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: code-guru
+  name: code-guru-webhook-dedup
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "create", "delete", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: code-guru
+  name: code-guru-webhook-dedup
+subjects:
+  - kind: ServiceAccount
+    name: code-guru
+    namespace: code-guru
+roleRef:
+  kind: Role
+  name: code-guru-webhook-dedup
+  apiGroup: rbac.authorization.k8s.io
+```
+
+If the RBAC is missing, the bot logs a `Warn` at startup and falls
+back to the per-pod in-memory cache: still safe, but cross-pod
+duplicates will not be suppressed. Outside a pod (local CLI runs,
+unit tests) no Kubernetes API is contacted.
+
 ## Environment Variable Configuration
 
 For CI/CD environments without a config file, all settings can be provided via `CODE_GURU_*` environment variables:

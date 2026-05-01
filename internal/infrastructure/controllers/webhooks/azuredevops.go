@@ -173,19 +173,22 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dedupKey := fmt.Sprintf("ado:%s:%d", repo.ID, pr.ID)
-	if d.dedupSeen(dedupKey) {
+	if d.dedupSeen(r.Context(), dedupKey) {
 		logger.Debugf("ADO webhook: duplicate delivery for PR #%d in %s/%s — skipping", pr.ID, repo.Project, repo.Name)
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, "duplicate")
 		return
 	}
 
-	if submitErr := d.submitter.Submit(Job{Provider: provider, Repo: repo, PR: pr, CIPassed: false}); submitErr != nil {
+	if submitErr := d.submitter.Submit(
+		Job{Provider: provider, Repo: repo, PR: pr, CIPassed: false, DedupKey: dedupKey},
+	); submitErr != nil {
 		logger.Errorf("ADO webhook: submit failed: %v", submitErr)
 		// Roll back the dedup record so a webhook retry inside the
-		// TTL is not silently dropped — the cache must only retain
-		// keys that actually made it onto the worker queue.
-		d.dedupForget(dedupKey)
+		// dedup window is not silently dropped — the backend must
+		// only retain keys that actually made it onto the worker
+		// queue.
+		d.dedupForget(r.Context(), dedupKey)
 		writeError(w, http.StatusServiceUnavailable, "queue full")
 		return
 	}

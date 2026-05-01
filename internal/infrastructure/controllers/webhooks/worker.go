@@ -21,6 +21,14 @@ type Job struct {
 	Repo     forgeEntities.Repository
 	PR       forgeEntities.PullRequestDetail
 	CIPassed bool
+	// DedupKey is the dedup record acquired by the dispatcher before
+	// enqueueing this job. The handler closure in `serve_controller.go`
+	// reads it to release the record (`Dispatcher.ReleaseDedup`) after
+	// the job finishes — without that release the K8s-Lease backend
+	// would leak the lease and block legitimate follow-up pushes for
+	// the lifetime of the etcd object. Empty when no dedup backend is
+	// wired (purely defensive — the production wiring always sets it).
+	DedupKey string
 }
 
 // JobHandler processes a single Job. Returning an error logs the failure but does not
