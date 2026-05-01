@@ -736,7 +736,10 @@ func TestIsPullRequestClosed(t *testing.T) {
 // than as a silent stub.
 type recordingReviewProvider struct {
 	forgeEntities.ReviewProvider
-	calls []recordedPRComment
+	calls                  []recordedPRComment
+	submissions            []forgeEntities.ReviewSubmission
+	submitErr              error
+	getPullRequestFilesErr error
 }
 
 type recordedPRComment struct {
@@ -753,6 +756,27 @@ func (r *recordingReviewProvider) PostPullRequestComment(
 ) error {
 	r.calls = append(r.calls, recordedPRComment{body: body, opts: opts})
 	return nil
+}
+
+func (r *recordingReviewProvider) SubmitPullRequestReview(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	_ int,
+	sub forgeEntities.ReviewSubmission,
+) error {
+	r.submissions = append(r.submissions, sub)
+	return r.submitErr
+}
+
+func (r *recordingReviewProvider) GetPullRequestFiles(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	_ int,
+) ([]forgeEntities.PullRequestFile, error) {
+	if r.getPullRequestFilesErr != nil {
+		return nil, r.getPullRequestFilesErr
+	}
+	return nil, nil
 }
 
 func TestAnnotationThreadStatusContract(t *testing.T) {
@@ -839,4 +863,150 @@ func TestMarkerHelpersForwardThreadStatusOption(t *testing.T) {
 				"the forwarded options must resolve to the AnnotationThreadStatus constant ('closed')")
 		})
 	}
+}
+
+func TestSubmitNativeReviewFlagGate(t *testing.T) {
+	t.Parallel()
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	prID := 4242
+
+	t.Run("should not call provider when SubmitNativeReview is false", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+
+		// when
+		commands.SubmitNativeReview(rc, context.Background(), provider, repo, prID,
+			"approve", "all good", commands.ReviewOptions{SubmitNativeReview: false})
+
+		// then
+		assert.Empty(t, provider.submissions)
+	})
+
+	t.Run("should map approve verdict to ReviewVerdictApprove when flag is on", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+
+		// when
+		commands.SubmitNativeReview(rc, context.Background(), provider, repo, prID,
+			"approve", "looks good", commands.ReviewOptions{SubmitNativeReview: true})
+
+		// then
+		require.Len(t, provider.submissions, 1)
+		assert.Equal(t, forgeEntities.ReviewVerdictApprove, provider.submissions[0].Verdict)
+		assert.Equal(t, "looks good", provider.submissions[0].Body)
+	})
+
+	t.Run("should map reject verdict to ReviewVerdictRequestChanges when flag is on", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+
+		// when
+		commands.SubmitNativeReview(rc, context.Background(), provider, repo, prID,
+			"reject", "blocking", commands.ReviewOptions{SubmitNativeReview: true})
+
+		// then
+		require.Len(t, provider.submissions, 1)
+		assert.Equal(t, forgeEntities.ReviewVerdictRequestChanges, provider.submissions[0].Verdict)
+	})
+
+	t.Run("should skip provider call for comment verdict so the AI noise floor stays low", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+
+		// when
+		commands.SubmitNativeReview(rc, context.Background(), provider, repo, prID,
+			"comment", "FYI", commands.ReviewOptions{SubmitNativeReview: true})
+
+		// then
+		assert.Empty(t, provider.submissions)
+	})
+
+	t.Run("should swallow provider errors so the worker keeps going", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the gitforge error path is documented as best-effort UX,
+		// so a transient permission failure must not bubble up to Execute.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{submitErr: errors.New("permission denied")}
+
+		// when / then: no panic, no return — the helper is fire-and-forget
+		require.NotPanics(t, func() {
+			commands.SubmitNativeReview(rc, context.Background(), provider, repo, prID,
+				"approve", "lgtm", commands.ReviewOptions{SubmitNativeReview: true})
+		})
+		require.Len(t, provider.submissions, 1, "the helper still attempted the call before logging the error")
+	})
+}
+
+func TestExecuteSkipsDraftsByDefault(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should short-circuit with a 'skipped: draft' result when ReviewDrafts is false", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+		repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+		pr := forgeEntities.PullRequestDetail{
+			PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "wip", URL: "https://example/pr/4242"},
+			IsDraft:     true,
+		}
+
+		// when
+		result, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{})
+
+		// then
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "comment", result.Verdict)
+		assert.Contains(t, result.Summary, "draft")
+		assert.Empty(t, provider.calls, "no marker / annotation should fire on a skipped draft")
+		assert.Empty(t, provider.submissions, "no native review should fire on a skipped draft")
+	})
+
+	t.Run("should NOT skip when ReviewDrafts opt-in is set", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a deterministic provider that surfaces a known error from
+		// GetPullRequestFiles — Execute must reach that call (proving the
+		// draft branch was bypassed) and return the wrapped error so the
+		// test asserts the bypass without relying on panic behaviour.
+		expectedErr := errors.New("get pull request files failed")
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			getPullRequestFilesErr: expectedErr,
+		}
+		repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+		pr := forgeEntities.PullRequestDetail{
+			PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "wip", URL: "https://example/pr/4242"},
+			IsDraft:     true,
+		}
+
+		// when
+		result, err := rc.Execute(
+			context.Background(), provider, repo, pr,
+			commands.ReviewOptions{ReviewDrafts: true},
+		)
+
+		// then
+		require.Error(t, err)
+		assert.ErrorIs(t, err, expectedErr,
+			"with ReviewDrafts=true the draft branch must be bypassed; Execute must surface the deterministic provider error from GetPullRequestFiles")
+		assert.Nil(t, result)
+		assert.Empty(t, provider.submissions, "the command should stop on the deterministic provider error instead of skipping the draft")
+	})
 }

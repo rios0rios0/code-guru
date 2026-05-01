@@ -57,6 +57,12 @@ var (
 	PostReviewingMarker          = (*ReviewCommand).postReviewingMarker
 	PostReviewCompleteAnnotation = (*ReviewCommand).postReviewCompleteAnnotation
 	PostReviewFailedAnnotation   = (*ReviewCommand).postReviewFailedAnnotation
+
+	// SubmitNativeReview is a method-value re-export of the
+	// `*ReviewCommand.submitNativeReview` helper so external tests can
+	// pin the verdict-mapping + flag-gating + soft-fail contract
+	// without going through the full Execute flow.
+	SubmitNativeReview = (*ReviewCommand).submitNativeReview
 )
 
 // AnnotationThreadStatus re-exports the unexported package constant

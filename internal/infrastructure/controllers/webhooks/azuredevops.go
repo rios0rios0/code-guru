@@ -27,6 +27,7 @@ type adoResource struct {
 	Status        string        `json:"status"`
 	Title         string        `json:"title"`
 	URL           string        `json:"url"`
+	IsDraft       bool          `json:"isDraft"`
 	SourceRefName string        `json:"sourceRefName"`
 	TargetRefName string        `json:"targetRefName"`
 	Repository    adoRepository `json:"repository"`
@@ -170,6 +171,7 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 		},
 		SourceBranch: refToBranch(event.Resource.SourceRefName),
 		TargetBranch: refToBranch(event.Resource.TargetRefName),
+		IsDraft:      event.Resource.IsDraft,
 	}
 
 	dedupKey := fmt.Sprintf("ado:%s:%d", repo.ID, pr.ID)
