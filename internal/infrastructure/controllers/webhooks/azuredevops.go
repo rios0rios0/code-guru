@@ -180,7 +180,9 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if submitErr := d.submitter.Submit(Job{Provider: provider, Repo: repo, PR: pr, CIPassed: false}); submitErr != nil {
+	if submitErr := d.submitter.Submit(
+		Job{Provider: provider, Repo: repo, PR: pr, CIPassed: false, DedupKey: dedupKey},
+	); submitErr != nil {
 		logger.Errorf("ADO webhook: submit failed: %v", submitErr)
 		// Roll back the dedup record so a webhook retry inside the
 		// dedup window is not silently dropped — the backend must

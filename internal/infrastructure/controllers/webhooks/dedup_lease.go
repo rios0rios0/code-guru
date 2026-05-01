@@ -24,10 +24,27 @@
 // for it via the `Create` verb: exactly one `Create` for a given
 // `(namespace, name)` succeeds; every concurrent `Create` returns
 // `AlreadyExists`. That is precisely the semantics we need for
-// "exactly one pod processes this PR". The lease's
-// `spec.leaseDurationSeconds` provides the self-healing TTL — if the
-// owning pod crashes mid-review the lease ages out and a future event
-// can re-acquire.
+// "exactly one pod processes this PR".
+//
+// Kubernetes does NOT auto-delete `Lease` objects when
+// `spec.leaseDurationSeconds` elapses — that field is metadata that
+// clients use to decide whether the lease is stale. Self-healing
+// across crashes therefore requires two explicit pieces of work that
+// this package implements:
+//
+//  1. The owning pod calls `Forget` (which `Delete`s the lease) AFTER
+//     the worker finishes, so a real follow-up push minutes later
+//     re-acquires immediately. The serve controller's pool handler
+//     `defer`s this so success and failure paths both release.
+//  2. When `Create` returns `AlreadyExists`, `SeenRecently` does a
+//     stale-lease takeover: it `Get`s the holding lease, checks whether
+//     `acquireTime + leaseDurationSeconds` (or `renewTime + duration`,
+//     whichever is later) has already passed, and if so `Delete`s the
+//     stale lease (with a UID precondition for race safety) and retries
+//     `Create`. This is what makes a pod crash mid-review recover —
+//     the next webhook delivery for the same PR after the duration
+//     elapsed re-acquires; the duration is the maximum window during
+//     which a crashed lease blocks new work.
 //
 // # Required RBAC
 //
@@ -68,6 +85,8 @@ package webhooks
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -88,14 +107,17 @@ import (
 // no-dedup baseline.
 const leaseAPITimeout = 5 * time.Second
 
-// leaseDurationSeconds is the TTL applied to every dedup lease.
-// 5 minutes is comfortably above the longest review the bot has been
-// observed to run (≈8 minutes is the outlier; the typical p95 is
+// leaseDurationSeconds is the freshness window applied to every dedup
+// lease. 5 minutes is comfortably above the longest review the bot has
+// been observed to run (≈8 minutes is the outlier; the typical p95 is
 // ≈90 seconds). On a clean review the lease is `Delete`d explicitly
-// AFTER `submitter.Submit` succeeds AND the worker finishes — so the
-// TTL is only the safety net for a pod crash mid-review. A new push
-// minutes later still acquires immediately because the owning pod
-// has already deleted the lease.
+// AFTER `submitter.Submit` succeeds AND the worker finishes (the pool
+// handler in the serve controller `defer`s the release). The
+// duration is the upper bound on how long a crashed pod's lease can
+// block new work for the same PR: when a fresh delivery's `Create`
+// hits `AlreadyExists` and the held lease's `acquireTime + duration`
+// has already passed, the takeover path deletes it (with a UID
+// precondition for race safety) and re-acquires.
 const leaseDurationSeconds int32 = 300
 
 // k8sNameMaxLen mirrors RFC 1123 subdomain limits enforced by the K8s
@@ -107,15 +129,20 @@ const k8sNameMaxLen = 253
 // LeaseClient is the narrow subset of
 // `k8s.io/client-go/kubernetes/typed/coordination/v1.LeaseInterface`
 // the dedup backend actually uses. Defining our own narrow port keeps
-// the test stub tractable (~30 lines instead of implementing the full
+// the test stub tractable (~50 lines instead of implementing the full
 // 9-method generated client) and follows the project rule "the bigger
 // the interface, the weaker the abstraction".
 //
 // The signatures match the upstream `LeaseInterface` exactly so the
 // real client satisfies this interface via Go's structural typing
 // without a wrapper.
+//
+// `Get` is required by the stale-lease takeover path in
+// `SeenRecently` — when `Create` hits `AlreadyExists` we must inspect
+// the holder's `acquireTime` to decide whether to take it over.
 type LeaseClient interface {
 	Create(ctx context.Context, lease *coordinationv1.Lease, opts metav1.CreateOptions) (*coordinationv1.Lease, error)
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (*coordinationv1.Lease, error)
 	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
 }
 
@@ -181,18 +208,98 @@ func NewK8sLeaseDedupFromInCluster(namespace, holderIdentity string) (*K8sLeaseD
 }
 
 // SeenRecently performs the optimistic-create dance against the K8s
-// API server: if `Create` returns 201 Created → this pod acquired the
-// lease and the caller proceeds; if it returns 409 AlreadyExists →
-// another pod owns the review and the caller short-circuits; on any
-// other error the call degrades to "not seen" so the webhook is
-// processed (the same baseline as no dedup at all).
+// API server with a stale-lease takeover fallback:
+//
+//   - `Create` returns 201 Created → this pod acquired the lease, the
+//     caller proceeds.
+//   - `Create` returns 409 AlreadyExists → `Get` the holding lease and
+//     check whether `acquireTime + leaseDurationSeconds` (or the more
+//     recent `renewTime`) has already passed. If yes → `Delete` it
+//     under a UID precondition (atomic against a concurrent renewer)
+//     and retry `Create`; the retry's outcome is the answer. If no →
+//     the holder is alive, return "duplicate".
+//   - Any other error → degrade to "not seen" so the webhook is
+//     processed (the same baseline as no dedup at all).
+//
+// Without the takeover branch, a pod that crashes mid-review would
+// leak its lease in etcd forever and block all future deliveries for
+// the same PR — Kubernetes does NOT auto-delete `Lease` objects when
+// `leaseDurationSeconds` elapses.
 func (d *K8sLeaseDedup) SeenRecently(ctx context.Context, key string) bool {
 	leaseName := sanitizeLeaseName(key)
+
+	callCtx, cancel := context.WithTimeout(ctx, leaseAPITimeout)
+	defer cancel()
+
+	if _, err := d.client.Create(callCtx, d.buildLease(leaseName), metav1.CreateOptions{}); err == nil {
+		return false
+	} else if !apierrors.IsAlreadyExists(err) {
+		logger.WithFields(logger.Fields{
+			"key":        key,
+			"lease_name": leaseName,
+		}).Warnf("dedup-lease: Create failed (%v) — falling back to process the webhook", err)
+		return false
+	}
+
+	// `AlreadyExists` — inspect the holder to decide between "live
+	// lease, real duplicate" and "stale lease from a crashed pod".
+	existing, err := d.client.Get(callCtx, leaseName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		// Race: the holder Delete'd between our Create and Get. Retry
+		// Create — most of the time this succeeds because the slot is
+		// free; if a third pod beat us to it the second Create returns
+		// AlreadyExists and we treat the delivery as a duplicate.
+		if _, retryErr := d.client.Create(callCtx, d.buildLease(leaseName), metav1.CreateOptions{}); retryErr == nil {
+			return false
+		}
+		return true
+	}
+	if err != nil {
+		logger.WithFields(logger.Fields{
+			"key":        key,
+			"lease_name": leaseName,
+		}).Warnf("dedup-lease: Get after AlreadyExists failed (%v) — treating as duplicate to be safe", err)
+		return true
+	}
+
+	if !leaseExpired(existing, time.Now()) {
+		// Holder is alive — this is a real cross-pod duplicate.
+		return true
+	}
+
+	// Stale lease — take it over with a UID precondition so a renewer
+	// that just refreshed it cannot lose its work to our cleanup.
+	uid := existing.UID
+	deleteOpts := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}
+	if delErr := d.client.Delete(callCtx, leaseName, deleteOpts); delErr != nil && !apierrors.IsNotFound(delErr) {
+		logger.WithFields(logger.Fields{
+			"key":        key,
+			"lease_name": leaseName,
+			"holder":     stringValue(existing.Spec.HolderIdentity),
+		}).Warnf("dedup-lease: takeover Delete failed (%v) — treating as duplicate; the next delivery will retry", delErr)
+		return true
+	}
+	if _, retryErr := d.client.Create(callCtx, d.buildLease(leaseName), metav1.CreateOptions{}); retryErr == nil {
+		logger.WithFields(logger.Fields{
+			"key":         key,
+			"lease_name":  leaseName,
+			"prev_holder": stringValue(existing.Spec.HolderIdentity),
+		}).Info("dedup-lease: took over a stale lease (previous holder likely crashed mid-review)")
+		return false
+	}
+	// Another pod won the takeover race — they are the new owner.
+	return true
+}
+
+// buildLease constructs the canonical `Lease` payload this pod tries
+// to `Create`. Pulled out so the takeover-retry path uses the exact
+// same shape (with a fresh `acquireTime`) as the first attempt.
+func (d *K8sLeaseDedup) buildLease(name string) *coordinationv1.Lease {
 	duration := leaseDurationSeconds
 	now := metav1.NewMicroTime(time.Now())
 	holder := d.holderIdentity
-	lease := &coordinationv1.Lease{
-		ObjectMeta: metav1.ObjectMeta{Name: leaseName},
+	return &coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: coordinationv1.LeaseSpec{
 			HolderIdentity:       &holder,
 			LeaseDurationSeconds: &duration,
@@ -200,24 +307,38 @@ func (d *K8sLeaseDedup) SeenRecently(ctx context.Context, key string) bool {
 			RenewTime:            &now,
 		},
 	}
+}
 
-	callCtx, cancel := context.WithTimeout(ctx, leaseAPITimeout)
-	defer cancel()
-
-	_, err := d.client.Create(callCtx, lease, metav1.CreateOptions{})
-	if err == nil {
-		// Acquired — this pod owns the review.
-		return false
-	}
-	if apierrors.IsAlreadyExists(err) {
-		// Another pod already holds the lease — duplicate.
+// leaseExpired returns true when the held lease's freshness window
+// (the more recent of `renewTime` and `acquireTime`, plus
+// `leaseDurationSeconds`) is already in the past relative to `now`.
+// A lease with no times set or no duration is treated as expired so
+// the takeover path can recover from a malformed object — that
+// shape is "shouldn't happen" but the safe behaviour is to let
+// recovery proceed rather than block forever.
+func leaseExpired(lease *coordinationv1.Lease, now time.Time) bool {
+	if lease == nil || lease.Spec.LeaseDurationSeconds == nil {
 		return true
 	}
-	logger.WithFields(logger.Fields{
-		"key":        key,
-		"lease_name": leaseName,
-	}).Warnf("dedup-lease: Create failed (%v) — falling back to process the webhook", err)
-	return false
+	var t time.Time
+	if lease.Spec.RenewTime != nil {
+		t = lease.Spec.RenewTime.Time
+	}
+	if lease.Spec.AcquireTime != nil && lease.Spec.AcquireTime.Time.After(t) {
+		t = lease.Spec.AcquireTime.Time
+	}
+	if t.IsZero() {
+		return true
+	}
+	expiresAt := t.Add(time.Duration(*lease.Spec.LeaseDurationSeconds) * time.Second)
+	return !now.Before(expiresAt)
+}
+
+func stringValue(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // Forget releases the lease so a legitimate re-review (e.g. a new
@@ -237,7 +358,7 @@ func (d *K8sLeaseDedup) Forget(ctx context.Context, key string) {
 	logger.WithFields(logger.Fields{
 		"key":        key,
 		"lease_name": leaseName,
-	}).Warnf("dedup-lease: Delete failed (%v) — lease will be released by TTL", err)
+	}).Warnf("dedup-lease: Delete failed (%v) — lease will block new deliveries until the next caller's takeover path runs Get + UID-conditioned Delete", err)
 }
 
 // sanitizeLeaseName converts an arbitrary dedup key (e.g.
@@ -247,14 +368,28 @@ func (d *K8sLeaseDedup) Forget(ctx context.Context, key string) {
 // alphanumeric. The transformation is deterministic so two callers
 // producing the same key always land on the same lease name.
 //
+// To prevent distinct keys from colliding under the lossy `[^a-z0-9-]
+// -> -` mapping (e.g. GitHub owners that legitimately contain `-`
+// versus `/` boundary replacements), the name embeds a deterministic
+// SHA-256 prefix of the original key as a suffix. The hash makes
+// "different keys → different names" a hard guarantee while the
+// readable prefix keeps `kubectl get leases` informative.
+//
 // The `code-guru-` prefix scopes the lease names to this application
 // so a `kubectl get leases` against a shared namespace shows our
 // dedup leases distinctly from leader-election leases owned by other
 // controllers.
 func sanitizeLeaseName(key string) string {
-	const prefix = "code-guru-"
+	const (
+		prefix     = "code-guru-"
+		hashHexLen = 16 // 64 bits — collision-resistant for our key cardinality
+	)
+
+	hash := sha256.Sum256([]byte(key))
+	hashHex := hex.EncodeToString(hash[:])[:hashHexLen]
+
 	var b strings.Builder
-	b.Grow(len(prefix) + len(key))
+	b.Grow(len(prefix) + len(key) + 1 + hashHexLen)
 	b.WriteString(prefix)
 	for _, r := range strings.ToLower(key) {
 		switch {
@@ -267,22 +402,26 @@ func sanitizeLeaseName(key string) string {
 			b.WriteRune('-')
 		}
 	}
-	name := b.String()
-	if len(name) > k8sNameMaxLen {
-		name = name[:k8sNameMaxLen]
+	readable := b.String()
+
+	// Reserve room for the hash + separator so the final name fits
+	// `k8sNameMaxLen`. The readable portion is truncated rather than
+	// the hash because the hash carries the uniqueness guarantee.
+	maxReadable := k8sNameMaxLen - 1 - hashHexLen
+	if len(readable) > maxReadable {
+		readable = readable[:maxReadable]
 	}
-	// Trim trailing `-` so the name still ends with an alphanumeric
-	// (RFC 1123). Untrimmed names would be rejected by the API server
-	// with `Invalid`; trimming defends against the truncation step
-	// above landing the cut on a `-`.
-	name = strings.TrimRight(name, "-")
-	if name == "" {
-		// Defensive fallback for a pathological all-symbols key. Not
-		// reachable from the production key shapes (`ado:...` /
-		// `gh:...`) but keeps the contract total.
-		return "code-guru-empty"
+	// Trim trailing `-` from the readable portion so the boundary
+	// before the hash is alphanumeric — keeps the name visually
+	// consistent and avoids `--` runs from truncation.
+	readable = strings.TrimRight(readable, "-")
+	if readable == "" || readable == strings.TrimRight(prefix, "-") {
+		// Pathological all-symbols key (not reachable from production
+		// shapes). Fall back to the prefix + hash so the name is still
+		// unique and RFC-1123 valid.
+		return prefix + hashHex
 	}
-	return name
+	return readable + "-" + hashHex
 }
 
 // ErrLeaseClientNotConfigured is returned by NewK8sLeaseDedupFromInCluster

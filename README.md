@@ -285,9 +285,27 @@ deployment runs with `replicas > 1` because Azure DevOps fires both
 `git.pullrequest.created` and `git.pullrequest.updated` for every
 new PR; without a shared lock the K8s `Service` round-robins one
 delivery to each replica and the bot posts duplicate reviews. The
-lease is named `code-guru-{sanitised-key}`, `Create`d with a `300s`
-TTL, and `Delete`d explicitly when the worker finishes; the K8s API
-server's optimistic-concurrency on `Create` provides the dedup.
+lease is named `code-guru-{sanitised-key}-{hash}` (the SHA-256 suffix
+prevents collisions from the lossy character substitution) and is
+created with `leaseDurationSeconds: 300` as freshness metadata —
+Kubernetes does NOT auto-delete `Lease` objects when that duration
+elapses, so the dedup contract relies on two explicit pieces of work:
+
+- The owning pod `Delete`s the lease after the worker finishes
+  (success or failure), so a real follow-up push minutes later
+  re-acquires immediately.
+- A subsequent webhook delivery whose `Create` returns
+  `AlreadyExists` runs a stale-lease takeover: it `Get`s the holding
+  lease, checks whether `acquireTime + leaseDurationSeconds` has
+  already passed, and if so `Delete`s the stale lease (with a UID
+  precondition for race safety) and retries `Create`. This recovers
+  from a pod crash mid-review — the maximum window during which a
+  crashed lease blocks new work is `leaseDurationSeconds`.
+
+The K8s API server's optimistic concurrency on `Create` is what
+makes the dedup atomic across replicas: exactly one `Create` for a
+given `(namespace, name)` succeeds and every concurrent `Create`
+returns `409 AlreadyExists`.
 
 Required RBAC (apply once per namespace the bot runs in):
 
