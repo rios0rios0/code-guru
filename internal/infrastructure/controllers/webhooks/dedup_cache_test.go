@@ -95,6 +95,39 @@ func TestWebhookDedupCache_SeenRecently(t *testing.T) {
 		assert.False(t, second, "TTL=0 must keep returning false even on the immediate duplicate")
 	})
 
+	t.Run("should let a forgotten key pass through on the next call (rollback contract)", func(t *testing.T) {
+		// given: caller records the key (first-call branch), then the
+		// work it intended to gate fails — calling Forget rolls the
+		// record back so a webhook retry inside the TTL is allowed
+		// onto the worker queue. Pinned per Copilot review on PR #100
+		// thread `PRRT_kwDOJKAEo85-5zE-`.
+		cache := webhooks.NewWebhookDedupCache(time.Minute)
+		now := time.Date(2026, 5, 1, 1, 0, 0, 0, time.UTC)
+		_ = cache.SeenRecently("ado:repo-id:NNNN", now)
+
+		// when
+		cache.Forget("ado:repo-id:NNNN")
+		retry := cache.SeenRecently("ado:repo-id:NNNN", now.Add(time.Second))
+
+		// then
+		assert.False(t, retry, "after Forget the next delivery must be treated as fresh, not a duplicate")
+	})
+
+	t.Run("should be a no-op when forgetting an unknown key", func(t *testing.T) {
+		// given: a fresh cache. The contract is that Forget never
+		// panics regardless of caller order, so a defensive double-
+		// rollback or a cleanup path that is not sure whether the
+		// record exists is always safe.
+		cache := webhooks.NewWebhookDedupCache(time.Minute)
+
+		// when
+		cache.Forget("ado:repo-id:does-not-exist")
+
+		// then: no panic and the cache stays usable
+		now := time.Date(2026, 5, 1, 1, 0, 0, 0, time.UTC)
+		assert.False(t, cache.SeenRecently("ado:repo-id:does-not-exist", now))
+	})
+
 	t.Run("should be safe under concurrent calls on the same key (only one wins)", func(t *testing.T) {
 		// given: the worst-case race the K8s Service can produce on a
 		// single pod is two webhook handler goroutines arriving for

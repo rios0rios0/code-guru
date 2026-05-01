@@ -72,3 +72,20 @@ func (c *webhookDedupCache) seenRecently(key string, now time.Time) bool {
 	c.seen[key] = now
 	return false
 }
+
+// forget removes the key from the cache so a subsequent
+// `seenRecently` returns "not seen" and the caller is allowed to
+// re-record it. Used to roll back a record when the submission step
+// AFTER the dedup check fails (e.g. `submitter.Submit` returns
+// "queue full"); without rollback, a webhook retry inside the TTL
+// would be dropped permanently because the cache would still report
+// the duplicate as "seen". Calling `forget` for an unknown key is a
+// no-op so the contract is safe under any caller order.
+func (c *webhookDedupCache) forget(key string) {
+	if c.ttl <= 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.seen, key)
+}

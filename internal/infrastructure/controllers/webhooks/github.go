@@ -140,6 +140,10 @@ func (d *Dispatcher) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 
 	if submitErr := d.submitter.Submit(job); submitErr != nil {
 		logger.Errorf("GitHub webhook: submit failed: %v", submitErr)
+		// Roll back the dedup record so a webhook retry inside the
+		// TTL is not silently dropped — the cache must only retain
+		// keys that actually made it onto the worker queue.
+		d.dedupForget(dedupKey)
 		writeError(w, http.StatusServiceUnavailable, "queue full")
 		return
 	}
