@@ -264,8 +264,17 @@ func (d *Dispatcher) hydrateSkinnyADOResource(
 	event *adoEvent,
 ) bool {
 	if !isSkinnyADOResource(event.Resource) {
+		logger.Debugf(
+			"ADO webhook: PR #%d arrived with full resource block (project-scoped subscription) — skipping hydration",
+			event.Resource.PullRequestID,
+		)
 		return true
 	}
+
+	logger.Debugf(
+		"ADO webhook: PR #%d arrived with skinny resource block (org-wide subscription) — hydrating via REST API",
+		event.Resource.PullRequestID,
+	)
 
 	token := d.findToken("azuredevops")
 	if token == "" {

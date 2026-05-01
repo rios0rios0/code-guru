@@ -4,10 +4,13 @@ package webhooks_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	configEntities "github.com/rios0rios0/gitforge/pkg/config/domain/entities"
@@ -22,6 +25,53 @@ import (
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers/webhooks"
 	doubles "github.com/rios0rios0/codeguru/test/infrastructure/doubles/repositories"
 )
+
+// stubADOHydrator is a hand-rolled ADOResourceHydrator that records every
+// invocation and returns either a pre-configured resource or a sticky
+// error. Lives in this _test file (rather than `test/infrastructure/...`)
+// because the canonical ADOResource alias only exists under the `unit`
+// build tag — keeping the stub local avoids leaking that build-tag-gated
+// alias into shared helper packages.
+type stubADOHydrator struct {
+	calls    atomic.Int32
+	lastURL  atomic.Value // string
+	lastTok  atomic.Value // string
+	resource webhooks.ADOResource
+	err      error
+}
+
+func newStubADOHydrator(resource webhooks.ADOResource) *stubADOHydrator {
+	return &stubADOHydrator{resource: resource}
+}
+
+func (s *stubADOHydrator) WithError(err error) *stubADOHydrator {
+	s.err = err
+	return s
+}
+
+func (s *stubADOHydrator) Hydrate(_ context.Context, resourceURL, token string) (webhooks.ADOResource, error) {
+	s.calls.Add(1)
+	s.lastURL.Store(resourceURL)
+	s.lastTok.Store(token)
+	if s.err != nil {
+		return webhooks.ADOResource{}, s.err
+	}
+	return s.resource, nil
+}
+
+func (s *stubADOHydrator) Calls() int32 { return s.calls.Load() }
+func (s *stubADOHydrator) LastURL() string {
+	if v := s.lastURL.Load(); v != nil {
+		return v.(string)
+	}
+	return ""
+}
+func (s *stubADOHydrator) LastToken() string {
+	if v := s.lastTok.Load(); v != nil {
+		return v.(string)
+	}
+	return ""
+}
 
 const (
 	adoSecret      = "ado-test-secret"
@@ -76,6 +126,46 @@ const adoRepoUUID = "11111111-2222-3333-4444-555555555555"
 // JSON body and any assertions compare against the same constant.
 func adoActivePRPayload() string {
 	return adoPRPayload("git.pullrequest.created", "active")
+}
+
+// adoSkinnyPRPayload returns the minimal `git.pullrequest.*` payload that
+// ADO **org-wide** subscriptions emit. Captured live against subscriptions
+// `fea3e13f-…` and `564b23d9-…`; reproducing it here lets handler tests
+// drive the hydration code path with a single source of truth.
+func adoSkinnyPRPayload(eventType string, prID int) string {
+	return fmt.Sprintf(`{
+  "subscriptionId": "fea3e13f-f2d3-4e11-9cfd-8baefb30f8fe",
+  "notificationId": 1,
+  "id": "00000000-0000-0000-0000-000000000000",
+  "eventType": %q,
+  "publisherId": "tfs",
+  "message": {"text": "Felipe Rios created pull request 12096"},
+  "detailedMessage": {"text": "..."},
+  "resource": {
+    "url": "https://dev.azure.com/ZestSecurity/fb485dce-2f5b-4b1b-b45a-60ff2c1295c1/_apis/git/repositories/e3555597-e951-4908-b6d9-ff28ed2ae953/pullRequests/%d",
+    "pullRequestId": %d
+  }
+}`, eventType, prID, prID)
+}
+
+// hydratedFullResource returns the canonical full ADO resource a stub
+// hydrator hands back for a skinny incoming payload. Mirrors the shape
+// `adoPRPayload` produces inline.
+func hydratedFullResource() webhooks.ADOResource {
+	return webhooks.ADOResource{
+		PullRequestID: 12096,
+		Status:        "active",
+		Title:         "smoke",
+		URL:           "https://dev.azure.com/ZestSecurity/Platform/_git/demo-repo/pullrequest/12096",
+		SourceRefName: "refs/heads/feat/x",
+		TargetRefName: "refs/heads/main",
+		Repository: webhooks.ADORepository{
+			ID:        adoRepoUUID,
+			Name:      adoRepoName,
+			RemoteURL: "https://dev.azure.com/ZestSecurity/Platform/_git/demo-repo",
+			Project:   webhooks.ADOProject{Name: adoProjectName},
+		},
+	}
 }
 
 // adoPRPayload renders the canonical ADO PR payload with caller-supplied
@@ -346,6 +436,174 @@ func TestHandleAzureDevOps(t *testing.T) {
 		// then
 		assert.Equal(t, http.StatusAccepted, w.Code)
 		assert.Len(t, sub.Jobs(), 1)
+	})
+
+	// --- skinny payload (org-wide subscription) integration ---
+	//
+	// These rows pin the contract that the bot accepts BOTH wire shapes
+	// ADO emits in production: the full project-scoped envelope (covered
+	// above) AND the stripped-down org-wide envelope hydrated through
+	// the REST API. Each row asserts: (a) the response code, (b) whether
+	// the worker queue saw a job, (c) whether the hydrator was called,
+	// and (d) that the project-scoped path bypasses the hydrator
+	// entirely — that last assertion is what guarantees we don't
+	// silently start hammering the ADO API for every delivery.
+
+	t.Run("should respond 202 (Accepted) when a skinny org-wide payload is hydrated to an active PR", func(t *testing.T) {
+		// given
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		hydrator := newStubADOHydrator(hydratedFullResource())
+		d.SetADOHydrator(hydrator)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops",
+			bytes.NewBufferString(adoSkinnyPRPayload("git.pullrequest.created", 12096)))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusAccepted, w.Code)
+		require.Equal(t, int32(1), hydrator.Calls(),
+			"hydrator must be invoked exactly once for a skinny payload")
+		assert.Contains(t, hydrator.LastURL(), "/pullRequests/12096",
+			"hydrator must receive the resource.url straight from the wire payload")
+		assert.Equal(t, "ado-pat-test", hydrator.LastToken(),
+			"hydrator must receive the configured azuredevops PAT")
+		jobs := sub.Jobs()
+		require.Len(t, jobs, 1)
+		assert.Equal(t, 12096, jobs[0].PR.ID)
+		assert.Equal(t, adoRepoUUID, jobs[0].Repo.ID,
+			"after hydration the worker job must carry the canonical repository UUID")
+		assert.Equal(t, adoProjectName, jobs[0].Repo.Project)
+		assert.Equal(t, adoOrgSlug, jobs[0].Repo.Organization)
+		assert.Equal(t, "feat/x", jobs[0].PR.SourceBranch)
+		assert.Equal(t, "main", jobs[0].PR.TargetBranch)
+	})
+
+	t.Run("should NOT call the hydrator when the payload already carries a full resource block", func(t *testing.T) {
+		// given: counter assertion to prevent a future "always hydrate"
+		// regression — every project-scoped delivery would otherwise turn
+		// into an avoidable API hop and amplify our PAT rate-limit cost.
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		hydrator := newStubADOHydrator(hydratedFullResource())
+		d.SetADOHydrator(hydrator)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops",
+			bytes.NewBufferString(adoActivePRPayload()))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusAccepted, w.Code)
+		assert.Equal(t, int32(0), hydrator.Calls(),
+			"full payload must short-circuit before any API call")
+		assert.Len(t, sub.Jobs(), 1)
+	})
+
+	t.Run("should respond 502 (Bad Gateway) when the hydrator surfaces an upstream error", func(t *testing.T) {
+		// given: a hydrator that returns an error simulates an ADO API
+		// outage, a revoked PAT, or a 4xx for a now-deleted PR — all
+		// situations the bot must NOT confuse with a malformed payload.
+		// 502 (rather than 500) tells ADO that the upstream is at fault,
+		// which keeps the subscription on the right side of the
+		// circuit-breaker for transient errors.
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		hydrator := newStubADOHydrator(webhooks.ADOResource{}).WithError(errors.New("hydration GET returned 503 Service Unavailable"))
+		d.SetADOHydrator(hydrator)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops",
+			bytes.NewBufferString(adoSkinnyPRPayload("git.pullrequest.updated", 7777)))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusBadGateway, w.Code)
+		assert.Equal(t, int32(1), hydrator.Calls())
+		assert.Empty(t, sub.Jobs(), "no job should be enqueued on a hydration failure")
+	})
+
+	t.Run("should respond 204 (No Content) when the hydrated payload reports a closed PR", func(t *testing.T) {
+		// given: a `git.pullrequest.updated` for an `abandoned` PR carries
+		// an empty `status` in the skinny shape, so the early closed-status
+		// guard let it through. The post-hydration re-check is what catches
+		// it before the worker queue. Pinning this scenario stops a future
+		// "let me unify the closed-status check" refactor from removing the
+		// second pass.
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		hydrated := hydratedFullResource()
+		hydrated.Status = "abandoned"
+		hydrator := newStubADOHydrator(hydrated)
+		d.SetADOHydrator(hydrator)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops",
+			bytes.NewBufferString(adoSkinnyPRPayload("git.pullrequest.updated", 12096)))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Equal(t, int32(1), hydrator.Calls(),
+			"hydrator still runs because the skinny payload's status is empty")
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 500 when a skinny payload arrives but no PAT is configured", func(t *testing.T) {
+		// given: a defensive 500 (rather than 503) because this is a
+		// configuration error on our side — neither retry nor probation
+		// would help, the operator has to fix the settings.
+		settings := defaultADOSettings()
+		settings.Providers = nil
+		d, sub := newDispatcherWithSettings(t, settings)
+		hydrator := newStubADOHydrator(hydratedFullResource())
+		d.SetADOHydrator(hydrator)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops",
+			bytes.NewBufferString(adoSkinnyPRPayload("git.pullrequest.created", 12096)))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Equal(t, int32(0), hydrator.Calls(),
+			"hydrator must NOT be called when there is no PAT to authenticate with")
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 403 (Forbidden) when a hydrated payload reveals a project not on the allowlist", func(t *testing.T) {
+		// given: the org-wide subscription delivers events for projects we
+		// do not want to review. After hydration, the regular allowlist
+		// check applies to the canonical fields and rejects the delivery
+		// — the bot must not confuse "off-list project" with "broken
+		// payload" (the 403 keeps the subscription happy because it stays
+		// well below the consecutive-4xx probation threshold for legitimate
+		// allowlist filtering).
+		settings := defaultADOSettings()
+		settings.Server.AllowedProjects = []string{"OnlyThisProject"}
+		d, sub := newDispatcherWithSettings(t, settings)
+		hydrator := newStubADOHydrator(hydratedFullResource())
+		d.SetADOHydrator(hydrator)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops",
+			bytes.NewBufferString(adoSkinnyPRPayload("git.pullrequest.created", 12096)))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Equal(t, int32(1), hydrator.Calls(),
+			"hydration runs first; the allowlist check then trims the delivery")
+		assert.Empty(t, sub.Jobs())
 	})
 
 	t.Run("should fall back to X-Forwarded-For when CF-Connecting-IP is absent", func(t *testing.T) {
