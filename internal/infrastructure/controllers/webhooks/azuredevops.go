@@ -172,6 +172,14 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 		TargetBranch: refToBranch(event.Resource.TargetRefName),
 	}
 
+	dedupKey := fmt.Sprintf("ado:%s:%d", repo.ID, pr.ID)
+	if d.dedupSeen(dedupKey) {
+		logger.Debugf("ADO webhook: duplicate delivery for PR #%d in %s/%s — skipping", pr.ID, repo.Project, repo.Name)
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "duplicate")
+		return
+	}
+
 	if submitErr := d.submitter.Submit(Job{Provider: provider, Repo: repo, PR: pr, CIPassed: false}); submitErr != nil {
 		logger.Errorf("ADO webhook: submit failed: %v", submitErr)
 		writeError(w, http.StatusServiceUnavailable, "queue full")
