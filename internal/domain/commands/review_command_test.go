@@ -264,6 +264,12 @@ func TestSummarizeStaleFilePaths(t *testing.T) {
 	})
 
 	t.Run("should return an empty string for an empty input", func(t *testing.T) {
+		// given: a nil/empty `dropped` slice — every other subtest in
+		// this file (and across the repo) keeps the BDD `given/when/
+		// then` triplet even when the setup is trivial. CLAUDE.md
+		// requires all three markers, so leaving `// given` empty is
+		// preferable to omitting it entirely.
+
 		// when
 		got := commands.SummarizeStaleFilePaths(nil)
 
