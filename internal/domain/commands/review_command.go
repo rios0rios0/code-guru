@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	logger "github.com/sirupsen/logrus"
 
@@ -84,6 +85,19 @@ func (c *ReviewCommand) Execute(
 		if result := c.handleTrivialDetection(ctx, provider, repo, pr, paths, opts.DryRun); result != nil {
 			return result, nil
 		}
+	}
+
+	// Post a "reviewing" marker so the PR author sees the bot has the
+	// work and is on it — without this, on a complex diff the bot can
+	// take 5-10 minutes (or fail silently mid-review, see PR #98) and
+	// the author would have no signal to wait. The marker is
+	// intentionally placed AFTER the trivial-detection gate so trivial
+	// PRs (auto-approve / auto-reject — already-instant signal) don't
+	// get the noise of an extra "reviewing" thread on top of the
+	// verdict. Skipped under DryRun so `terra plan`-style invocations
+	// stay silent.
+	if !opts.DryRun {
+		c.postReviewingMarker(ctx, provider, repo, pr.ID)
 	}
 
 	// build diffs and run AI review
@@ -250,6 +264,71 @@ func (c *ReviewCommand) postRejectionComment(
 	if err := provider.PostPullRequestComment(ctx, repo, prID, body); err != nil {
 		logger.Errorf("failed to post rejection comment: %v", err)
 	}
+}
+
+// postReviewingMarker drops a single PR-wide acknowledgement so the
+// author knows the bot has picked up the PR and is doing the work.
+// The body is intentionally short — the rich feedback lands as
+// inline threads + a summary when the AI completes. The marker
+// closes the gap between webhook-receive and review-complete (which
+// can be 5-10 minutes on complex diffs), removing the failure mode
+// observed on `internal-terraform/internal-customer-app#NNNN` where the
+// author merged at the 7-minute mark and missed the 3 well-grounded
+// comments that landed 4 minutes later.
+//
+// Emits an `Info` log line BEFORE the network call so an operator
+// can correlate the timestamp shown in the PR thread (`Started at
+// <ts>`) with the same `started_at=<ts>` field on the log line, even
+// if the provider call hangs or times out and never returns.
+//
+// Best-effort: the provider call is wrapped in a short
+// `context.WithTimeout` so a slow/hung provider cannot stall the
+// worker (the marker is UX, not a correctness gate); a failure
+// logs at `Warn` and the review continues.
+func (c *ReviewCommand) postReviewingMarker(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+) {
+	startedAt := time.Now().UTC()
+	body := buildReviewingMarkerBody(startedAt)
+	logger.Infof(
+		"PR #%d: posting 'reviewing' marker (started_at=%s)",
+		prID, startedAt.Format(time.RFC3339),
+	)
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, reviewingMarkerPostTimeout)
+	defer cancel()
+	if err := provider.PostPullRequestComment(timeoutCtx, repo, prID, body); err != nil {
+		logger.Warnf("PR #%d: failed to post 'reviewing' marker: %v", prID, err)
+	}
+}
+
+// reviewingMarkerPostTimeout caps how long a single marker post can
+// hold the worker. The marker is UX, not a correctness gate, so a
+// hung provider must not stall the AI review pipeline behind it.
+// `5s` covers the p99 latency we see for ADO `POST .../threads`
+// from inside the AKS cluster while staying short enough that a
+// genuine outage manifests as a fast `Warn` instead of a wedged
+// goroutine.
+const reviewingMarkerPostTimeout = 5 * time.Second
+
+// buildReviewingMarkerBody renders the PR-wide marker body. Pure
+// function — exposed via `export_test.go` so the formatting contract
+// is unit-testable without standing up a stub provider. Forces UTC
+// inside the helper (rather than trusting the caller) so the
+// "RFC 3339 in UTC" contract holds regardless of the input
+// `time.Time`'s `Location` — pinned per Copilot review on PR #102
+// thread `PRRT_kwDOJKAEo85-56Sq`.
+func buildReviewingMarkerBody(now time.Time) string {
+	return fmt.Sprintf(
+		"\xf0\x9f\xa4\x96 **Code Guru is reviewing this PR.**\n\n"+
+			"Please wait for the review to complete before merging — typically 1-3 minutes for "+
+			"small PRs, longer for complex diffs. Comments will be posted as inline threads when "+
+			"the review finishes.\n\n_Started at %s._",
+		now.UTC().Format(time.RFC3339),
+	)
 }
 
 func (c *ReviewCommand) postComments(
