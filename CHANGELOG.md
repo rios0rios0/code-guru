@@ -16,6 +16,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Changed
+
+- bumped `gitforge` to the post-`SubmitPullRequestReview` connectionData-API-version fix (gitforge `#91`) so Azure DevOps' reviewer-ID lookup actually succeeds. Without this bump the `request_changes` and `comment` mapping additions from `#112` would still hit `failed to resolve reviewer ID: API error (status 400) VssInvalidPreviewVersionException` on every native review submission
+
 ### Fixed
 
 - fixed `support.MapVerdictToReview` so the LLM-vocabulary `request_changes` verdict (emitted by `internal/support/response_parser.go`) translates to `forgeEntities.ReviewVerdictRequestChanges` instead of silently skipping the native review submission. Captured live in dev pod logs at `2026-05-01T21:13Z` where every PR with `verdict=request_changes` (including `internal-app/internal-integrator#NNNN` and `internal-terraform/internal-customer-app#NNNN`) finished with the text annotation but never set the bot's vote in the reviewer panel — the mapper only knew the trivial-detector vocabulary (`reject`) and the bug was operationally invisible because it had no error to log
