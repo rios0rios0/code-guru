@@ -75,17 +75,33 @@ func NewDispatcher(
 	}
 }
 
-// dedupSeen returns true when a duplicate webhook for the same
-// `(provider, repo_id, pr_id)` triple has already been processed
-// inside the TTL window — the caller should short-circuit in that
-// case. Hides the cache nil-check so handler code stays linear; the
-// nil branch only matters in tests that build a `Dispatcher` without
-// the constructor.
+// dedupSeen returns true when a webhook delivery for the same
+// caller-supplied key has already been processed inside the TTL
+// window — the caller should short-circuit in that case. Each
+// handler picks its own key shape (ADO uses
+// `ado:<repo_uuid>:<pr_id>`; GitHub uses
+// `gh:<owner>/<repo>:<pr_id>`), so the cache itself stays
+// provider-agnostic. Hides the cache nil-check so handler code
+// stays linear; the nil branch only matters in tests that build a
+// `Dispatcher` without the constructor.
 func (d *Dispatcher) dedupSeen(key string) bool {
 	if d.dedupCache == nil {
 		return false
 	}
 	return d.dedupCache.seenRecently(key, time.Now())
+}
+
+// dedupForget rolls back a record made by `dedupSeen` when the work
+// the caller intended to gate (typically `submitter.Submit`) fails
+// AFTER the cache check. Without rollback, a webhook retry inside
+// the TTL window would be silently dropped because the cache would
+// still report the duplicate as seen. Tracked per Copilot review on
+// PR #100 thread `PRRT_kwDOJKAEo85-5zE-`.
+func (d *Dispatcher) dedupForget(key string) {
+	if d.dedupCache == nil {
+		return
+	}
+	d.dedupCache.forget(key)
 }
 
 // SetADOHydrator overrides the default HTTP-based ADO PR hydrator. Tests
