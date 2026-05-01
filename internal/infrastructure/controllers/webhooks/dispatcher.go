@@ -206,7 +206,9 @@ func (d *Dispatcher) HandlePR(
 	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, d.detectorRegistry)
 
 	result, err := reviewCmd.Execute(ctx, provider, repo, pr, commands.ReviewOptions{
-		CIPassed: ciPassed,
+		CIPassed:           ciPassed,
+		SubmitNativeReview: d.settings.AI.SubmitNativeReview,
+		ReviewDrafts:       d.settings.AI.ReviewDrafts,
 	})
 	if err != nil {
 		return fmt.Errorf("review failed for PR #%d: %w", pr.ID, err)

@@ -134,9 +134,11 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 	ciPassed := false
 
 	result, err := reviewCmd.Execute(ctx, reviewProvider, repo, *targetPR, commands.ReviewOptions{
-		DryRun:   dryRun,
-		Verbose:  verbose,
-		CIPassed: ciPassed,
+		DryRun:             dryRun,
+		Verbose:            verbose,
+		CIPassed:           ciPassed,
+		SubmitNativeReview: settings.AI.SubmitNativeReview,
+		ReviewDrafts:       settings.AI.ReviewDrafts,
 	})
 	if err != nil {
 		logger.Errorf("review failed: %v", err)
