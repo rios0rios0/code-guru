@@ -201,4 +201,25 @@ func TestNewSettingsFromEnvNativeReviewDefault(t *testing.T) {
 		assert.Nil(t, settings.AI.SubmitNativeReview)
 		assert.True(t, settings.AI.NativeReviewSubmissionEnabled())
 	})
+
+	t.Run("should honour an explicit opt-out shipped with surrounding whitespace (Helm templating)", func(t *testing.T) {
+		// given: Helm / templating frequently injects a trailing newline
+		// or space when rendering values into a Pod's env. Without
+		// trimming, `strconv.ParseBool("false ")` errors and the
+		// resolver falls back to the default ON — silently flipping the
+		// operator's explicit opt-out into the very behaviour they
+		// disabled. Pin the trim contract here.
+		t.Setenv("CODE_GURU_BACKEND", "openai")
+		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+		t.Setenv("CODE_GURU_AI_SUBMIT_NATIVE_REVIEW", "false \n")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		require.NotNil(t, settings.AI.SubmitNativeReview)
+		assert.False(t, *settings.AI.SubmitNativeReview)
+		assert.False(t, settings.AI.NativeReviewSubmissionEnabled())
+	})
 }
