@@ -381,8 +381,12 @@ func TestBuildReviewingMarkerBody(t *testing.T) {
 		// `PRRT_kwDOJKAEo85-56Sq`. Without the defensive `.UTC()`
 		// inside `buildReviewingMarkerBody`, the body would render
 		// `Started at 2026-04-30T22:52:21-03:00.` and the documented
-		// "RFC 3339 in UTC" contract would silently break.
-		spLoc, _ := time.LoadLocation("America/Sao_Paulo")
+		// "RFC 3339 in UTC" contract would silently break. Use
+		// `time.FixedZone` rather than `time.LoadLocation`: the
+		// latter reads `tzdata` at runtime and silently fails with
+		// `nil` on hermetic systems (Alpine, distroless, scratch),
+		// which would then panic in `time.Date`.
+		spLoc := time.FixedZone("America/Sao_Paulo", -3*60*60)
 		ts := time.Date(2026, 4, 30, 22, 52, 21, 0, spLoc) // == 2026-05-01T01:52:21Z
 
 		// when
@@ -443,8 +447,13 @@ func TestBuildReviewFailedBody(t *testing.T) {
 		// given: defensive — same contract as `buildReviewingMarkerBody`
 		// (Copilot review on PR #102 thread `PRRT_kwDOJKAEo85-56Sq`).
 		// A future caller passing a non-UTC time must still produce
-		// a UTC-formatted body.
-		spLoc, _ := time.LoadLocation("America/Sao_Paulo")
+		// a UTC-formatted body. Use `time.FixedZone` rather than
+		// `time.LoadLocation`: the latter reads `tzdata` at runtime
+		// and silently fails with `nil` on hermetic systems
+		// (Alpine, distroless, scratch), which would then panic in
+		// `time.Date` — pinned per Copilot review on PR #103 thread
+		// `PRRT_kwDOJKAEo85-6Cu4`.
+		spLoc := time.FixedZone("America/Sao_Paulo", -3*60*60)
 		ts := time.Date(2026, 4, 30, 23, 51, 21, 0, spLoc) // == 2026-05-01T02:51:21Z
 		err := errors.New("transient")
 

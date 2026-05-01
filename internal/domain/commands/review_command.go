@@ -330,12 +330,22 @@ func buildReviewFailedBody(now time.Time, reviewErr error) string {
 	if reviewErr != nil {
 		errText = support.TruncateForLog(reviewErr.Error(), reviewFailedBodyErrorLimit)
 	}
+	// Footer formatting note: the timestamp goes inside `_..._`
+	// (italic), but the error text goes inside a fenced code block
+	// instead of italic — error strings can contain `_`, `*`,
+	// backticks, or full file paths that would break Markdown
+	// emphasis if interpolated into a single italic span. Pinned
+	// per Copilot review on PR #103 thread `PRRT_kwDOJKAEo85-6CvE`.
+	// `support.TruncateForLog` already wraps the value in
+	// `strconv.Quote`, so a stray triple-backtick inside `errText`
+	// would arrive escaped (`\`\`\``) and not close the fence.
 	return fmt.Sprintf(
 		"\xe2\x9a\xa0\xef\xb8\x8f **Code Guru review failed.**\n\n"+
 			"The AI review step crashed before any inline comments could be produced. Please review "+
 			"this PR manually — the bot will retry on the next push, but the silence after the "+
 			"\"reviewing\" marker is a failure, not progress.\n\n"+
-			"_Failed at %s. Error: %s_",
+			"_Failed at %s._\n\n"+
+			"```\n%s\n```",
 		now.UTC().Format(time.RFC3339),
 		errText,
 	)
