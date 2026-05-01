@@ -20,6 +20,19 @@ package commands
 //   - `NormalizeFilePathForTest` — leading-slash normalisation
 //     mirroring `support.LookupChunkByPath` on the diff side, so AI
 //     paths and ADO-shape paths compare consistently.
+//   - `BuildReviewingMarkerBody` — pure renderer for the "🤖
+//     reviewing" marker body (PR `#102`).
+//   - `BuildReviewFailedBody`    — pure renderer for the "⚠️ review
+//     failed" annotation body (PR `#103`).
+//   - `BuildReviewCompleteBody`  — pure renderer for the "✅ review
+//     complete" annotation body (PR `#104`).
+//   - `IsPullRequestClosed`      — re-checks PR status via
+//     `gitforge.GetPullRequestStatus` so the bot skips posting on
+//     PRs merged / abandoned / closed mid-flight (task `#43`).
+//   - `PullRequestStatusGetter`  — test-only alias for the narrow
+//     `pullRequestStatusGetter` interface that `IsPullRequestClosed`
+//     consumes; tests build a 1-method stub instead of a full
+//     `forgeEntities.ReviewProvider`.
 var (
 	ShouldPostSummary        = shouldPostSummary
 	FilterStaleComments      = filterStaleComments
@@ -28,4 +41,10 @@ var (
 	BuildReviewingMarkerBody = buildReviewingMarkerBody
 	BuildReviewFailedBody    = buildReviewFailedBody
 	BuildReviewCompleteBody  = buildReviewCompleteBody
+	IsPullRequestClosed      = isPullRequestClosed
 )
+
+// PullRequestStatusGetter is the test-only alias for the unexported
+// `pullRequestStatusGetter` interface so external tests can build a
+// 1-method stub without depending on the full `forgeEntities.ReviewProvider`.
+type PullRequestStatusGetter = pullRequestStatusGetter
