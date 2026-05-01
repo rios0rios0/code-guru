@@ -274,6 +274,54 @@ code-guru health --url http://127.0.0.1:8080/health --timeout 4s
 Exit codes: `0` on `200`, `1` on any other status, network error, or
 timeout.
 
+### Kubernetes deployment
+
+When the `serve` controller starts inside a Kubernetes pod (detected
+via the standard `KUBERNETES_SERVICE_HOST` env var that the kubelet
+always injects), the dispatcher automatically swaps its default
+per-pod in-memory webhook dedup for a cross-pod backend backed by
+`coordination.k8s.io/v1` `Lease` objects. This is required when the
+deployment runs with `replicas > 1` because Azure DevOps fires both
+`git.pullrequest.created` and `git.pullrequest.updated` for every
+new PR; without a shared lock the K8s `Service` round-robins one
+delivery to each replica and the bot posts duplicate reviews. The
+lease is named `code-guru-{sanitised-key}`, `Create`d with a `300s`
+TTL, and `Delete`d explicitly when the worker finishes; the K8s API
+server's optimistic-concurrency on `Create` provides the dedup.
+
+Required RBAC (apply once per namespace the bot runs in):
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: code-guru
+  name: code-guru-webhook-dedup
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "create", "delete", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: code-guru
+  name: code-guru-webhook-dedup
+subjects:
+  - kind: ServiceAccount
+    name: code-guru
+    namespace: code-guru
+roleRef:
+  kind: Role
+  name: code-guru-webhook-dedup
+  apiGroup: rbac.authorization.k8s.io
+```
+
+If the RBAC is missing, the bot logs a `Warn` at startup and falls
+back to the per-pod in-memory cache: still safe, but cross-pod
+duplicates will not be suppressed. Outside a pod (local CLI runs,
+unit tests) no Kubernetes API is contacted.
+
 ## Environment Variable Configuration
 
 For CI/CD environments without a config file, all settings can be provided via `CODE_GURU_*` environment variables:
