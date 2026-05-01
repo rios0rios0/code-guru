@@ -138,6 +138,7 @@ func (d *Dispatcher) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	job.DedupKey = dedupKey
 	if submitErr := d.submitter.Submit(job); submitErr != nil {
 		logger.Errorf("GitHub webhook: submit failed: %v", submitErr)
 		// Roll back the dedup record so a webhook retry inside the
