@@ -33,6 +33,7 @@ type Dispatcher struct {
 	providerRegistry      *registry.ProviderRegistry
 	submitter             Submitter
 	githubTokenizer       GitHubTokenizer
+	adoHydrator           ADOResourceHydrator
 	allowedSourcePrefixes []netip.Prefix
 }
 
@@ -56,8 +57,16 @@ func NewDispatcher(
 		detectorRegistry:      detectorRegistry,
 		settings:              settings,
 		providerRegistry:      providerRegistry,
+		adoHydrator:           NewHTTPADOHydrator(nil),
 		allowedSourcePrefixes: parseAllowedCIDRs(settings.Server.AllowedSourceCIDRs),
 	}
+}
+
+// SetADOHydrator overrides the default HTTP-based ADO PR hydrator. Tests
+// substitute a stub that returns a canned `adoResource` without touching the
+// network; production code does not need to call this.
+func (d *Dispatcher) SetADOHydrator(h ADOResourceHydrator) {
+	d.adoHydrator = h
 }
 
 // parseAllowedCIDRs validates and parses each CIDR entry once at startup so

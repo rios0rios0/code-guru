@@ -98,6 +98,10 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !d.hydrateSkinnyADOResource(w, r, &event) {
+		return
+	}
+
 	org := extractADOOrganization(event.Resource.Repository.RemoteURL)
 	if !d.allowedOrganization(org) || !d.allowedProject(event.Resource.Repository.Project.Name) {
 		// On allowlist rejection, dump the parsed shape AND a head of
@@ -243,6 +247,64 @@ func extractADOOrganization(remoteURL string) string {
 // refToBranch trims the refs/heads/ prefix from a Git ref name.
 func refToBranch(ref string) string {
 	return strings.TrimPrefix(ref, "refs/heads/")
+}
+
+// hydrateSkinnyADOResource replaces a stripped-down org-wide-subscription
+// `resource` block with the full envelope fetched from the ADO REST API.
+// Returns true when the caller should keep going, false when a response
+// has already been written and processing must stop.
+//
+// The function is split out of HandleAzureDevOps to keep that handler's
+// cognitive complexity within the linter's 20-branch budget — the
+// hydration step is a self-contained pre-filter and tests cover it
+// directly via the hydrator unit tests.
+func (d *Dispatcher) hydrateSkinnyADOResource(
+	w http.ResponseWriter,
+	r *http.Request,
+	event *adoEvent,
+) bool {
+	if !isSkinnyADOResource(event.Resource) {
+		return true
+	}
+
+	token := d.findToken("azuredevops")
+	if token == "" {
+		logger.Errorf("ADO webhook: skinny payload but no azuredevops PAT configured")
+		writeError(w, http.StatusInternalServerError, "no PAT configured")
+		return false
+	}
+	if d.adoHydrator == nil {
+		logger.Errorf("ADO webhook: skinny payload but no hydrator wired")
+		writeError(w, http.StatusInternalServerError, "hydrator not wired")
+		return false
+	}
+
+	hydrated, err := d.adoHydrator.Hydrate(r.Context(), event.Resource.URL, token)
+	if err != nil {
+		logger.Warnf(
+			"ADO webhook: hydrate PR #%d via %q failed: %v",
+			event.Resource.PullRequestID,
+			event.Resource.URL,
+			err,
+		)
+		writeError(w, http.StatusBadGateway, "hydration failed")
+		return false
+	}
+	event.Resource = mergeHydratedADOResource(event.Resource, hydrated)
+
+	// Re-apply the closed-status guard against the hydrated value: a
+	// `git.pullrequest.updated` for an `abandoned` PR carries an empty
+	// `status` in the skinny shape, so the earlier check let it through.
+	if isClosedADOPullRequestStatus(event.Resource.Status) {
+		logger.Debugf(
+			"ADO webhook: PR #%d hydrated to status %q (closed)",
+			event.Resource.PullRequestID,
+			event.Resource.Status,
+		)
+		w.WriteHeader(http.StatusNoContent)
+		return false
+	}
+	return true
 }
 
 // adoRawBodyLogLimit caps the number of body bytes echoed at `Warn` on the
