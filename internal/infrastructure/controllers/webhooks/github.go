@@ -67,6 +67,8 @@ const fullNameSegments = 2
 // Auth: HMAC-SHA256 via the X-Hub-Signature-256 header validated against
 // Settings.Server.WebhookSecret. Supported events: pull_request with action
 // in {opened, synchronize, reopened}.
+//
+//nolint:funlen // Single-shot HTTP handler whose length is proportional to its required validation flow.
 func (d *Dispatcher) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 	if !d.enforceSourceIPAllowlist(w, r, "GitHub") {
 		return
@@ -127,8 +129,21 @@ func (d *Dispatcher) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job := buildGitHubJob(provider, owner, repoName, event)
+
+	dedupKey := fmt.Sprintf("gh:%s/%s:%d", owner, repoName, job.PR.ID)
+	if d.dedupSeen(dedupKey) {
+		logger.Debugf("GitHub webhook: duplicate delivery for PR #%d in %s/%s — skipping", job.PR.ID, owner, repoName)
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "duplicate")
+		return
+	}
+
 	if submitErr := d.submitter.Submit(job); submitErr != nil {
 		logger.Errorf("GitHub webhook: submit failed: %v", submitErr)
+		// Roll back the dedup record so a webhook retry inside the
+		// TTL is not silently dropped — the cache must only retain
+		// keys that actually made it onto the worker queue.
+		d.dedupForget(dedupKey)
 		writeError(w, http.StatusServiceUnavailable, "queue full")
 		return
 	}
