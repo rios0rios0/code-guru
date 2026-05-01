@@ -6,8 +6,9 @@ import forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
 // PR detectors. Two distinct vocabularies share this surface: the LLM
 // response parser (`internal/support/response_parser.go`) emits
 // `approve` / `request_changes` / `comment`, while the trivial detectors
-// (`internal/infrastructure/repositories/trivial/`) emit
-// `approve` / `reject` / `comment`. The mapper below treats `reject` and
+// (`internal/infrastructure/repositories/trivial/`) emit only
+// `approve` / `reject` (no `comment` — trivial detection is a binary
+// "let through or block" gate). The mapper below treats `reject` and
 // `request_changes` as the same downstream verdict so both code paths
 // reach SubmitPullRequestReview without an extra translation step.
 const (
