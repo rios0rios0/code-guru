@@ -37,7 +37,8 @@ type ReviewOptions struct {
 	// surfaces in the platform's reviewer panel rather than only in the
 	// completion annotation. Best-effort: a failure to submit logs at warn
 	// and the existing text annotation still posts. Wired from
-	// settings.AI.SubmitNativeReview at each call site.
+	// settings.AI.NativeReviewSubmissionEnabled() at each call site, which
+	// resolves the tri-state YAML / env config (default true).
 	SubmitNativeReview bool
 
 	// ReviewDrafts, when false, causes Execute to short-circuit on draft
