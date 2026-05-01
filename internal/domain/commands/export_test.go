@@ -25,4 +25,5 @@ var (
 	FilterStaleComments      = filterStaleComments
 	SummarizeStaleFilePaths  = summarizeStaleFilePaths
 	NormalizeFilePathForTest = normalizeFilePath
+	BuildReviewingMarkerBody = buildReviewingMarkerBody
 )
