@@ -23,6 +23,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Changed
 
+- changed the default of `ai.submit_native_review` from `false` to `true` so deployments that have not wired the flag pick up native pull request reviews (Approved / Changes Requested in the platform's reviewer panel) automatically. Operators that want the previous text-only behaviour now opt out explicitly with `submit_native_review: false` in YAML or `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW=false`. Implemented as a tri-state `*bool` on `AIConfig.SubmitNativeReview` plus a new `AIConfig.NativeReviewSubmissionEnabled()` helper that resolves nil (the YAML / env "unset" state) to `true`; all three call sites (`review_controller.go`, `review_all_controller.go`, `webhooks/dispatcher.go`) now go through the helper. Pinned by six new test rows covering the resolver (`nil → true`, explicit `true`, explicit `false`) and the env-only path (unset → nil + default ON, explicit `false` → resolved off, unparseable typo → nil + default ON so a typo cannot silently flip behaviour)
 - bumped `gitforge` to the post-`SubmitPullRequestReview` revision so the new `ReviewProvider.SubmitPullRequestReview` method and `PullRequestDetail.IsDraft` field are available; this is also the breaking-change boundary where Azure DevOps' `ListOpenPullRequests` stopped filtering drafts client-side (the policy now lives in `ReviewCommand`)
 
 ## [1.5.0] - 2026-05-01
