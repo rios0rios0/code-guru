@@ -623,4 +623,32 @@ func TestBuildReviewCompleteBody(t *testing.T) {
 		assert.NotEmpty(t, body)
 		assert.Contains(t, body, "Code Guru review complete.")
 	})
+
+	t.Run("should count only inline (Line > 0) comments — PR-wide annotations don't inflate the count", func(t *testing.T) {
+		// given: a review with 2 inline (`Line > 0`) findings and
+		// 3 PR-wide annotations (`Line <= 0`). The body says
+		// "X inline comments", so only the inline ones count
+		// against that label — pinned per Copilot review on PR #104
+		// thread `PRRT_kwDOJKAEo85-6ErC`.
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		result := &entities.ReviewResult{
+			Verdict: "request_changes",
+			Comments: []entities.ReviewComment{
+				{FilePath: "a.go", Line: 1, Body: "inline 1"},
+				{FilePath: "b.go", Line: 5, Body: "inline 2"},
+				{FilePath: "c.go", Line: 0, Body: "PR-wide"},
+				{FilePath: "", Line: 0, Body: "PR-wide annotation"},
+				{FilePath: "d.go", Line: -1, Body: "negative-line PR-wide"},
+			},
+		}
+
+		// when
+		body := commands.BuildReviewCompleteBody(ts, result)
+
+		// then
+		assert.Contains(t, body, "2 inline comments.",
+			"only the two `Line > 0` comments must show up against the `inline` label")
+		assert.NotContains(t, body, "5 inline comments",
+			"the three PR-wide annotations must NOT inflate the count")
+	})
 }
