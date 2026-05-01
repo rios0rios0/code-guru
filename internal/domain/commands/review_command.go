@@ -616,7 +616,14 @@ func (c *ReviewCommand) submitNativeReview(
 	if !ok {
 		return
 	}
-	if err := provider.SubmitPullRequestReview(ctx, repo, prID, sub); err != nil {
+	// Mirror the marker / annotation helpers' timeout: the native review
+	// is best-effort UX, so a slow or hung provider must not stall the
+	// worker on this path either. `reviewingMarkerPostTimeout` (5s)
+	// matches the same SLO used for the surrounding annotation posts so
+	// a single review pipeline shares one cap on provider latency.
+	timeoutCtx, cancel := context.WithTimeout(ctx, reviewingMarkerPostTimeout)
+	defer cancel()
+	if err := provider.SubmitPullRequestReview(timeoutCtx, repo, prID, sub); err != nil {
 		logger.Warnf(
 			"PR #%d: native review submission failed (verdict=%s): %v — text annotation still posted",
 			prID, verdict, err,
