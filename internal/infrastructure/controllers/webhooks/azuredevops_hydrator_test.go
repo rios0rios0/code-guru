@@ -181,10 +181,15 @@ func TestHTTPADOHydrator(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should fetch and decode a full PR resource", func(t *testing.T) {
-		// given
-		var receivedAuth string
+		// given: the Authorization-header assertion runs inside the
+		// handler goroutine so the test stays race-free under `-race`.
+		// Capturing the header into a local variable for read in the test
+		// goroutine is what triggered the data-race detector flagged on
+		// PR #97 thread `PRRT_kwDOJKAEo85-5L63`.
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			receivedAuth = r.Header.Get("Authorization")
+			auth := r.Header.Get("Authorization")
+			assert.NotEmpty(t, auth, "request must carry an Authorization header")
+			assert.Contains(t, auth, "Basic ", "auth must use HTTP Basic per ADO PAT scheme")
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
 				"pullRequestId": NNNN,
@@ -203,7 +208,7 @@ func TestHTTPADOHydrator(t *testing.T) {
 		}))
 		defer server.Close()
 
-		hydrator := webhooks.NewHTTPADOHydrator(&http.Client{Timeout: 2 * time.Second})
+		hydrator := webhooks.NewTestHTTPADOHydrator(&http.Client{Timeout: 2 * time.Second})
 
 		// when
 		got, err := hydrator.Hydrate(context.Background(), server.URL+"/_apis/git/pullRequests/NNNN", "test-pat")
@@ -215,8 +220,6 @@ func TestHTTPADOHydrator(t *testing.T) {
 		assert.Equal(t, "catalog", got.Repository.Name)
 		assert.Equal(t, "backend", got.Repository.Project.Name)
 		assert.Equal(t, "refs/heads/chore/smoke-test-6", got.SourceRefName)
-		assert.NotEmpty(t, receivedAuth)
-		assert.Contains(t, receivedAuth, "Basic ")
 	})
 
 	t.Run("should surface a non-2xx response as an error", func(t *testing.T) {
@@ -226,7 +229,7 @@ func TestHTTPADOHydrator(t *testing.T) {
 		}))
 		defer server.Close()
 
-		hydrator := webhooks.NewHTTPADOHydrator(&http.Client{Timeout: 2 * time.Second})
+		hydrator := webhooks.NewTestHTTPADOHydrator(&http.Client{Timeout: 2 * time.Second})
 
 		// when
 		_, err := hydrator.Hydrate(context.Background(), server.URL+"/_apis/git/pullRequests/1", "test-pat")
@@ -271,4 +274,52 @@ func TestHTTPADOHydrator(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "malformed resource URL")
 	})
+
+	t.Run("should refuse to hydrate a non-ADO host (SSRF defence)", func(t *testing.T) {
+		// given: the production hydrator must reject any URL whose host
+		// is not `dev.azure.com` or `*.visualstudio.com`. Without this
+		// guard, an attacker who could forge a webhook delivery past the
+		// source-IP / Basic-auth gate could trick the bot into making
+		// a PAT-authenticated request to an attacker-controlled host —
+		// the CodeQL `go/ssrf` finding on PR #97 thread `PRRT_kwDOJKAEo85-5Kvt`.
+		hydrator := webhooks.NewHTTPADOHydrator(nil)
+
+		// when
+		_, err := hydrator.Hydrate(context.Background(), "https://attacker.example.com/_apis/git/pullRequests/1", "test-pat")
+
+		// then
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "non-ADO host")
+	})
+}
+
+func TestIsADOAPIHost(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{name: "should accept canonical https://dev.azure.com URL", url: "https://dev.azure.com/Org/_apis/git/pullRequests/1", want: true},
+		{name: "should accept legacy *.visualstudio.com host", url: "https://org.visualstudio.com/_apis/git/pullRequests/1", want: true},
+		{name: "should accept regional sub-domain on visualstudio.com", url: "https://org.eu.visualstudio.com/_apis/git/pullRequests/1", want: true},
+		{name: "should accept dev.azure.com regardless of casing", url: "https://DEV.AZURE.COM/Org/_apis/git/pullRequests/1", want: true},
+		{name: "should reject http (must be https)", url: "http://dev.azure.com/Org/_apis/git/pullRequests/1", want: false},
+		{name: "should reject 127.0.0.1 (httptest.NewServer host)", url: "http://127.0.0.1:42/_apis/git/pullRequests/1", want: false},
+		{name: "should reject an arbitrary attacker host", url: "https://attacker.example.com/_apis/git/pullRequests/1", want: false},
+		{name: "should reject empty input", url: "", want: false},
+		{name: "should reject a URL parse error (control character)", url: "https://dev.azure.com/\x7f", want: false},
+		{name: "should reject github.com (would otherwise fail open if we check by suffix only)", url: "https://github.com/_apis/git/pullRequests/1", want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// when
+			got := webhooks.IsADOAPIHost(tc.url)
+
+			// then
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }

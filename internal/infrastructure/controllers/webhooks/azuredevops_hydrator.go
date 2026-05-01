@@ -34,18 +34,23 @@ type ADOResourceHydrator interface {
 const adoAPIVersion = "7.1-preview.1"
 
 // adoHydrationTimeout caps the per-request wall time of the hydration GET.
-// Webhooks ride a single goroutine in the worker queue and we never want a
-// stuck ADO API call to wedge the receive path. 10 s is long enough for the
-// p99 latency we see from the in-cluster hop to dev.azure.com without
-// risking a burst of stuck goroutines under a partial outage.
+// Hydration runs on the HTTP handler path before work is enqueued, with
+// net/http already serving each incoming webhook in its own goroutine. 10 s
+// is long enough for the p99 latency we see from the in-cluster hop to
+// dev.azure.com without letting a partial outage accumulate too many stuck
+// request goroutines.
 const adoHydrationTimeout = 10 * time.Second
 
 // httpADOHydrator is the production hydrator. It performs a single GET
 // against the resource URL using the ADO PAT (Basic auth with empty
 // username, PAT as password — the documented scheme for personal access
-// tokens).
+// tokens). The host validator is a struct field so tests can opt out of
+// the ADO-host check when driving the hydrator against a local
+// `httptest.NewServer` (which serves on `127.0.0.1`); production code
+// always wires `isADOAPIHost`.
 type httpADOHydrator struct {
-	client *http.Client
+	client        *http.Client
+	hostValidator func(string) bool
 }
 
 // NewHTTPADOHydrator returns a hydrator that uses the supplied HTTP client.
@@ -55,7 +60,7 @@ func NewHTTPADOHydrator(client *http.Client) ADOResourceHydrator {
 	if client == nil {
 		client = &http.Client{Timeout: adoHydrationTimeout}
 	}
-	return &httpADOHydrator{client: client}
+	return &httpADOHydrator{client: client, hostValidator: isADOAPIHost}
 }
 
 // Hydrate fetches the full PR resource at resourceURL using the PAT.
@@ -70,6 +75,9 @@ func (h *httpADOHydrator) Hydrate(ctx context.Context, resourceURL, token string
 	hydrationURL, err := appendAPIVersion(resourceURL, adoAPIVersion)
 	if err != nil {
 		return adoResource{}, fmt.Errorf("malformed resource URL: %w", err)
+	}
+	if !h.hostValidator(hydrationURL) {
+		return adoResource{}, fmt.Errorf("refusing to hydrate non-ADO host in %q", hydrationURL)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, adoHydrationTimeout)
@@ -120,6 +128,29 @@ func appendAPIVersion(raw, version string) (string, error) {
 	q.Set("api-version", version)
 	u.RawQuery = q.Encode()
 	return u.String(), nil
+}
+
+// isADOAPIHost validates that a URL points at an Azure DevOps host before
+// the hydrator dispatches an authenticated request to it. The webhook
+// payload's `resource.url` is operator-untrusted data — anyone able to
+// forge a delivery past the source-IP / Basic-auth gate could otherwise
+// trick the bot into making PAT-authenticated requests to an attacker-
+// controlled host (CodeQL `go/ssrf` finding). Allow only the two host
+// shapes ADO actually uses for REST endpoints: `dev.azure.com` and
+// `*.visualstudio.com` (mirroring the org-extraction logic).
+func isADOAPIHost(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "dev.azure.com" {
+		return true
+	}
+	return strings.HasSuffix(host, ".visualstudio.com")
 }
 
 // mergeHydratedADOResource combines the original webhook resource with the
