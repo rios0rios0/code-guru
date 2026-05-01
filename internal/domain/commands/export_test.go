@@ -8,4 +8,9 @@ package commands
 // repository/provider/registry. The variable indirection keeps the helper
 // itself unexported in production builds (the file is gated on the `unit`
 // build tag).
-var ShouldPostSummary = shouldPostSummary
+var (
+	ShouldPostSummary        = shouldPostSummary
+	FilterStaleComments      = filterStaleComments
+	SummarizeStaleFilePaths  = summarizeStaleFilePaths
+	NormalizeFilePathForTest = normalizeFilePath
+)
