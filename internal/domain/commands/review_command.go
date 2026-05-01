@@ -125,6 +125,21 @@ func (c *ReviewCommand) Execute(
 
 	result, err := c.aiReviewer.ReviewDiff(ctx, request)
 	if err != nil {
+		// Post a user-visible failure annotation so the PR author
+		// understands the silence after the "reviewing" marker is a
+		// crash, not the bot still working. Without this notice, the
+		// marker promises a review that never arrives — captured live
+		// across PRs `#NNNN` / `#NNNN` / `#NNNN` / `#NNNN` /
+		// `#NNNN` / `#NNNN` on `2026-05-01` where ~half of all
+		// reviews failed silently with `claude CLI failed: exit
+		// status 1`. With dedup (PR #100) only one pod attempts the
+		// review per PR, so a single failure means total silence
+		// unless we annotate. Best-effort: a failure to post the
+		// annotation logs at `Warn` and the original error still
+		// bubbles up to the worker.
+		if !opts.DryRun {
+			c.postReviewFailedAnnotation(ctx, provider, repo, pr.ID, err)
+		}
 		return nil, fmt.Errorf("AI review failed: %w", err)
 	}
 
@@ -265,6 +280,74 @@ func (c *ReviewCommand) postRejectionComment(
 		logger.Errorf("failed to post rejection comment: %v", err)
 	}
 }
+
+// postReviewFailedAnnotation drops a single PR-wide notice when the
+// AI step crashes, so the PR author understands the silence after
+// the "reviewing" marker is a failure rather than the bot still
+// working. Without this notice (and combined with the dedup gate
+// from PR #100 — only one pod attempts the review per PR), a
+// `claude CLI failed: exit status 1` left the PR with the marker
+// promising a review that never arrives.
+//
+// The `reviewErr` is included in summary form so an operator
+// glancing at the PR thread immediately knows whether to look at
+// the pod logs (claude crash) vs. retry (transient outage). The
+// raw error is truncated and quoted via `support.TruncateForLog`
+// to bound the rendered body and prevent any provider-side parser
+// breaking on a multi-megabyte error from a runaway claude.
+//
+// Best-effort: a failure to post the annotation logs at `Warn` and
+// the original `reviewErr` still bubbles up to the worker via
+// `Execute`'s return — the annotation is operator-visible UX, not
+// a correctness gate.
+func (c *ReviewCommand) postReviewFailedAnnotation(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+	reviewErr error,
+) {
+	body := buildReviewFailedBody(time.Now().UTC(), reviewErr)
+	logger.Infof("PR #%d: posting 'review failed' annotation", prID)
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, reviewingMarkerPostTimeout)
+	defer cancel()
+	if err := provider.PostPullRequestComment(timeoutCtx, repo, prID, body); err != nil {
+		logger.Warnf("PR #%d: failed to post 'review failed' annotation: %v", prID, err)
+	}
+}
+
+// buildReviewFailedBody renders the PR-wide failure notice. Pure
+// function — exposed via `export_test.go` so the formatting
+// contract is unit-testable without standing up a stub provider.
+// Forces UTC inside the helper for the same reason
+// `buildReviewingMarkerBody` does (per Copilot review on PR #102).
+// Truncates the error to keep the rendered body bounded under a
+// runaway-claude failure mode that can produce megabytes of
+// unstructured text.
+func buildReviewFailedBody(now time.Time, reviewErr error) string {
+	errText := "(no error details)"
+	if reviewErr != nil {
+		errText = support.TruncateForLog(reviewErr.Error(), reviewFailedBodyErrorLimit)
+	}
+	return fmt.Sprintf(
+		"\xe2\x9a\xa0\xef\xb8\x8f **Code Guru review failed.**\n\n"+
+			"The AI review step crashed before any inline comments could be produced. Please review "+
+			"this PR manually — the bot will retry on the next push, but the silence after the "+
+			"\"reviewing\" marker is a failure, not progress.\n\n"+
+			"_Failed at %s. Error: %s_",
+		now.UTC().Format(time.RFC3339),
+		errText,
+	)
+}
+
+// reviewFailedBodyErrorLimit caps the raw error text echoed into
+// the PR thread. 2 KB is enough to surface the typical
+// `claude CLI failed: exit status 1 (stderr: ...; stdout: ...)`
+// envelope that PR #98 introduced — long enough to be useful for
+// the author/operator, short enough that the PR thread does not
+// turn into a wall of text under a runaway-claude crash.
+const reviewFailedBodyErrorLimit = 2048
 
 // postReviewingMarker drops a single PR-wide acknowledgement so the
 // author knows the bot has picked up the PR and is doing the work.
