@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -68,6 +69,8 @@ func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
 		}
 		c.dispatcher.SetGitHubTokenizer(tokenizer)
 	}
+
+	c.installDedupBackend()
 
 	pool := webhooks.NewPool(
 		c.settings.Server.Workers,
@@ -147,6 +150,49 @@ func (c *ServeController) resolveShutdownTimeout() time.Duration {
 		return c.settings.Server.ShutdownTimeout
 	}
 	return defaultShutdownTimeout
+}
+
+// installDedupBackend swaps the dispatcher's default in-memory dedup
+// for the cross-pod K8s-Lease backend whenever the bot is running
+// inside a Kubernetes pod. Cross-pod gating is required because ADO
+// fires both `pullrequest.created` and `pullrequest.updated` for every
+// new PR and the K8s `Service` round-robins one delivery to each
+// replica — without a shared lock both pods independently process,
+// produce two reviews, and post duplicate comments (live across
+// `internal-terraform/internal-customer-app#NNNN..#NNNN` on `2026-05-01`).
+//
+// Outside a pod (local CLI runs, unit tests) the dispatcher keeps the
+// per-pod in-memory cache the constructor wired in — no operator
+// action is required to opt in/out, the heuristic is the standard
+// `KUBERNETES_SERVICE_HOST` env var the kubelet always injects.
+//
+// Failures during in-cluster wiring (e.g. missing RBAC on the
+// ServiceAccount) are logged at `Warn` and the dispatcher keeps the
+// in-memory cache — never WORSE than the pre-PR baseline. The
+// per-pod cache still gates ADO retry storms that loop back to the
+// same replica, so the fallback is operationally safe.
+func (c *ServeController) installDedupBackend() {
+	if !webhooks.IsInKubernetes() {
+		logger.Info("serve: KUBERNETES_SERVICE_HOST not set — using per-pod in-memory webhook dedup")
+		return
+	}
+	holder, err := os.Hostname()
+	if err != nil || holder == "" {
+		holder = "code-guru"
+	}
+	dedup, err := webhooks.NewK8sLeaseDedupFromInCluster("", holder)
+	if err != nil {
+		logger.WithError(err).Warn(
+			"serve: failed to wire K8s-Lease dedup; falling back to per-pod in-memory cache " +
+				"(check the ServiceAccount has the `coordination.k8s.io/leases` Role from dedup_lease.go)",
+		)
+		return
+	}
+	c.dispatcher.SetDedup(dedup)
+	logger.Infof(
+		"serve: K8s-Lease webhook dedup wired (holder=%q) — cross-pod duplicates are now gated by the API server",
+		holder,
+	)
 }
 
 // validateSettings enforces the minimum configuration required by the webhook
