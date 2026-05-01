@@ -131,7 +131,7 @@ func (d *Dispatcher) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 	job := buildGitHubJob(provider, owner, repoName, event)
 
 	dedupKey := fmt.Sprintf("gh:%s/%s:%d", owner, repoName, job.PR.ID)
-	if d.dedupSeen(dedupKey) {
+	if d.dedupSeen(r.Context(), dedupKey) {
 		logger.Debugf("GitHub webhook: duplicate delivery for PR #%d in %s/%s — skipping", job.PR.ID, owner, repoName)
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, "duplicate")
@@ -141,9 +141,10 @@ func (d *Dispatcher) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 	if submitErr := d.submitter.Submit(job); submitErr != nil {
 		logger.Errorf("GitHub webhook: submit failed: %v", submitErr)
 		// Roll back the dedup record so a webhook retry inside the
-		// TTL is not silently dropped — the cache must only retain
-		// keys that actually made it onto the worker queue.
-		d.dedupForget(dedupKey)
+		// dedup window is not silently dropped — the backend must
+		// only retain keys that actually made it onto the worker
+		// queue.
+		d.dedupForget(r.Context(), dedupKey)
 		writeError(w, http.StatusServiceUnavailable, "queue full")
 		return
 	}

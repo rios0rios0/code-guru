@@ -1,9 +1,55 @@
 package webhooks
 
 import (
+	"context"
 	"sync"
 	"time"
 )
+
+// WebhookDedup is the contract every dedup backend must satisfy. It
+// gates webhook deliveries against duplicate processing — typically
+// keyed by `provider:repo_id:pr_id` — and exposes a `Forget` rollback
+// so callers can release the slot when the post-check work fails.
+//
+// The contract is intentionally narrow (two methods) so backends can
+// be swapped without touching handler code:
+//
+//   - `webhookDedupCache` (in-memory) is the default for tests and
+//     local single-pod deployments;
+//   - `K8sLeaseDedup` (this package, see `dedup_lease.go`) is the
+//     production backend on AKS where the bot runs with `replicas: 2`
+//     and the K8s `Service` load-balances each ADO delivery pair to
+//     a different pod (causing duplicate reviews — the original gap
+//     the in-memory cache could not close).
+//
+// Implementations MUST be safe under concurrent calls on the same key
+// from multiple goroutines (the K8s Service can produce two webhook
+// handlers racing on the same PR within microseconds).
+type WebhookDedup interface {
+	// SeenRecently returns true when the key has already been
+	// processed inside the dedup window. The first caller observes
+	// false and is expected to perform the gated work; subsequent
+	// callers within the window observe true and short-circuit.
+	//
+	// `ctx` lets the implementation bound external calls (e.g. the
+	// K8s API server) so a wedged backend never stalls webhook
+	// delivery beyond the caller-supplied deadline. Best-effort
+	// implementations MAY return false on a backend error — that
+	// degrades to "process the webhook" (the same baseline as
+	// having no dedup at all), never worse.
+	SeenRecently(ctx context.Context, key string) bool
+
+	// Forget removes the record made by `SeenRecently` so a webhook
+	// retry inside the dedup window is allowed onto the worker
+	// queue. Callers invoke this when the work AFTER the dedup gate
+	// (typically `submitter.Submit`) fails — without rollback the
+	// retry would be silently dropped because the record would
+	// still report the duplicate as seen. Calling `Forget` for an
+	// unknown key MUST be a no-op so the contract is safe under any
+	// caller order (including double-rollback in defensive cleanup
+	// paths).
+	Forget(ctx context.Context, key string)
+}
 
 // webhookDedupCache is a tiny in-memory TTL cache used to short-circuit
 // duplicate webhook deliveries inside a single pod. Azure DevOps fires
@@ -11,9 +57,9 @@ import (
 // new PR (observed live across `#NNNN`, `#NNNN`, `#NNNN` on
 // `2026-05-01`); when the K8s Service routes them both to the same
 // pod, the cache eats the second one. Cross-pod duplicates (each
-// delivery routed to a different replica) are out of scope here —
-// that requires either a single replica or dropping one ADO
-// subscription. Both are tracked as deployment-side follow-ups.
+// delivery routed to a different replica) are handled by the
+// `K8sLeaseDedup` implementation in `dedup_lease.go` — the in-memory
+// cache remains the default for tests and single-pod local runs.
 //
 // The TTL is short on purpose: any logically-duplicate delivery from
 // ADO lands within milliseconds (the longest gap we observed was
@@ -88,4 +134,39 @@ func (c *webhookDedupCache) forget(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.seen, key)
+}
+
+// inMemoryDedup adapts the per-pod `webhookDedupCache` to the
+// `WebhookDedup` interface. Kept as a thin wrapper (rather than
+// hanging the interface methods directly on `webhookDedupCache`) so
+// the cache's existing two-argument test-facing API
+// `seenRecently(key, now)` / `forget(key)` keeps the test-only
+// frozen-clock entry point intact — re-exported via `export_test.go`
+// for the six BDD rows in `dedup_cache_test.go` that were pinned in
+// PR `#100`. Without the wrapper the type would expose two methods
+// of the same name with different signatures, which Go will not
+// compile.
+type inMemoryDedup struct {
+	cache *webhookDedupCache
+}
+
+// SeenRecently adapts the in-memory cache to the WebhookDedup
+// interface. The context is unused (the in-memory implementation
+// never blocks on external IO) — it exists on the interface only
+// because the K8s-Lease backend needs it to bound API-server calls.
+func (d *inMemoryDedup) SeenRecently(_ context.Context, key string) bool {
+	return d.cache.seenRecently(key, time.Now())
+}
+
+// Forget adapts the in-memory cache to the WebhookDedup interface.
+// The context is unused for the same reason as `SeenRecently`.
+func (d *inMemoryDedup) Forget(_ context.Context, key string) {
+	d.cache.forget(key)
+}
+
+// newInMemoryDedup is the production constructor for the in-memory
+// dedup backend. It is the default the dispatcher wires when no
+// cross-pod backend is supplied (local dev runs, unit tests).
+func newInMemoryDedup(ttl time.Duration) *inMemoryDedup {
+	return &inMemoryDedup{cache: newWebhookDedupCache(ttl)}
 }
