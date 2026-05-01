@@ -558,7 +558,7 @@ func (c *ReviewCommand) postReviewingMarker(
 // "informational" threads on the PR (the marker + the completion
 // notice) that the author had to dismiss by hand. GitHub's REST
 // review surface has no per-comment status and silently ignores the
-// option (`gitforge.WithThreadStatus` is documented as no-op there),
+// option (`forgeEntities.WithThreadStatus` is documented as no-op there),
 // so this is effectively ADO-only behaviour with provider-agnostic
 // wiring.
 const annotationThreadStatus = "closed"
