@@ -31,6 +31,20 @@ type ReviewOptions struct {
 	DryRun   bool
 	Verbose  bool
 	CIPassed bool
+
+	// SubmitNativeReview, when true, also records a native PR review on the
+	// underlying provider (Approved / Changes Requested) so the verdict
+	// surfaces in the platform's reviewer panel rather than only in the
+	// completion annotation. Best-effort: a failure to submit logs at warn
+	// and the existing text annotation still posts. Wired from
+	// settings.AI.SubmitNativeReview at each call site.
+	SubmitNativeReview bool
+
+	// ReviewDrafts, when false, causes Execute to short-circuit on draft
+	// PRs (PullRequestDetail.IsDraft) before fetching files or calling the
+	// AI. When true, drafts go through the full review path. Wired from
+	// settings.AI.ReviewDrafts at each call site.
+	ReviewDrafts bool
 }
 
 // ReviewCommand orchestrates a single PR review.
@@ -63,6 +77,24 @@ func (c *ReviewCommand) Execute(
 ) (*entities.ReviewResult, error) {
 	logger.Infof("reviewing PR #%d: %s", pr.ID, pr.Title)
 
+	// Drafts are skipped by default — most teams treat draft PRs as
+	// work-in-progress and do not want to spend AI budget on something
+	// the author has explicitly marked unfinished. Operators that want
+	// to opt back in flip `settings.AI.ReviewDrafts` (env override
+	// `CODE_GURU_AI_REVIEW_DRAFTS=true`). The skip happens BEFORE the
+	// "reviewing" marker so a draft PR doesn't accumulate a marker
+	// thread that will never get a completion annotation. The verdict
+	// is intentionally `comment` (not `approve` / `reject`) so any
+	// downstream native-review submission also short-circuits.
+	if pr.IsDraft && !opts.ReviewDrafts {
+		logger.Infof("PR #%d is a draft, skipping review (set ai.review_drafts=true to override)", pr.ID)
+		return &entities.ReviewResult{
+			PullRequestURL: pr.URL,
+			Verdict:        "comment",
+			Summary:        "skipped: pull request is a draft",
+		}, nil
+	}
+
 	// fetch changed files
 	files, err := provider.GetPullRequestFiles(ctx, repo, pr.ID)
 	if err != nil {
@@ -82,7 +114,7 @@ func (c *ReviewCommand) Execute(
 
 	// check trivial PR detection (no LLM call needed)
 	if c.detectorRegistry != nil && opts.CIPassed {
-		if result := c.handleTrivialDetection(ctx, provider, repo, pr, paths, opts.DryRun); result != nil {
+		if result := c.handleTrivialDetection(ctx, provider, repo, pr, paths, opts); result != nil {
 			return result, nil
 		}
 	}
@@ -174,6 +206,12 @@ func (c *ReviewCommand) Execute(
 			// task `#47`. Once that lands, this can be replaced
 			// with marker-thread auto-close.
 			c.postReviewCompleteAnnotation(ctx, provider, repo, pr.ID, result)
+			// Native review submission is additive UX layered on top
+			// of the existing text annotation: the verdict shows up
+			// in the platform's reviewer panel (Approved / Changes
+			// Requested) instead of only inside the comment body.
+			// Gated by `opts.SubmitNativeReview`.
+			c.submitNativeReview(ctx, provider, repo, pr.ID, result.Verdict, result.Summary, opts)
 		}
 	}
 
@@ -186,7 +224,7 @@ func (c *ReviewCommand) handleTrivialDetection(
 	repo forgeEntities.Repository,
 	pr forgeEntities.PullRequestDetail,
 	paths []string,
-	dryRun bool,
+	opts ReviewOptions,
 ) *entities.ReviewResult {
 	// build detection context with file content fetcher if available
 	dctx := repositories.DetectionContext{
@@ -213,13 +251,17 @@ func (c *ReviewCommand) handleTrivialDetection(
 		Summary:        detection.Summary,
 	}
 
-	if !dryRun {
+	if !opts.DryRun {
 		switch detection.Verdict {
 		case "approve":
 			c.postApprovalComment(ctx, provider, repo, pr.ID, detection.Summary)
 		case "reject":
 			c.postRejectionComment(ctx, provider, repo, pr.ID, detection.Summary)
 		}
+		// Native review submission piggybacks on the same verdict the
+		// trivial detector emits — Approved / Changes Requested in the
+		// reviewer panel mirrors the text comment posted above.
+		c.submitNativeReview(ctx, provider, repo, pr.ID, detection.Verdict, detection.Summary, opts)
 	}
 
 	return result
@@ -544,6 +586,48 @@ func (c *ReviewCommand) postReviewingMarker(
 		forgeEntities.WithThreadStatus(annotationThreadStatus),
 	); err != nil {
 		logger.Warnf("PR #%d: failed to post 'reviewing' marker: %v", prID, err)
+	}
+}
+
+// submitNativeReview records a native PR review (Approved / Changes Requested)
+// on the underlying provider so the verdict surfaces in the platform's reviewer
+// panel rather than only as text. The text annotation is still posted by the
+// caller — this method is purely additive UX, gated by `opts.SubmitNativeReview`
+// so existing deployments keep their previous behaviour until operators opt in.
+//
+// The verdict-to-submission translation lives in `support.MapVerdictToReview`;
+// a verdict the mapper does not recognise (e.g. `comment`) returns ok=false and
+// this function quietly skips the API call. Failures are logged at `Warn` and
+// swallowed: the native review is operator-visible polish, not a correctness
+// gate, so a hung provider or a permission failure must not stall the worker
+// or cause the surrounding `Execute` to return an error.
+func (c *ReviewCommand) submitNativeReview(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+	verdict, summary string,
+	opts ReviewOptions,
+) {
+	if !opts.SubmitNativeReview {
+		return
+	}
+	sub, ok := support.MapVerdictToReview(verdict, summary)
+	if !ok {
+		return
+	}
+	// Mirror the marker / annotation helpers' timeout: the native review
+	// is best-effort UX, so a slow or hung provider must not stall the
+	// worker on this path either. `reviewingMarkerPostTimeout` (5s)
+	// matches the same SLO used for the surrounding annotation posts so
+	// a single review pipeline shares one cap on provider latency.
+	timeoutCtx, cancel := context.WithTimeout(ctx, reviewingMarkerPostTimeout)
+	defer cancel()
+	if err := provider.SubmitPullRequestReview(timeoutCtx, repo, prID, sub); err != nil {
+		logger.Warnf(
+			"PR #%d: native review submission failed (verdict=%s): %v — text annotation still posted",
+			prID, verdict, err,
+		)
 	}
 }
 

@@ -32,6 +32,23 @@ type AIConfig struct {
 	OpenAI    OpenAIConfig    `yaml:"openai"`
 	Claude    ClaudeConfig    `yaml:"claude"`
 	Anthropic AnthropicConfig `yaml:"anthropic"`
+
+	// SubmitNativeReview, when true, asks the bot to record a native pull
+	// request review (Approved / Changes Requested) on GitHub or Azure
+	// DevOps in addition to the existing text-only completion annotation.
+	// Comment-only verdicts are not submitted as native reviews
+	// (support.MapVerdictToReview returns ok=false for them). The native
+	// review surfaces the verdict in the platform's reviewer panel.
+	// Defaults to false so existing deployments keep their previous
+	// behaviour until operators explicitly opt in. Override via
+	// CODE_GURU_AI_SUBMIT_NATIVE_REVIEW=true.
+	SubmitNativeReview bool `yaml:"submit_native_review"`
+
+	// ReviewDrafts, when true, lets the bot review draft PRs as well. By
+	// default draft PRs are skipped — most teams treat drafts as
+	// work-in-progress that should not consume review budget. Override via
+	// CODE_GURU_AI_REVIEW_DRAFTS=true.
+	ReviewDrafts bool `yaml:"review_drafts"`
 }
 
 // OpenAIConfig holds OpenAI-specific settings.
@@ -148,6 +165,8 @@ func NewSettingsFromEnv() (*Settings, error) {
 				APIKey: os.Getenv("CODE_GURU_ANTHROPIC_API_KEY"),
 				Model:  envOrDefault("CODE_GURU_ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
 			},
+			SubmitNativeReview: parseBoolEnv("CODE_GURU_AI_SUBMIT_NATIVE_REVIEW", false),
+			ReviewDrafts:       parseBoolEnv("CODE_GURU_AI_REVIEW_DRAFTS", false),
 		},
 		Rules: RulesConfig{
 			Path: os.Getenv("CODE_GURU_RULES_PATH"),
@@ -213,6 +232,22 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parseBoolEnv reads a boolean environment variable. Truthy values are the
+// strconv defaults (`1`, `t`, `true` — case-insensitive); any non-empty value
+// the parser rejects falls back to the provided default rather than panicking,
+// so a typo does not silently flip behaviour.
+func parseBoolEnv(key string, fallback bool) bool {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 // splitCSV parses a comma-separated string into a slice, trimming whitespace and skipping empties.

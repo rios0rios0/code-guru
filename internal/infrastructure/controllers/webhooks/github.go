@@ -27,6 +27,7 @@ type ghPullRequest struct {
 	Title   string   `json:"title"`
 	HTMLURL string   `json:"html_url"`
 	State   string   `json:"state"`
+	Draft   bool     `json:"draft"`
 	Head    ghBranch `json:"head"`
 	Base    ghBranch `json:"base"`
 	User    ghUser   `json:"user"`
@@ -204,6 +205,7 @@ func buildGitHubJob(provider forgeEntities.ReviewProvider, owner, repoName strin
 			SourceBranch: event.PullRequest.Head.Ref,
 			TargetBranch: event.PullRequest.Base.Ref,
 			Author:       event.PullRequest.User.Login,
+			IsDraft:      event.PullRequest.Draft,
 		},
 		CIPassed: false,
 	}

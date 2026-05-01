@@ -308,3 +308,69 @@ func TestHandleGitHub(t *testing.T) {
 		assert.Len(t, sub.Jobs(), 1, "the retry reaches the worker queue")
 	})
 }
+
+const ghDraftOpenedPayload = `{
+  "action": "opened",
+  "pull_request": {
+    "number": 8,
+    "title": "WIP: refactor",
+    "html_url": "https://github.com/rios0rios0/demo/pull/8",
+    "state": "open",
+    "draft": true,
+    "head": {"ref": "feat/x"},
+    "base": {"ref": "main"},
+    "user": {"login": "octocat"}
+  },
+  "repository": {
+    "name": "demo",
+    "full_name": "rios0rios0/demo",
+    "html_url": "https://github.com/rios0rios0/demo",
+    "owner": {"login": "rios0rios0"}
+  },
+  "installation": {"id": 1234}
+}`
+
+func TestHandleGitHubPropagatesIsDraft(t *testing.T) {
+	t.Parallel()
+
+	// Pin the wiring contract: when GitHub sends `pull_request.draft=true`,
+	// the dispatched Job must carry `PR.IsDraft=true` so the downstream
+	// ReviewCommand can apply its draft-skip policy. Without this, the
+	// `ai.review_drafts=false` default would have no effect on webhook-driven
+	// reviews (drafts would still go through the AI path).
+	t.Run("should set Job.PR.IsDraft when the webhook payload reports draft=true", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+		req := githubRequest(t, ghSecret, ghDraftOpenedPayload, "pull_request")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		require.Equal(t, http.StatusAccepted, w.Code)
+		jobs := sub.Jobs()
+		require.Len(t, jobs, 1)
+		assert.True(t, jobs[0].PR.IsDraft, "draft webhook payload must set PR.IsDraft on the dispatched Job")
+	})
+
+	t.Run("should leave Job.PR.IsDraft false when the webhook payload omits draft", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+		req := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		require.Equal(t, http.StatusAccepted, w.Code)
+		jobs := sub.Jobs()
+		require.Len(t, jobs, 1)
+		assert.False(t, jobs[0].PR.IsDraft, "non-draft webhook payload must keep PR.IsDraft=false")
+	})
+}
