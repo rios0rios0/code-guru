@@ -147,6 +147,16 @@ func (c *ReviewCommand) Execute(
 
 	if !opts.DryRun {
 		c.postComments(ctx, provider, repo, pr.ID, result)
+		// After the inline / summary comments land, post a tiny
+		// completion notice so the PR author sees a visible
+		// transition from "🤖 reviewing" (PR #102) to "✅ done".
+		// Without this, the marker stays open-ended and the author
+		// has to count comments to infer the bot finished. The
+		// notice is intentionally a separate thread (not an edit of
+		// the marker) because gitforge does not yet expose a thread-
+		// update method — see task `#47`. Once that lands, this can
+		// be replaced with marker-thread auto-close.
+		c.postReviewCompleteAnnotation(ctx, provider, repo, pr.ID, result)
 	}
 
 	return result, nil
@@ -358,6 +368,109 @@ func buildReviewFailedBody(now time.Time, reviewErr error) string {
 // the author/operator, short enough that the PR thread does not
 // turn into a wall of text under a runaway-claude crash.
 const reviewFailedBodyErrorLimit = 2048
+
+// postReviewCompleteAnnotation drops a single PR-wide notice after
+// the AI review's inline + summary comments have been posted, so
+// the PR author sees an explicit "done" signal that closes out the
+// "reviewing" marker (PR #102). Without this, the marker stays
+// open-ended and the author has to count comments to infer that
+// the bot finished — observed live on `internal-terraform/customer-
+// clusters#NNNN` on `2026-05-01` where the author merged before
+// realising the bot had finished and missed the 3 review comments.
+//
+// The body surfaces the verdict, the count of inline (`Line > 0`)
+// comments, and the completion timestamp in the same RFC 3339 UTC
+// shape the marker uses (`Started at <ts>`) so a reader can pair
+// the marker thread with the completion thread at a glance.
+// Best-effort: a failure to post logs at `Warn` and never blocks
+// the worker — completion notices are UX, not correctness. Wrapped
+// in the same `5s` timeout as the marker so a hung provider cannot
+// stall the review pipeline.
+//
+// Both the log line and the body use `reviewCompletionStats` so a
+// nil `result` (defensive — production never passes one, but a
+// future refactor might) degrades gracefully instead of panicking
+// on `result.Verdict` / `len(result.Comments)` — pinned per
+// Copilot review on PR #104 thread `PRRT_kwDOJKAEo85-6Eqy`.
+func (c *ReviewCommand) postReviewCompleteAnnotation(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+	result *entities.ReviewResult,
+) {
+	stats := reviewCompletionStats(result)
+	body := buildReviewCompleteBody(time.Now().UTC(), result)
+	logger.Infof("PR #%d: posting 'review complete' annotation (verdict=%s, inline_comments=%d)",
+		prID, stats.verdict, stats.inlineCommentCount)
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, reviewingMarkerPostTimeout)
+	defer cancel()
+	if err := provider.PostPullRequestComment(timeoutCtx, repo, prID, body); err != nil {
+		logger.Warnf("PR #%d: failed to post 'review complete' annotation: %v", prID, err)
+	}
+}
+
+// completionStats collapses the bits of `*entities.ReviewResult`
+// the completion notice cares about (verdict + inline-comment
+// count) into a value that is safe to consume even when the
+// caller's `result` pointer is nil. Defined as a type so the
+// `verdict` / `inlineCommentCount` pair stays self-documenting
+// at every call site.
+type completionStats struct {
+	verdict            string
+	inlineCommentCount int
+}
+
+// reviewCompletionStats reads the verdict + inline-comment count
+// off a `*entities.ReviewResult` defensively. A nil pointer or an
+// empty `Verdict` falls back to the canonical `comment` verdict.
+// The inline-comment count only counts comments with `Line > 0` —
+// PR-wide comments (`Line <= 0`) are repository-wide annotations
+// and don't render as "inline threads" in the bot's vocabulary, so
+// they shouldn't inflate the "X inline comments" label on the
+// completion notice — pinned per Copilot review on PR #104 thread
+// `PRRT_kwDOJKAEo85-6ErC`.
+func reviewCompletionStats(result *entities.ReviewResult) completionStats {
+	stats := completionStats{verdict: "comment"}
+	if result == nil {
+		return stats
+	}
+	if result.Verdict != "" {
+		stats.verdict = result.Verdict
+	}
+	for _, c := range result.Comments {
+		if c.Line > 0 {
+			stats.inlineCommentCount++
+		}
+	}
+	return stats
+}
+
+// buildReviewCompleteBody renders the PR-wide completion notice. Pure
+// function — exposed via `export_test.go` so the formatting contract
+// is unit-testable without standing up a stub provider. Forces UTC
+// inside the helper for the same reason `buildReviewingMarkerBody`
+// does (per Copilot review on PR #102 thread `PRRT_kwDOJKAEo85-56Sq`).
+// Surfaces the canonical verdict + inline-comment count so the
+// author can see the bot's conclusion without scrolling through
+// every thread.
+func buildReviewCompleteBody(now time.Time, result *entities.ReviewResult) string {
+	stats := reviewCompletionStats(result)
+	commentsLabel := "comment"
+	if stats.inlineCommentCount != 1 {
+		commentsLabel = "comments"
+	}
+	return fmt.Sprintf(
+		"\xe2\x9c\x85 **Code Guru review complete.**\n\n"+
+			"Verdict: `%s` \xc2\xb7 %d inline %s.\n\n"+
+			"_Completed at %s._",
+		stats.verdict,
+		stats.inlineCommentCount,
+		commentsLabel,
+		now.UTC().Format(time.RFC3339),
+	)
+}
 
 // postReviewingMarker drops a single PR-wide acknowledgement so the
 // author knows the bot has picked up the PR and is doing the work.

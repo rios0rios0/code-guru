@@ -27,4 +27,5 @@ var (
 	NormalizeFilePathForTest = normalizeFilePath
 	BuildReviewingMarkerBody = buildReviewingMarkerBody
 	BuildReviewFailedBody    = buildReviewFailedBody
+	BuildReviewCompleteBody  = buildReviewCompleteBody
 )
