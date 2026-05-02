@@ -18,9 +18,26 @@ import (
 )
 
 const (
-	defaultServerPort        = 8080
-	defaultShutdownTimeout   = 30 * time.Second
+	defaultServerPort = 8080
+	// defaultShutdownTimeout caps how long `serve` waits for in-flight
+	// reviews to drain after SIGTERM before forcibly cancelling them.
+	// `90s` is enough for typical reviews to flush their inline comment
+	// posts + completion annotation (p95 ≈90s end-to-end), short enough
+	// not to fight `kubectl rollout`'s default per-pod grace period
+	// (typically 30-300s tunable via `terminationGracePeriodSeconds`),
+	// and bounded by the K8s-Lease backend's renewal-loop + lease
+	// duration (≤60s recovery) so jobs the drain timeout cancels do
+	// not orphan their dedup leases for long.
+	defaultShutdownTimeout   = 90 * time.Second
 	defaultReadHeaderTimeout = 10 * time.Second
+	// releaseAllInFlightTimeout caps the dedup mass-release phase that
+	// runs after `pool.Shutdown` returns. Built off a fresh
+	// `context.Background()` so the budget is independent of the drain
+	// timeout (which may already be exhausted by long-running review
+	// cancellations). 15 s is enough for tens of `Forget` round-trips
+	// against the K8s API server while staying short enough that pod
+	// termination does not stretch SLA-visibly.
+	releaseAllInFlightTimeout = 15 * time.Second
 )
 
 // ServeController handles the "serve" subcommand for the webhook server.
@@ -83,6 +100,22 @@ func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
 			// it a successful review would leak its lease in etcd forever
 			// and block all future webhook deliveries for the same PR.
 			defer c.dispatcher.ReleaseDedup(ctx, job.DedupKey)
+
+			// Renew the dedup slot on a ticker for the lifetime of the
+			// review so a long job (LLM reviews routinely 5-10 min) does
+			// not let its own lease lapse and get stolen by the takeover
+			// path. The renewal goroutine's context is `renewCtx`, a
+			// child of the job's context that the `defer cancelRenew()`
+			// below explicitly cancels when this handler returns —
+			// `ReleaseDedup` itself does NOT cancel any context, the
+			// child-context cancel is what stops the loop. On a hard
+			// crash the goroutine dies with the pod and the lease becomes
+			// stale within ~leaseDurationSeconds, unblocking the next
+			// webhook delivery in seconds rather than minutes.
+			renewCtx, cancelRenew := context.WithCancel(ctx)
+			defer cancelRenew()
+			go c.dispatcher.RenewDedup(renewCtx, job.DedupKey)
+
 			return c.dispatcher.HandlePR(ctx, job.Provider, job.Repo, job.PR, job.CIPassed)
 		},
 	)
@@ -136,6 +169,25 @@ func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
 	if err := pool.Shutdown(shutdownCtx); err != nil {
 		logger.Errorf("worker pool shutdown error: %v", err)
 	}
+	// Release every dedup slot still held by workers the pool drain
+	// could not finish. Without this, jobs cancelled by the drain
+	// timeout leave their leases in etcd and block all future webhook
+	// deliveries for the same PR until the renewal-loop lapse + lease
+	// duration window elapses (≤60s per the K8s-Lease backend) — the
+	// safety net for whatever this call cannot release. Captured live
+	// at 2026-05-02T00:18Z where four orphaned leases blocked PR
+	// reviews for 12 minutes after a routine `kubectl rollout restart`.
+	//
+	// `releaseCtx` is built fresh from `context.Background()` so the
+	// release phase always gets its own bounded budget — `shutdownCtx`
+	// may already be expired or have very little budget left after
+	// `server.Shutdown` and `pool.Shutdown` consumed (or exceeded) the
+	// drain timeout, in which case passing it through would skip every
+	// `Forget` due to context cancellation and leave the leases in
+	// etcd anyway.
+	releaseCtx, releaseCancel := context.WithTimeout(context.Background(), releaseAllInFlightTimeout)
+	defer releaseCancel()
+	c.dispatcher.ReleaseAllInFlight(releaseCtx)
 
 	logger.Info("server stopped")
 }

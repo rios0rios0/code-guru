@@ -108,29 +108,42 @@ import (
 const leaseAPITimeout = 5 * time.Second
 
 // leaseDurationSeconds is the freshness window applied to every dedup
-// lease. The value MUST exceed the maximum wall-clock duration of a
-// review, because the takeover path treats any lease older than this
-// as "the holder crashed" and steals it — a duration shorter than the
-// review time would let a webhook delivery that arrives mid-review
-// take over an actively-held lease, putting two pods on the same PR
-// and producing the exact duplicate the dedup is supposed to prevent.
+// lease. After every `leaseRenewInterval` an in-flight review's
+// renewal goroutine `Update`s the lease's `renewTime`, so a healthy
+// pod's lease never expires from the takeover path's perspective.
+// When the pod dies (kill -9, OOM, SIGTERM-after-drain-timeout) the
+// renewal loop dies with it; the lease becomes takeover-eligible
+// `leaseDurationSeconds` after the last successful renewal — which
+// caps how long an orphaned lease blocks new webhook deliveries for
+// the same PR.
 //
-// 15 minutes is comfortably above the worst review wall-time the bot
-// has been observed to run (≈8 minutes outlier; typical p95 ≈90
-// seconds), with margin for traffic to the upstream AI provider
-// degrading without immediately breaking dedup correctness. On a
-// clean review the lease is `Delete`d explicitly AFTER
-// `submitter.Submit` succeeds AND the worker finishes (the pool
-// handler in the serve controller `defer`s the release), so the
-// duration is only material when the holder crashes — in which case
-// it bounds how long a crashed lease blocks new work. A future
-// "renew the lease while a long review is in progress" path
-// (`update`/`patch` already in the Role) would let this constant
-// drop back toward the typical p95 without breaking the
-// duration > review-wall-time invariant; today the simpler
-// no-renew implementation pays for that with a longer blocking
-// window after a crash.
-const leaseDurationSeconds int32 = 900
+// `60s` keeps that orphan-recovery window short while still leaving
+// generous headroom over `leaseRenewInterval (30s) + leaseAPITimeout
+// (5s) + jitter`, so a transient API-server blip during a review
+// cannot orphan an in-flight lease. Operationally observed orphan
+// windows before this fix landed went up to 12 minutes; with
+// `60s + leaseRenewInterval` the worst case drops to ≤60s after a
+// crashed pod's last successful renewal.
+const leaseDurationSeconds int32 = 60
+
+// leaseRenewInterval is how often an in-flight review's renewal
+// goroutine refreshes the lease's `renewTime` via `Get` + `Update`.
+// MUST be strictly less than `leaseDurationSeconds - leaseAPITimeout`
+// so a single missed renewal (e.g. the API server is slow) does not
+// let the lease expire while the pod is still alive. The 2× ratio
+// (renew at half the freshness window) follows the standard K8s
+// lease-renewal pattern (see `k8s.io/client-go/tools/leaderelection`
+// for the same shape) and gives one full retry budget per window.
+const leaseRenewInterval = 30 * time.Second
+
+// Compile-time invariant: a successful renewal must always land
+// before the freshness window closes, otherwise an in-flight review's
+// own lease would be eligible for takeover by the next webhook for
+// the same PR. The `leaseAPITimeout` headroom covers a single slow
+// `Update` round-trip; jitter beyond that is absorbed by the next
+// scheduled tick of the renewal loop.
+const _ uint = uint(int64(leaseDurationSeconds)*int64(time.Second)) -
+	uint(int64(leaseRenewInterval)+int64(leaseAPITimeout))
 
 // k8sNameMaxLen mirrors RFC 1123 subdomain limits enforced by the K8s
 // API server. Lease names that exceed this are rejected with
@@ -156,6 +169,11 @@ type LeaseClient interface {
 	Create(ctx context.Context, lease *coordinationv1.Lease, opts metav1.CreateOptions) (*coordinationv1.Lease, error)
 	Get(ctx context.Context, name string, opts metav1.GetOptions) (*coordinationv1.Lease, error)
 	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
+	// Update is required by the renewal loop. The bot's RBAC `Role`
+	// already grants `update` on `coordination.k8s.io/leases` (see the
+	// shared-toolbox terraform `kubernetes_role.lease_dedup`), so adding
+	// it to the client interface costs no operator action.
+	Update(ctx context.Context, lease *coordinationv1.Lease, opts metav1.UpdateOptions) (*coordinationv1.Lease, error)
 }
 
 // K8sLeaseDedup is the cross-pod WebhookDedup backend. It treats a
@@ -371,6 +389,89 @@ func (d *K8sLeaseDedup) Forget(ctx context.Context, key string) {
 		"key":        key,
 		"lease_name": leaseName,
 	}).Warnf("dedup-lease: Delete failed (%v) — lease will block new deliveries until the next caller's takeover path runs Get + UID-conditioned Delete", err)
+}
+
+// Renew refreshes the held lease's `renewTime` so a long-running review
+// holds its dedup slot beyond a single `leaseDurationSeconds` window.
+// The serve controller's worker handler kicks off a goroutine that calls
+// Renew on a `leaseRenewInterval` ticker for every in-flight job; that
+// goroutine exits when the job's context is cancelled (which the
+// `defer ReleaseDedup` also triggers). The ratio of `renew interval :
+// freshness window = 1:2` follows the standard K8s leader-election
+// pattern (`k8s.io/client-go/tools/leaderelection`) and gives the
+// renewer one full retry budget per window.
+//
+// Renew is best-effort. The contract is "renewal failures MUST NOT panic
+// or kill the loop" — a transient API-server blip must not orphan an
+// in-flight review's lease. Failures log at warn so an operator can
+// correlate; a `NotFound` is logged at debug because it is the expected
+// shape when a takeover from another pod has just stolen the lease (in
+// which case the next webhook for this PR will go to the new holder, not
+// us). On every other error path we keep the loop running — the next
+// tick may succeed and we still hold the slot until then.
+func (d *K8sLeaseDedup) Renew(ctx context.Context, key string) {
+	leaseName := sanitizeLeaseName(key)
+	callCtx, cancel := context.WithTimeout(ctx, leaseAPITimeout)
+	defer cancel()
+
+	// `Get` first so the `Update` carries the current `ResourceVersion`
+	// (mandatory for conflict-detection on K8s updates) and the existing
+	// `holderIdentity` / `acquireTime` round-trip unchanged. A separate
+	// `Patch` verb would avoid the round-trip but the `LeaseClient`
+	// interface kept the surface small — `Get` + `Update` is well under
+	// one second of latency in practice and matches the shape
+	// `SeenRecently` already uses for the takeover path.
+	existing, err := d.client.Get(callCtx, leaseName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		logger.WithFields(logger.Fields{
+			"key":        key,
+			"lease_name": leaseName,
+		}).Debugf("dedup-lease: Renew Get returned NotFound — lease was likely released or stolen; the renewal loop will keep trying until the worker cancels it")
+		return
+	}
+	if err != nil {
+		d.logRenewError(key, leaseName, "Get", err)
+		return
+	}
+
+	now := metav1.NewMicroTime(time.Now())
+	existing.Spec.RenewTime = &now
+
+	if _, updateErr := d.client.Update(callCtx, existing, metav1.UpdateOptions{}); updateErr != nil {
+		// Update racing with Forget / takeover Delete returns NotFound;
+		// that is the expected shape, not a fault. Drop to debug so
+		// shutdown / takeover scenarios stay quiet in operator logs.
+		if apierrors.IsNotFound(updateErr) {
+			logger.WithFields(logger.Fields{
+				"key":        key,
+				"lease_name": leaseName,
+			}).Debugf("dedup-lease: Renew Update returned NotFound — lease was concurrently released or stolen; nothing to refresh")
+			return
+		}
+		d.logRenewError(key, leaseName, "Update", updateErr)
+	}
+}
+
+// logRenewError centralises the warn-vs-debug decision for transient
+// renewal failures so the Get and Update branches stay in sync. Errors
+// caused by the loop's own context being cancelled (the documented
+// shutdown path: `defer cancelRenew()` on job completion, or the
+// `context.WithTimeout` running out under a wedged API server) are
+// logged at debug because they are exactly what the contract expects;
+// every other error logs at warn so an operator scanning logs sees the
+// API-server blips that warrant investigation.
+func (d *K8sLeaseDedup) logRenewError(key, leaseName, op string, err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		logger.WithFields(logger.Fields{
+			"key":        key,
+			"lease_name": leaseName,
+		}).Debugf("dedup-lease: Renew %s aborted by ctx (%v) — expected during shutdown / job completion", op, err)
+		return
+	}
+	logger.WithFields(logger.Fields{
+		"key":        key,
+		"lease_name": leaseName,
+	}).Warnf("dedup-lease: Renew %s failed (%v) — keeping the loop alive; the next tick may succeed", op, err)
 }
 
 // sanitizeLeaseName converts an arbitrary dedup key (e.g.
