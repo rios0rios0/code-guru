@@ -46,6 +46,14 @@ type ReviewOptions struct {
 	// AI. When true, drafts go through the full review path. Wired from
 	// settings.AI.ReviewDrafts at each call site.
 	ReviewDrafts bool
+
+	// UserMentioned signals that this review run was triggered by a
+	// user comment that contained `@code-guru` (handled by the comment-
+	// event webhook). When true, the review-once gate is bypassed even
+	// if the bot has already posted a "review complete" annotation —
+	// the user has explicitly asked for another pass. Push-triggered
+	// reviews (the default) leave this false so the gate applies.
+	UserMentioned bool
 }
 
 // ReviewCommand orchestrates a single PR review.
@@ -87,13 +95,8 @@ func (c *ReviewCommand) Execute(
 	// thread that will never get a completion annotation. The verdict
 	// is intentionally `comment` (not `approve` / `reject`) so any
 	// downstream native-review submission also short-circuits.
-	if pr.IsDraft && !opts.ReviewDrafts {
-		logger.Infof("PR #%d is a draft, skipping review (set ai.review_drafts=true to override)", pr.ID)
-		return &entities.ReviewResult{
-			PullRequestURL: pr.URL,
-			Verdict:        "comment",
-			Summary:        "skipped: pull request is a draft",
-		}, nil
+	if skip := c.shouldSkip(ctx, provider, repo, pr, opts); skip != nil {
+		return skip, nil
 	}
 
 	// fetch changed files
@@ -706,6 +709,7 @@ func (c *ReviewCommand) postComments(
 	}
 
 	comments := c.dropStaleComments(ctx, provider, repo, prID, result.Comments)
+	comments = c.dropDuplicateComments(ctx, provider, repo, prID, comments)
 
 	for _, comment := range comments {
 		if comment.Line > 0 {
@@ -729,6 +733,94 @@ func (c *ReviewCommand) postComments(
 			}
 		}
 	}
+}
+
+// shouldSkip evaluates the early-return gates that fire BEFORE the
+// command fetches files or calls the AI. Returns a non-nil result
+// (with the documented `verdict=comment` short-circuit shape) when the
+// review must be skipped; returns nil when the normal flow proceeds.
+// Pulled out of `Execute` so the method's cognitive complexity stays
+// inside the linter's budget — each gate's reasoning lives next to its
+// own check instead of being interleaved with the AI pipeline below.
+//
+// Gate order:
+//
+//  1. Draft PRs (unless `ai.review_drafts=true`) — drafts are
+//     work-in-progress; reviewing them flooded operators with churn.
+//  2. Review-once (unless the run was triggered by an `@code-guru`
+//     mention) — if the bot already posted a "review complete" /
+//     "review failed" marker, follow-up pushes to the same PR are
+//     no-ops by design; users that want a re-review say so explicitly
+//     via the mention path.
+func (c *ReviewCommand) shouldSkip(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	pr forgeEntities.PullRequestDetail,
+	opts ReviewOptions,
+) *entities.ReviewResult {
+	if pr.IsDraft && !opts.ReviewDrafts {
+		logger.Infof("PR #%d is a draft, skipping review (set ai.review_drafts=true to override)", pr.ID)
+		return &entities.ReviewResult{
+			PullRequestURL: pr.URL,
+			Verdict:        "comment",
+			Summary:        "skipped: pull request is a draft",
+		}
+	}
+	if !opts.UserMentioned && c.alreadyReviewed(ctx, provider, repo, pr.ID) {
+		logger.Infof("PR #%d already reviewed; skipping (mention @code-guru in a comment to request re-review)", pr.ID)
+		return &entities.ReviewResult{
+			PullRequestURL: pr.URL,
+			Verdict:        "comment",
+			Summary:        "skipped: pull request has already been reviewed; mention @code-guru in a comment to request re-review",
+		}
+	}
+	return nil
+}
+
+// alreadyReviewed reports whether the bot has already posted a "review
+// complete" / "review failed" annotation on the PR. The check fetches
+// every PR-wide comment via gitforge's `ListPullRequestComments` and
+// scans the bodies for `support.HasCompletedReviewMarker` — the marker
+// substring lives on the bodies the bot itself writes, so the check is
+// self-contained and needs no per-PR state outside of what the PR
+// already carries.
+//
+// Best-effort: a fetch failure logs at warn and returns false so the
+// gate degrades to "process the webhook" — never worse than today's
+// no-gate baseline. The narrow `pullRequestCommentLister` interface
+// keeps the unit test surface small (a 1-method stub instead of a full
+// `forgeEntities.ReviewProvider`).
+func (c *ReviewCommand) alreadyReviewed(
+	ctx context.Context,
+	lister pullRequestCommentLister,
+	repo forgeEntities.Repository,
+	prID int,
+) bool {
+	comments, err := lister.ListPullRequestComments(ctx, repo, prID)
+	if err != nil {
+		logger.Warnf(
+			"PR #%d: ListPullRequestComments failed (%v); proceeding with review under the assumption nothing has been posted yet",
+			prID,
+			err,
+		)
+		return false
+	}
+	bodies := make([]string, 0, len(comments))
+	for _, comment := range comments {
+		bodies = append(bodies, comment.Body)
+	}
+	return support.HasCompletedReviewMarker(bodies)
+}
+
+// pullRequestCommentLister is the narrow subset of
+// `forgeEntities.ReviewProvider` that `alreadyReviewed` consumes.
+// Defined here so the test can pass a 1-method stub rather than build
+// a full `ReviewProvider` for every row.
+type pullRequestCommentLister interface {
+	ListPullRequestComments(
+		ctx context.Context, repo forgeEntities.Repository, prID int,
+	) ([]forgeEntities.PullRequestComment, error)
 }
 
 // pullRequestStatusGetter is the narrow subset of
@@ -773,6 +865,96 @@ func isPullRequestClosed(
 	default:
 		return false
 	}
+}
+
+// dropDuplicateComments removes any inline comment whose (file, line,
+// body-fingerprint) triple is already present on the PR. The fingerprint
+// is the first `commentDedupBodyPrefix` bytes of the body — long enough
+// that two genuinely different findings on the same line are kept, short
+// enough that minor wording drift between runs (e.g. the AI rewords the
+// remediation paragraph but the lede stays the same) is treated as a
+// duplicate. Without this filter every push triggers a new review and
+// every prior inline comment gets a duplicate twin — the operationally
+// observed flooding pattern that drove this filter's introduction.
+//
+// PR-wide comments (`Line <= 0`, posted via `PostPullRequestComment`)
+// are NOT deduped here: they are typically the summary or per-issue
+// PR-wide annotations, and the F2 review-once gate above already
+// suppresses entire follow-up reviews so the only path that lands a
+// duplicate PR-wide comment is the explicit `@code-guru` re-review,
+// which the user asked for.
+//
+// Best-effort: a fetch failure logs at warn and falls back to posting
+// every comment so the behaviour never regresses below today's
+// no-dedup baseline. The narrow `pullRequestCommentLister` interface
+// keeps the unit test surface small.
+func (c *ReviewCommand) dropDuplicateComments(
+	ctx context.Context,
+	lister pullRequestCommentLister,
+	repo forgeEntities.Repository,
+	prID int,
+	comments []entities.ReviewComment,
+) []entities.ReviewComment {
+	if len(comments) == 0 {
+		return comments
+	}
+	existing, err := lister.ListPullRequestComments(ctx, repo, prID)
+	if err != nil {
+		logger.Warnf(
+			"PR #%d: skipping comment dedup, ListPullRequestComments failed: %v — posting all %d comments",
+			prID, err, len(comments),
+		)
+		return comments
+	}
+	seen := make(map[string]struct{}, len(existing))
+	for _, e := range existing {
+		if e.Line <= 0 || e.FilePath == "" {
+			continue
+		}
+		seen[commentDedupKey(e.FilePath, e.Line, e.Body)] = struct{}{}
+	}
+	kept := make([]entities.ReviewComment, 0, len(comments))
+	dropped := 0
+	for _, comment := range comments {
+		if comment.Line <= 0 || comment.FilePath == "" {
+			kept = append(kept, comment)
+			continue
+		}
+		if _, dup := seen[commentDedupKey(comment.FilePath, comment.Line, comment.Body)]; dup {
+			dropped++
+			continue
+		}
+		kept = append(kept, comment)
+	}
+	if dropped > 0 {
+		logger.Infof(
+			"PR #%d: dropped %d duplicate inline comment(s) already posted on the PR",
+			prID, dropped,
+		)
+	}
+	return kept
+}
+
+// commentDedupBodyPrefix bounds how many leading bytes of the body
+// participate in the dedup fingerprint. 200 is enough to capture the
+// distinguishing lede of a typical review comment ("[high] this could
+// be nil-checked when …") while ignoring the remediation paragraph,
+// which the AI tends to reword between runs even when the underlying
+// finding is the same. A future tuning pass could swap this for a
+// normalised hash if false-positive rates climb in production.
+const commentDedupBodyPrefix = 200
+
+// commentDedupKey builds the fingerprint used by `dropDuplicateComments`
+// to decide whether a proposed comment matches an existing one.
+// Exposed via `export_test.go` so the test suite can pin the
+// fingerprint shape without driving the full filter.
+func commentDedupKey(filePath string, line int, body string) string {
+	normalisedPath := normalizeFilePath(filePath)
+	prefix := body
+	if len(prefix) > commentDedupBodyPrefix {
+		prefix = prefix[:commentDedupBodyPrefix]
+	}
+	return fmt.Sprintf("%s:%d:%s", normalisedPath, line, prefix)
 }
 
 // dropStaleComments removes any review comment whose `FilePath` is not in
