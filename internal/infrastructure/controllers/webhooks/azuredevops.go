@@ -84,6 +84,15 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if event.EventType == adoCommentEventType {
+		// Comment-event payload has a different resource shape (a
+		// `comment` block alongside the `pullRequest` block instead of
+		// the PR lifecycle's flat `resource`). Dispatched separately so
+		// the mention detection + bypass-the-dedup-gate path is
+		// readable end-to-end.
+		d.handleADOComment(w, r, body)
+		return
+	}
 	if !isSupportedADOEvent(event.EventType) {
 		logger.Debugf("ADO webhook: ignoring event type %q", event.EventType)
 		w.WriteHeader(http.StatusNoContent)
@@ -214,6 +223,13 @@ func isSupportedADOEvent(eventType string) bool {
 	return ok
 }
 
+// adoCommentEventType is the Azure DevOps event type fired when a user
+// posts (or edits / deletes) a comment on a PR. Carried as a constant
+// instead of joining `supportedADOEvents` because the resource shape
+// differs from the PR-lifecycle events and the handler dispatches it
+// down a separate code path (mention detection + bypass-the-dedup-gate).
+const adoCommentEventType = "ms.vss-code.git-pullrequest-comment-event"
+
 // closedADOPullRequestStatuses lists the values of `resource.status` that
 // represent a Pull Request the bot must NOT review. The check is
 // allow-list-by-rejection: anything not in this set (including the empty
@@ -342,3 +358,114 @@ func (d *Dispatcher) hydrateSkinnyADOResource(
 // `Debug` because the rejection itself is already a rare, operator-level
 // signal and the body cap keeps the per-request cost bounded.
 const adoRawBodyLogLimit = 32768
+
+// adoCommentEvent is the minimal subset of the ADO comment-event
+// payload the mention handler needs. Different shape from `adoEvent`:
+// the resource carries a `comment` block (the new comment) alongside a
+// `pullRequest` block (the PR the comment was posted on), instead of
+// the PR lifecycle's flat `resource`.
+type adoCommentEvent struct {
+	EventType string `json:"eventType"`
+	Resource  struct {
+		Comment struct {
+			Content string `json:"content"`
+			Author  struct {
+				DisplayName string `json:"displayName"`
+				UniqueName  string `json:"uniqueName"`
+			} `json:"author"`
+		} `json:"comment"`
+		PullRequest struct {
+			PullRequestID int           `json:"pullRequestId"`
+			Title         string        `json:"title"`
+			URL           string        `json:"url"`
+			Repository    adoRepository `json:"repository"`
+		} `json:"pullRequest"`
+	} `json:"resource"`
+}
+
+// handleADOComment processes the ADO comment event so a user can
+// request a re-review by mentioning `@code-guru` in a PR comment. The
+// handler:
+//
+//   - returns 400 on malformed JSON;
+//   - returns 204 when the comment body does not contain `@code-guru`
+//     (preserves the operator's signal-to-noise ratio in pod logs);
+//   - returns 403 when the org / project is off-allowlist;
+//   - enqueues the matched comment as a job with `UserMentioned=true`
+//     so the review-once gate is bypassed on the worker side.
+//
+// The dedup gate is intentionally NOT applied to mention deliveries:
+// a user posting `@code-guru` is an explicit re-review request and
+// should always go through.
+func (d *Dispatcher) handleADOComment(w http.ResponseWriter, _ *http.Request, body []byte) {
+	var event adoCommentEvent
+	if err := json.Unmarshal(body, &event); err != nil {
+		writeError(w, http.StatusBadRequest, "malformed JSON")
+		return
+	}
+	if !support.HasMention(event.Resource.Comment.Content) {
+		logger.Debugf(
+			"ADO webhook: comment on PR #%d has no @code-guru mention; skipping",
+			event.Resource.PullRequest.PullRequestID,
+		)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	pr := event.Resource.PullRequest
+	org := extractADOOrganization(pr.Repository.RemoteURL)
+	if !d.allowedOrganization(org) || !d.allowedProject(pr.Repository.Project.Name) {
+		logger.Warnf("ADO webhook: org=%q project=%q not on allowlist (mention path)",
+			org, pr.Repository.Project.Name)
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	token := d.findToken("azuredevops")
+	if token == "" {
+		logger.Errorf("ADO webhook: no azuredevops PAT configured (mention path)")
+		writeError(w, http.StatusInternalServerError, "no PAT configured")
+		return
+	}
+
+	provider, providerErr := d.providerRegistry.GetReviewProvider("azuredevops", token)
+	if providerErr != nil {
+		logger.Errorf("ADO webhook: failed to build provider (mention path): %v", providerErr)
+		writeError(w, http.StatusInternalServerError, "provider error")
+		return
+	}
+
+	repo := forgeEntities.Repository{
+		ID:           pr.Repository.ID,
+		Name:         pr.Repository.Name,
+		Organization: org,
+		Project:      pr.Repository.Project.Name,
+		RemoteURL:    pr.Repository.RemoteURL,
+	}
+	job := Job{
+		Provider: provider,
+		Repo:     repo,
+		PR: forgeEntities.PullRequestDetail{
+			PullRequest: forgeEntities.PullRequest{
+				ID:    pr.PullRequestID,
+				Title: pr.Title,
+				URL:   pr.URL,
+			},
+		},
+		UserMentioned: true,
+	}
+
+	if submitErr := d.submitter.Submit(job); submitErr != nil {
+		logger.Errorf("ADO webhook: submit failed (mention path): %v", submitErr)
+		writeError(w, http.StatusServiceUnavailable, "queue full")
+		return
+	}
+	commenter := event.Resource.Comment.Author.UniqueName
+	if commenter == "" {
+		commenter = event.Resource.Comment.Author.DisplayName
+	}
+	logger.Infof("ADO webhook: enqueued mention re-review for PR #%d in %s/%s (commenter=%s)",
+		pr.PullRequestID, repo.Project, repo.Name, commenter)
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = fmt.Fprint(w, "accepted")
+}

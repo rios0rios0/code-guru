@@ -63,6 +63,17 @@ var (
 	// pin the verdict-mapping + flag-gating + soft-fail contract
 	// without going through the full Execute flow.
 	SubmitNativeReview = (*ReviewCommand).submitNativeReview
+
+	// DropDuplicateComments is the method-value re-export of the
+	// comment-dedup pass so external tests can drive the filter
+	// (file+line+body-prefix fingerprint) without standing up the
+	// full postComments pipeline.
+	DropDuplicateComments = (*ReviewCommand).dropDuplicateComments
+
+	// CommentDedupKey is the pure fingerprint helper backing the
+	// filter — exposed so tests can pin the leading-slash
+	// normalisation and the `commentDedupBodyPrefix` cap.
+	CommentDedupKey = commentDedupKey
 )
 
 // AnnotationThreadStatus re-exports the unexported package constant

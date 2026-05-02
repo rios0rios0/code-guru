@@ -24,6 +24,7 @@ A CLI tool that leverages AI (Claude Code CLI or OpenAI API) to automatically re
 - YAML `frontmatter` in rules for file-glob-based filtering (e.g., `paths: ["**/*.go"]`)
 - Inline and general PR comments posted back via gitforge
 - Three modes: single PR review, batch review-all, and discover (list open PRs)
+- Reviews each PR exactly once — subsequent pushes are no-ops. To request a re-review, post a PR comment that mentions `@code-guru` (case-insensitive). The bot dedups inline comments against its own previous postings on re-reviews so the PR is never flooded
 
 ## Installation
 

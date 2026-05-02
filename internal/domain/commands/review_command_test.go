@@ -740,6 +740,11 @@ type recordingReviewProvider struct {
 	submissions            []forgeEntities.ReviewSubmission
 	submitErr              error
 	getPullRequestFilesErr error
+	// existingComments seeds the response of `ListPullRequestComments`
+	// so tests can simulate an already-reviewed PR (review-once gate)
+	// or pre-existing inline comments (dedup pass) without standing up
+	// a full provider. Nil means "no comments on the PR yet".
+	existingComments []forgeEntities.PullRequestComment
 }
 
 type recordedPRComment struct {
@@ -777,6 +782,14 @@ func (r *recordingReviewProvider) GetPullRequestFiles(
 		return nil, r.getPullRequestFilesErr
 	}
 	return nil, nil
+}
+
+func (r *recordingReviewProvider) ListPullRequestComments(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	_ int,
+) ([]forgeEntities.PullRequestComment, error) {
+	return r.existingComments, nil
 }
 
 func TestAnnotationThreadStatusContract(t *testing.T) {
@@ -1030,5 +1043,161 @@ func TestExecuteSkipsDraftsByDefault(t *testing.T) {
 			"with ReviewDrafts=true the draft branch must be bypassed; Execute must surface the deterministic provider error from GetPullRequestFiles")
 		assert.Nil(t, result)
 		assert.Empty(t, provider.submissions, "the command should stop on the deterministic provider error instead of skipping the draft")
+	})
+}
+
+func TestDropDuplicateComments(t *testing.T) {
+	t.Parallel()
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	const prID = 4242
+
+	t.Run("should drop a comment that matches an existing bot comment by file+line+body-prefix", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			existingComments: []forgeEntities.PullRequestComment{
+				{FilePath: "internal/foo.go", Line: 42, Body: "[high] this could be nil-checked"},
+			},
+		}
+		newComments := []entities.ReviewComment{
+			{FilePath: "internal/foo.go", Line: 42, Body: "[high] this could be nil-checked", Severity: "high"},
+			{FilePath: "internal/foo.go", Line: 99, Body: "[medium] consider extracting", Severity: "medium"},
+		}
+
+		// when
+		kept := commands.DropDuplicateComments(rc, context.Background(), provider, repo, prID, newComments)
+
+		// then
+		require.Len(t, kept, 1)
+		assert.Equal(t, 99, kept[0].Line, "the new comment on a different line must be kept")
+	})
+
+	t.Run("should keep PR-wide comments (Line <= 0) regardless of duplicates", func(t *testing.T) {
+		t.Parallel()
+
+		// given: PR-wide annotations are not subject to the dedup pass —
+		// the F2 review-once gate above already suppresses entire
+		// follow-up reviews, so the only path that lands a duplicate
+		// PR-wide comment is the explicit @code-guru re-review which the
+		// user asked for.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			existingComments: []forgeEntities.PullRequestComment{
+				{Body: "summary"},
+			},
+		}
+		newComments := []entities.ReviewComment{
+			{Line: 0, Body: "summary", Severity: "comment"},
+		}
+
+		// when
+		kept := commands.DropDuplicateComments(rc, context.Background(), provider, repo, prID, newComments)
+
+		// then
+		assert.Len(t, kept, 1, "PR-wide comments must always pass through the inline-only dedup")
+	})
+
+	t.Run("should normalize the leading slash on file paths", func(t *testing.T) {
+		t.Parallel()
+
+		// given: ADO's threads carry `filePath: "/internal/foo.go"`
+		// while the AI emits `internal/foo.go` — both must dedup.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			existingComments: []forgeEntities.PullRequestComment{
+				{FilePath: "/internal/foo.go", Line: 42, Body: "[high] nil-check"},
+			},
+		}
+		newComments := []entities.ReviewComment{
+			{FilePath: "internal/foo.go", Line: 42, Body: "[high] nil-check", Severity: "high"},
+		}
+
+		// when
+		kept := commands.DropDuplicateComments(rc, context.Background(), provider, repo, prID, newComments)
+
+		// then
+		assert.Empty(t, kept, "leading-slash normalisation must let the dedup match")
+	})
+}
+
+func TestExecuteReviewOnceGate(t *testing.T) {
+	t.Parallel()
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	pr := forgeEntities.PullRequestDetail{
+		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "feat", URL: "https://example/pr/4242"},
+	}
+
+	t.Run("should skip when an existing review-complete marker is present and the user has not mentioned the bot", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			existingComments: []forgeEntities.PullRequestComment{
+				{Body: "✅ **Code Guru review complete.** Verdict: `approve`"},
+			},
+		}
+
+		// when
+		result, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{})
+
+		// then
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "comment", result.Verdict)
+		assert.Contains(t, result.Summary, "already been reviewed")
+		assert.Empty(t, provider.calls, "no marker / annotation should fire when the gate skips the review")
+		assert.Empty(t, provider.submissions, "no native review should fire when the gate skips the review")
+	})
+
+	t.Run("should NOT skip when UserMentioned is true even with an existing review-complete marker", func(t *testing.T) {
+		t.Parallel()
+
+		// given: same precondition as the previous row plus a user
+		// mention. The deterministic GetPullRequestFiles error proves
+		// Execute reached past the gate (the user-requested re-review
+		// went through).
+		expectedErr := errors.New("get pull request files failed")
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			existingComments: []forgeEntities.PullRequestComment{
+				{Body: "✅ **Code Guru review complete.** Verdict: `approve`"},
+			},
+			getPullRequestFilesErr: expectedErr,
+		}
+
+		// when
+		result, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			UserMentioned: true,
+		})
+
+		// then
+		require.Error(t, err)
+		assert.ErrorIs(t, err, expectedErr,
+			"UserMentioned=true must bypass the review-once gate so the re-review reaches GetPullRequestFiles")
+		assert.Nil(t, result)
+	})
+
+	t.Run("should proceed when no marker is present", func(t *testing.T) {
+		t.Parallel()
+
+		// given: empty existingComments + the deterministic error
+		// proves Execute walked past the gate down the normal path.
+		expectedErr := errors.New("get pull request files failed")
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			getPullRequestFilesErr: expectedErr,
+		}
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{})
+
+		// then
+		require.Error(t, err)
+		assert.ErrorIs(t, err, expectedErr)
 	})
 }

@@ -11,6 +11,8 @@ import (
 
 	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
 	logger "github.com/sirupsen/logrus"
+
+	"github.com/rios0rios0/codeguru/internal/support"
 )
 
 // ghEvent is the minimal subset of a GitHub pull_request webhook payload that
@@ -61,6 +63,40 @@ var supportedGitHubActions = map[string]struct{}{
 	"reopened":    {},
 }
 
+// ghIssueCommentEvent is the minimal subset of a GitHub `issue_comment`
+// webhook payload that the mention handler needs. GitHub treats every
+// PR as an issue, so PR-wide comments fire `issue_comment` (the
+// `issue.pull_request` field is set when the underlying issue is a PR
+// — absent on regular issue comments, which the handler ignores).
+type ghIssueCommentEvent struct {
+	Action       string         `json:"action"`
+	Comment      ghComment      `json:"comment"`
+	Issue        ghIssue        `json:"issue"`
+	Repository   ghRepository   `json:"repository"`
+	Installation ghInstallation `json:"installation"`
+}
+
+type ghComment struct {
+	Body string `json:"body"`
+	User ghUser `json:"user"`
+}
+
+type ghIssue struct {
+	Number      int                 `json:"number"`
+	Title       string              `json:"title"`
+	HTMLURL     string              `json:"html_url"`
+	State       string              `json:"state"`
+	User        ghUser              `json:"user"`
+	PullRequest *ghIssuePullRequest `json:"pull_request"`
+}
+
+// ghIssuePullRequest is GitHub's marker that an issue is actually a
+// PR. The `url` field is populated when the issue is a PR; the struct
+// is non-nil for PR comment events and nil for plain issue comments.
+type ghIssuePullRequest struct {
+	URL string `json:"url"`
+}
+
 const fullNameSegments = 2
 
 // HandleGitHub processes GitHub App webhook events.
@@ -96,7 +132,18 @@ func (d *Dispatcher) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if eventType := r.Header.Get("X-Github-Event"); eventType != "pull_request" {
+	switch eventType := r.Header.Get("X-Github-Event"); eventType {
+	case "pull_request":
+		// continues below with the existing push-triggered path
+	case "issue_comment":
+		// `@code-guru` mention handler — dispatched separately because
+		// the payload shape differs from `pull_request`. On match it
+		// enqueues a job with `UserMentioned=true` so the review-once
+		// gate is bypassed; on non-match (no mention, comment on a
+		// non-PR issue, action != created) it returns 204 No Content.
+		d.handleGitHubIssueComment(w, r, body)
+		return
+	default:
 		logger.Debugf("GitHub webhook: ignoring event %q", eventType)
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -165,6 +212,90 @@ func parseGitHubEvent(w http.ResponseWriter, body []byte) (ghEvent, bool) {
 		return ghEvent{}, false
 	}
 	return event, true
+}
+
+// handleGitHubIssueComment processes the `issue_comment` event so a
+// user can request a re-review by mentioning `@code-guru` in a PR
+// comment. The handler:
+//
+//   - returns 400 on malformed JSON;
+//   - returns 204 on actions other than `created` (the bot does not
+//     re-trigger on comment edits / deletions);
+//   - returns 204 when the comment is on a regular issue (not a PR) —
+//     `issue.pull_request` is nil for those;
+//   - returns 204 when the comment body does NOT contain `@code-guru`
+//     (preserves the operator's signal-to-noise ratio in pod logs);
+//   - enqueues the matched comment as a job with `UserMentioned=true`
+//     so the review-once gate is bypassed on the worker side.
+//
+// The dedup gate is intentionally NOT applied to mention deliveries:
+// a user posting `@code-guru` is an explicit re-review request and
+// should always go through.
+func (d *Dispatcher) handleGitHubIssueComment(w http.ResponseWriter, r *http.Request, body []byte) {
+	var event ghIssueCommentEvent
+	if err := json.Unmarshal(body, &event); err != nil {
+		writeError(w, http.StatusBadRequest, "malformed JSON")
+		return
+	}
+	if event.Action != "created" {
+		logger.Debugf("GitHub webhook: ignoring issue_comment action %q", event.Action)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if event.Issue.PullRequest == nil {
+		logger.Debugf("GitHub webhook: ignoring issue_comment on a non-PR issue #%d", event.Issue.Number)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if !support.HasMention(event.Comment.Body) {
+		logger.Debugf("GitHub webhook: issue_comment on PR #%d has no @code-guru mention; skipping", event.Issue.Number)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	owner, repoName, splitErr := splitFullName(event.Repository.FullName)
+	if splitErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid repository.full_name")
+		return
+	}
+	if !d.allowedOrganization(owner) {
+		logger.Warnf("GitHub webhook: org %q not on allowlist (mention path)", owner)
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	provider, ok := d.buildGitHubProvider(r.Context(), w, event.Installation.ID)
+	if !ok {
+		return
+	}
+
+	job := Job{
+		Provider: provider,
+		Repo: forgeEntities.Repository{
+			Name:         repoName,
+			Organization: owner,
+			RemoteURL:    event.Repository.HTMLURL,
+		},
+		PR: forgeEntities.PullRequestDetail{
+			PullRequest: forgeEntities.PullRequest{
+				ID:    event.Issue.Number,
+				Title: event.Issue.Title,
+				URL:   event.Issue.HTMLURL,
+			},
+			Author: event.Issue.User.Login,
+		},
+		UserMentioned: true,
+	}
+
+	if submitErr := d.submitter.Submit(job); submitErr != nil {
+		logger.Errorf("GitHub webhook: submit failed (mention path): %v", submitErr)
+		writeError(w, http.StatusServiceUnavailable, "queue full")
+		return
+	}
+	logger.Infof("GitHub webhook: enqueued mention re-review for PR #%d in %s/%s (commenter=%s)",
+		job.PR.ID, owner, repoName, event.Comment.User.Login)
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = fmt.Fprint(w, "accepted")
 }
 
 // buildGitHubProvider resolves a token (App installation or PAT) and returns the
