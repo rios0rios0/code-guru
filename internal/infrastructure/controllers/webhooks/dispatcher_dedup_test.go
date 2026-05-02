@@ -4,7 +4,6 @@ package webhooks_test
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -14,49 +13,8 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers/webhooks"
+	doubles "github.com/rios0rios0/codeguru/test/infrastructure/doubles/repositories"
 )
-
-// recordingDedup is a hand-rolled WebhookDedup stub that records every
-// call so the dispatcher-level tests can pin (1) which keys reach the
-// backend, (2) the renewal cadence, and (3) the mass-release contract.
-// Mutex-guarded because the renewal goroutine fires from a background
-// context.
-type recordingDedup struct {
-	mu         sync.Mutex
-	seen       []string
-	forgotten  []string
-	renewed    []string
-	seenResult bool // what SeenRecently returns; default false (acquire)
-}
-
-func newRecordingDedup() *recordingDedup { return &recordingDedup{} }
-
-func (r *recordingDedup) SeenRecently(_ context.Context, key string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.seen = append(r.seen, key)
-	return r.seenResult
-}
-
-func (r *recordingDedup) Forget(_ context.Context, key string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.forgotten = append(r.forgotten, key)
-}
-
-func (r *recordingDedup) Renew(_ context.Context, key string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.renewed = append(r.renewed, key)
-}
-
-func (r *recordingDedup) snapshot() (seen, forgotten, renewed []string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]string(nil), r.seen...),
-		append([]string(nil), r.forgotten...),
-		append([]string(nil), r.renewed...)
-}
 
 func newDispatcherWithDedup(t *testing.T, dedup webhooks.WebhookDedup) *webhooks.Dispatcher {
 	t.Helper()
@@ -80,7 +38,7 @@ func TestRenewDedupLoopExitsOnContextCancel(t *testing.T) {
 		// proves the cancel-stop contract instead of pinning the
 		// cadence value (the cadence is exported via
 		// DedupRenewIntervalForTest for the invariant test).
-		dedup := newRecordingDedup()
+		dedup := doubles.NewStubWebhookDedup()
 		d := newDispatcherWithDedup(t, dedup)
 
 		// when: kick off the loop, then cancel before the first tick.
@@ -99,7 +57,7 @@ func TestRenewDedupLoopExitsOnContextCancel(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("RenewDedup did not return after ctx cancel")
 		}
-		_, _, renewed := dedup.snapshot()
+		_, _, renewed := dedup.Snapshot()
 		assert.Empty(t, renewed, "loop must not Renew before the first tick")
 	})
 
@@ -107,7 +65,7 @@ func TestRenewDedupLoopExitsOnContextCancel(t *testing.T) {
 		t.Parallel()
 
 		// given
-		dedup := newRecordingDedup()
+		dedup := doubles.NewStubWebhookDedup()
 		d := newDispatcherWithDedup(t, dedup)
 
 		// when: an empty DedupKey on a Job (e.g. tests that build a
@@ -118,7 +76,7 @@ func TestRenewDedupLoopExitsOnContextCancel(t *testing.T) {
 		})
 
 		// then
-		_, _, renewed := dedup.snapshot()
+		_, _, renewed := dedup.Snapshot()
 		assert.Empty(t, renewed)
 	})
 }
@@ -130,14 +88,14 @@ func TestReleaseAllInFlight(t *testing.T) {
 		t.Parallel()
 
 		// given
-		dedup := newRecordingDedup()
+		dedup := doubles.NewStubWebhookDedup()
 		d := newDispatcherWithDedup(t, dedup)
 
 		// when
 		d.ReleaseAllInFlight(context.Background())
 
 		// then
-		_, forgotten, _ := dedup.snapshot()
+		_, forgotten, _ := dedup.Snapshot()
 		assert.Empty(t, forgotten, "ReleaseAllInFlight on an empty set must be a no-op")
 	})
 
@@ -150,7 +108,7 @@ func TestReleaseAllInFlight(t *testing.T) {
 		// distinct keys cover the iteration path so a future implementer
 		// who switches the underlying map for an ordered slice or a
 		// channel still hits the "every key" assertion.
-		dedup := newRecordingDedup()
+		dedup := doubles.NewStubWebhookDedup()
 		d := newDispatcherWithDedup(t, dedup)
 		d.MarkInFlightForTest("ado:repo-1:42")
 		d.MarkInFlightForTest("ado:repo-1:43")
@@ -160,7 +118,7 @@ func TestReleaseAllInFlight(t *testing.T) {
 		d.ReleaseAllInFlight(context.Background())
 
 		// then
-		_, forgotten, _ := dedup.snapshot()
+		_, forgotten, _ := dedup.Snapshot()
 		assert.ElementsMatch(t,
 			[]string{"ado:repo-1:42", "ado:repo-1:43", "gh:org/repo:7"},
 			forgotten,
@@ -171,7 +129,7 @@ func TestReleaseAllInFlight(t *testing.T) {
 		t.Parallel()
 
 		// given
-		dedup := newRecordingDedup()
+		dedup := doubles.NewStubWebhookDedup()
 		d := newDispatcherWithDedup(t, dedup)
 		d.MarkInFlightForTest("ado:repo-1:42")
 
@@ -181,7 +139,7 @@ func TestReleaseAllInFlight(t *testing.T) {
 
 		// then: the first release Forgets once; the second is a no-op
 		// because the set was drained under the lock.
-		_, forgotten, _ := dedup.snapshot()
+		_, forgotten, _ := dedup.Snapshot()
 		assert.Equal(t, []string{"ado:repo-1:42"}, forgotten,
 			"the set must be drained on the first release so the second is a no-op")
 	})
