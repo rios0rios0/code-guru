@@ -151,12 +151,19 @@ func (c *ReviewCommand) Execute(
 
 	logger.Infof("loaded %d rules for languages: %v", len(rules), languages)
 
-	// build review request and call AI
+	// build review request and call AI. On the mention re-review path
+	// we additionally walk the bot's prior inline review threads (and
+	// every reply on each one) so the LLM can read the dialogue before
+	// deciding whether to repeat / withdraw / respond to its earlier
+	// findings — see `support.BuildReviewConversation` for the shape.
+	// First-pass reviews leave Conversation nil so the prompt is
+	// byte-for-byte the same as before this change landed.
 	request := entities.ReviewRequest{
-		Repository:  repo,
-		PullRequest: pr,
-		Diffs:       diffs,
-		Rules:       rules,
+		Repository:   repo,
+		PullRequest:  pr,
+		Diffs:        diffs,
+		Rules:        rules,
+		Conversation: c.buildConversation(ctx, provider, repo, pr.ID, opts),
 	}
 
 	result, err := c.aiReviewer.ReviewDiff(ctx, request)
@@ -776,6 +783,51 @@ func (c *ReviewCommand) shouldSkip(
 		}
 	}
 	return nil
+}
+
+// buildConversation walks the PR's existing inline comments and groups
+// the bot's prior review threads + every reply into the
+// `[]entities.ReviewThread` shape the LLM prompt renders before the
+// diff. The walk only fires on the `@code-guru` mention path
+// (`opts.UserMentioned == true`); first-pass reviews return nil so the
+// prompt is byte-for-byte identical to its pre-conversation shape and
+// the LLM's output distribution does not drift on the path where there
+// is nothing for the model to read.
+//
+// Best-effort: a `ListPullRequestComments` failure logs at warn and
+// returns nil so the re-review still runs (the LLM just loses the
+// dialogue context — it will likely re-emit the same finding, which
+// the F3 dedup will then drop). The tighter degraded mode beats the
+// alternative of failing the whole review when the comments-list call
+// has a transient blip.
+func (c *ReviewCommand) buildConversation(
+	ctx context.Context,
+	lister pullRequestCommentLister,
+	repo forgeEntities.Repository,
+	prID int,
+	opts ReviewOptions,
+) []entities.ReviewThread {
+	if !opts.UserMentioned {
+		return nil
+	}
+	comments, err := lister.ListPullRequestComments(ctx, repo, prID)
+	if err != nil {
+		logger.Warnf(
+			"PR #%d: ListPullRequestComments failed during re-review conversation walk (%v); proceeding without prior conversation context",
+			prID,
+			err,
+		)
+		return nil
+	}
+	threads := support.BuildReviewConversation(comments, support.IsBotAuthor())
+	if len(threads) > 0 {
+		logger.Infof(
+			"PR #%d: re-review will include %d prior bot thread(s) as LLM conversation context",
+			prID,
+			len(threads),
+		)
+	}
+	return threads
 }
 
 // alreadyReviewed reports whether the bot has already posted a "review

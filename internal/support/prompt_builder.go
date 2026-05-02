@@ -123,9 +123,67 @@ func BuildSystemPrompt(rules []entities.Rule) string {
 
 // BuildUserPrompt assembles the user prompt from PR metadata and file diffs.
 func BuildUserPrompt(title string, sourceBranch string, targetBranch string, diffs []entities.FileDiff) string {
+	return BuildUserPromptWithConversation(title, sourceBranch, targetBranch, diffs, nil)
+}
+
+// BuildUserPromptWithConversation extends BuildUserPrompt with a
+// "Prior review conversation" block rendered before the diff. Each
+// thread shows the original bot comment plus every reply in
+// chronological order so the LLM can read the dialogue (often the
+// user pushing back, asking for clarification, or saying the comment
+// was wrong) before deciding whether to repeat / withdraw / respond
+// to the original finding.
+//
+// When threads is empty the function produces the same output as
+// BuildUserPrompt — no "Prior review conversation" header, no extra
+// guidance lines. This keeps first-pass reviews byte-for-byte
+// identical to the pre-conversation prompt and avoids drifting the
+// LLM's output shape on the path where there is no conversation to
+// read.
+//
+// On a re-review the conversation block is followed by a short
+// instruction telling the model to integrate the dialogue: address
+// the user's points instead of repeating the same finding, withdraw
+// when the user has correctly identified a false positive, and
+// surface only NEW findings the diff actually warrants. The response
+// schema is unchanged — the model still emits a `comments` array; the
+// instruction tunes WHICH comments it emits, not HOW.
+func BuildUserPromptWithConversation(
+	title string,
+	sourceBranch string,
+	targetBranch string,
+	diffs []entities.FileDiff,
+	threads []entities.ReviewThread,
+) string {
 	var prompt strings.Builder
 	fmt.Fprintf(&prompt, "Pull request: %s\n", title)
 	fmt.Fprintf(&prompt, "Branch: %s -> %s\n\n", sourceBranch, targetBranch)
+
+	if len(threads) > 0 {
+		prompt.WriteString("Prior review conversation (your previous comments and the user's replies):\n\n")
+		for _, t := range threads {
+			fmt.Fprintf(&prompt, "### Thread on %s:%d\n", t.FilePath, t.Line)
+			for i, msg := range t.Comments {
+				prefix := "Reply"
+				if i == 0 {
+					prefix = "Original comment"
+				}
+				fmt.Fprintf(&prompt, "**%s by %s:**\n", prefix, msg.Author)
+				prompt.WriteString(msg.Body)
+				prompt.WriteString("\n\n")
+			}
+		}
+		prompt.WriteString(
+			"Re-review guidance: a user has requested a fresh look at this PR. Read the conversation above before re-emitting comments. ",
+		)
+		prompt.WriteString("Do NOT re-post the same finding when the user has acknowledged or addressed it; ")
+		prompt.WriteString("withdraw findings when the user has correctly identified a false positive; ")
+		prompt.WriteString(
+			"respond inline (as a new comment on the same file:line) only when the user asked you a direct question or pushed back. ",
+		)
+		prompt.WriteString("Surface NEW findings in addition that the diff warrants but the prior pass missed.\n\n")
+	}
+
 	prompt.WriteString("Files changed:\n\n")
 
 	for _, diff := range diffs {

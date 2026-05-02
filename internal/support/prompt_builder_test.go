@@ -148,3 +148,69 @@ func TestBuildUserPrompt(t *testing.T) {
 		assert.True(t, strings.Contains(result, "```diff"))
 	})
 }
+
+func TestBuildUserPromptWithConversation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should produce identical output to BuildUserPrompt when threads is empty", func(t *testing.T) {
+		t.Parallel()
+
+		// given: first-pass reviews must not drift the prompt shape
+		// just because the conversation field exists. Byte-for-byte
+		// equality with the unchanged helper proves the no-conversation
+		// path is a true superset / identity.
+		diffs := []entities.FileDiff{{Path: "a.go", Diff: "@@ -1,1 +1,1 @@", Language: "go"}}
+
+		// when
+		legacy := support.BuildUserPrompt("title", "feat", "main", diffs)
+		conversation := support.BuildUserPromptWithConversation("title", "feat", "main", diffs, nil)
+
+		// then
+		assert.Equal(t, legacy, conversation)
+	})
+
+	t.Run("should render a Prior review conversation block before the diff", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		diffs := []entities.FileDiff{{Path: "a.go", Diff: "@@ -1,1 +1,1 @@", Language: "go"}}
+		threads := []entities.ReviewThread{
+			{
+				FilePath: "a.go",
+				Line:     10,
+				Comments: []entities.ReviewMessage{
+					{Author: "code-guru[bot]", Body: "[high] consider nil-check"},
+					{Author: "alice", Body: "we already handle nil above"},
+				},
+			},
+		}
+
+		// when
+		got := support.BuildUserPromptWithConversation("title", "feat", "main", diffs, threads)
+
+		// then
+		assert.Contains(t, got, "Prior review conversation")
+		assert.Contains(t, got, "Thread on a.go:10")
+		assert.Contains(t, got, "Original comment by code-guru[bot]")
+		assert.Contains(t, got, "Reply by alice")
+		assert.Contains(t, got, "we already handle nil above")
+		assert.Contains(t, got, "Re-review guidance")
+		// The conversation block must precede the diff so the LLM
+		// reads the dialogue first.
+		assert.Less(t, strings.Index(got, "Prior review conversation"), strings.Index(got, "Files changed"))
+	})
+
+	t.Run("should NOT emit the Re-review guidance when there are no threads", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		diffs := []entities.FileDiff{{Path: "a.go", Diff: "@@ -1,1 +1,1 @@", Language: "go"}}
+
+		// when
+		got := support.BuildUserPromptWithConversation("title", "feat", "main", diffs, nil)
+
+		// then
+		assert.NotContains(t, got, "Re-review guidance",
+			"first-pass reviews must not see the re-review guidance text")
+	})
+}
