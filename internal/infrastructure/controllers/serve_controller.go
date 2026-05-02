@@ -116,7 +116,7 @@ func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
 			defer cancelRenew()
 			go c.dispatcher.RenewDedup(renewCtx, job.DedupKey)
 
-			return c.dispatcher.HandlePR(ctx, job.Provider, job.Repo, job.PR, job.CIPassed)
+			return c.dispatcher.HandlePR(ctx, job.Provider, job.Repo, job.PR, job.CIPassed, job.UserMentioned)
 		},
 	)
 	c.dispatcher.SetSubmitter(pool)
