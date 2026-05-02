@@ -21,7 +21,7 @@ func TestBuildReviewConversation(t *testing.T) {
 		t.Parallel()
 
 		// given / when
-		got := support.BuildReviewConversation(nil, isBot)
+		got := support.BuildReviewConversation(nil, isBot, nil)
 
 		// then
 		assert.Nil(t, got)
@@ -36,7 +36,7 @@ func TestBuildReviewConversation(t *testing.T) {
 		}
 
 		// when
-		got := support.BuildReviewConversation(comments, nil)
+		got := support.BuildReviewConversation(comments, nil, nil)
 
 		// then
 		assert.Nil(t, got, "a nil predicate must short-circuit so the assembler stays defensive")
@@ -54,7 +54,7 @@ func TestBuildReviewConversation(t *testing.T) {
 		}
 
 		// when
-		threads := support.BuildReviewConversation(comments, isBot)
+		threads := support.BuildReviewConversation(comments, isBot, nil)
 
 		// then
 		require.Len(t, threads, 1)
@@ -77,7 +77,7 @@ func TestBuildReviewConversation(t *testing.T) {
 		}
 
 		// when
-		threads := support.BuildReviewConversation(comments, isBot)
+		threads := support.BuildReviewConversation(comments, isBot, nil)
 
 		// then
 		require.Len(t, threads, 1)
@@ -98,7 +98,7 @@ func TestBuildReviewConversation(t *testing.T) {
 		}
 
 		// when
-		threads := support.BuildReviewConversation(comments, isBot)
+		threads := support.BuildReviewConversation(comments, isBot, nil)
 
 		// then
 		assert.Empty(t, threads, "user-only threads must not pollute the LLM prompt")
@@ -115,7 +115,7 @@ func TestBuildReviewConversation(t *testing.T) {
 		}
 
 		// when
-		threads := support.BuildReviewConversation(comments, isBot)
+		threads := support.BuildReviewConversation(comments, isBot, nil)
 
 		// then
 		require.Len(t, threads, 3)
@@ -124,6 +124,44 @@ func TestBuildReviewConversation(t *testing.T) {
 		assert.Equal(t, "a.go", threads[1].FilePath)
 		assert.Equal(t, 20, threads[1].Line)
 		assert.Equal(t, "z.go", threads[2].FilePath)
+	})
+
+	t.Run("should drop threads anchored to files outside liveFiles", func(t *testing.T) {
+		t.Parallel()
+
+		// given: two bot-rooted threads on different files. Only one
+		// file is in the live set. The other thread must be dropped so
+		// the LLM does not see a stale anchor.
+		comments := []forgeEntities.PullRequestComment{
+			{ID: 1, Line: 10, FilePath: "a.go", Body: "[high] live", Author: "code-guru[bot]"},
+			{ID: 2, Line: 20, FilePath: "old.go", Body: "[high] stale anchor", Author: "code-guru[bot]"},
+		}
+		live := map[string]struct{}{"a.go": {}}
+
+		// when
+		threads := support.BuildReviewConversation(comments, isBot, live)
+
+		// then
+		require.Len(t, threads, 1)
+		assert.Equal(t, "a.go", threads[0].FilePath, "thread on file outside live diff must be dropped")
+	})
+
+	t.Run("should normalise leading slash when matching liveFiles", func(t *testing.T) {
+		t.Parallel()
+
+		// given: ADO returns paths with a leading slash; the diff side
+		// strips it. The filter must compare normalised forms so the
+		// thread is kept.
+		comments := []forgeEntities.PullRequestComment{
+			{ID: 1, Line: 10, FilePath: "/a.go", Body: "[high] live", Author: "code-guru[bot]"},
+		}
+		live := map[string]struct{}{"a.go": {}}
+
+		// when
+		threads := support.BuildReviewConversation(comments, isBot, live)
+
+		// then
+		require.Len(t, threads, 1)
 	})
 
 	t.Run("should resolve a multi-hop reply chain back to the bot root", func(t *testing.T) {
@@ -138,7 +176,7 @@ func TestBuildReviewConversation(t *testing.T) {
 		}
 
 		// when
-		threads := support.BuildReviewConversation(comments, isBot)
+		threads := support.BuildReviewConversation(comments, isBot, nil)
 
 		// then
 		require.Len(t, threads, 1)
@@ -157,8 +195,13 @@ func TestIsBotAuthor(t *testing.T) {
 		{name: "should match GitHub-shaped bot login", author: "code-guru[bot]", want: true},
 		{name: "should match Azure DevOps-shaped bot identity", author: "code-guru@example.com", want: true},
 		{name: "should be case-insensitive", author: "Code-Guru[bot]", want: true},
+		{name: "should match the bare identity (defensive)", author: "code-guru", want: true},
 		{name: "should reject a regular user", author: "alice", want: false},
-		{name: "should reject a similarly-named user", author: "code-guru-fan", want: true},
+		{name: "should reject a hyphenated user with the prefix", author: "code-guru-fan", want: false},
+		{name: "should reject a digit-suffixed user with the prefix", author: "code-guru99", want: false},
+		{name: "should reject when the prefix is in the middle of the name", author: "alice+code-guru@example.com", want: false},
+		{name: "should reject when the prefix is followed by a dot", author: "code-guru.dev", want: false},
+		{name: "should reject the empty author", author: "", want: false},
 	}
 
 	matcher := support.IsBotAuthor()

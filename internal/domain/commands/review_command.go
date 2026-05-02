@@ -163,7 +163,7 @@ func (c *ReviewCommand) Execute(
 		PullRequest:  pr,
 		Diffs:        diffs,
 		Rules:        rules,
-		Conversation: c.buildConversation(ctx, provider, repo, pr.ID, opts),
+		Conversation: c.buildConversation(ctx, provider, repo, pr.ID, diffs, opts),
 	}
 
 	result, err := c.aiReviewer.ReviewDiff(ctx, request)
@@ -805,6 +805,7 @@ func (c *ReviewCommand) buildConversation(
 	lister pullRequestCommentLister,
 	repo forgeEntities.Repository,
 	prID int,
+	diffs []entities.FileDiff,
 	opts ReviewOptions,
 ) []entities.ReviewThread {
 	if !opts.UserMentioned {
@@ -819,7 +820,16 @@ func (c *ReviewCommand) buildConversation(
 		)
 		return nil
 	}
-	threads := support.BuildReviewConversation(comments, support.IsBotAuthor())
+	// Live-file set lets the assembler drop conversation threads
+	// anchored to files the current diff no longer touches — the LLM
+	// would otherwise try to "respond" inline on stale anchors that
+	// the post-pipeline's dropStaleComments would then drop, wasting
+	// tokens.
+	liveFiles := make(map[string]struct{}, len(diffs))
+	for _, d := range diffs {
+		liveFiles[normalizeFilePath(d.Path)] = struct{}{}
+	}
+	threads := support.BuildReviewConversation(comments, support.IsBotAuthor(), liveFiles)
 	if len(threads) > 0 {
 		logger.Infof(
 			"PR #%d: re-review will include %d prior bot thread(s) as LLM conversation context",
