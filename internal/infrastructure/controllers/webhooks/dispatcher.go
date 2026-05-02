@@ -208,9 +208,16 @@ func (d *Dispatcher) ReleaseAllInFlight(ctx context.Context) {
 // RenewDedup runs the dedup-renewal loop for an in-flight job. The
 // serve controller's worker handler kicks off `go d.RenewDedup(ctx,
 // job.DedupKey)` for every job AFTER `dedupSeen` succeeded; the loop
-// PATCHes the dedup record's freshness window every
-// `dedupRenewInterval` until ctx is cancelled (which the
-// `defer ReleaseDedup` triggers when the worker handler returns).
+// refreshes the dedup record's freshness window every
+// `dedupRenewInterval` until ctx is cancelled. The cancellation comes
+// from the worker handler's `defer cancelRenew()` on a child context
+// it built specifically for the renewal loop — `ReleaseDedup` itself
+// does NOT cancel any context, and the worker pool passes a long-lived
+// base context to every job, so without that explicit child-context
+// cancel the loop would outlive the job. The pairing lives in
+// `serve_controller.go` (the worker handler builds `renewCtx`,
+// defers `cancelRenew()`, then defers `ReleaseDedup` so the lease
+// `Delete` runs after the renewal goroutine has stopped).
 //
 // Without this loop the K8s-Lease backend's `leaseDurationSeconds`
 // would have to be set above the worst-case review wall-time — which
