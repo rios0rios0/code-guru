@@ -24,7 +24,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Changed
 
-- bumped `gitforge` to the post-`ListPullRequestComments` revision so the `ReviewProvider.ListPullRequestComments` method backing the review-once gate, mention handler, and comment dedup is available
+- bumped `gitforge` to the post-`ListPullRequestComments` revision (now includes the Azure DevOps `X-Ms-Continuationtoken` pagination fix and the GitHub provider's corrected `ThreadID` mapping that walks the `in_reply_to_id` chain instead of reusing `pull_request_review_id`) so the review-once gate, mention handler, and comment dedup all see the full comment list and group inline threads correctly
 
 
 ### Fixed
