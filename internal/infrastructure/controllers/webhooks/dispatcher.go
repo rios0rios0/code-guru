@@ -329,12 +329,17 @@ func (d *Dispatcher) Settings() *entities.Settings {
 }
 
 // HandlePR performs a review of a single PR. Called by worker goroutines.
+// `userMentioned` signals the comment-event webhook path (a user comment
+// containing `@code-guru` triggered this run); when true, the review-once
+// gate in the command is bypassed so the user's explicit re-review request
+// goes through. Push-triggered jobs pass false so the gate applies.
 func (d *Dispatcher) HandlePR(
 	ctx context.Context,
 	provider forgeEntities.ReviewProvider,
 	repo forgeEntities.Repository,
 	pr forgeEntities.PullRequestDetail,
 	ciPassed bool,
+	userMentioned bool,
 ) error {
 	aiReviewer := d.aiFactory.Create(d.settings)
 	rulesRepo := d.rulesFactory.Create(d.settings)
@@ -344,6 +349,7 @@ func (d *Dispatcher) HandlePR(
 		CIPassed:           ciPassed,
 		SubmitNativeReview: d.settings.AI.NativeReviewSubmissionEnabled(),
 		ReviewDrafts:       d.settings.AI.ReviewDrafts,
+		UserMentioned:      userMentioned,
 	})
 	if err != nil {
 		return fmt.Errorf("review failed for PR #%d: %w", pr.ID, err)

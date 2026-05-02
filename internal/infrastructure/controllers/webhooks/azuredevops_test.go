@@ -789,3 +789,89 @@ func TestHandleAzureDevOpsPropagatesIsDraft(t *testing.T) {
 		assert.False(t, jobs[0].PR.IsDraft, "non-draft ADO payload must keep PR.IsDraft=false")
 	})
 }
+
+func adoCommentEventPayload(content string) string {
+	return fmt.Sprintf(`{
+  "eventType": "ms.vss-code.git-pullrequest-comment-event",
+  "resource": {
+    "comment": {
+      "content": %q,
+      "author": {"displayName": "Felipe", "uniqueName": "felipe@example"}
+    },
+    "pullRequest": {
+      "pullRequestId": 12159,
+      "title": "Add feature X",
+      "url": "https://dev.azure.com/ExampleOrg/Platform/_git/demo-repo/pullrequest/12159",
+      "repository": {
+        "id": %q,
+        "name": "demo-repo",
+        "remoteUrl": "https://dev.azure.com/ExampleOrg/Platform/_git/demo-repo",
+        "project": {"name": "Platform"}
+      }
+    }
+  }
+}`, content, adoRepoUUID)
+}
+
+func TestHandleAzureDevOpsCommentMention(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should enqueue a UserMentioned job when the comment contains @code-guru", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		body := adoCommentEventPayload("@code-guru please re-review the auth changes")
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		require.Equal(t, http.StatusAccepted, w.Code)
+		jobs := sub.Jobs()
+		require.Len(t, jobs, 1)
+		assert.True(t, jobs[0].UserMentioned, "ADO mention payload must set Job.UserMentioned=true")
+		assert.Equal(t, 12159, jobs[0].PR.ID)
+	})
+
+	t.Run("should respond 204 when the comment has no @code-guru mention", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		body := adoCommentEventPayload("LGTM, thanks!")
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 403 when the project is off-allowlist", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		settings := defaultADOSettings()
+		settings.Server.AllowedProjects = []string{"DifferentProject"}
+		body := adoCommentEventPayload("@code-guru please re-review")
+		d, sub := newDispatcherWithSettings(t, settings)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+}
