@@ -74,6 +74,12 @@ var (
 	// filter — exposed so tests can pin the leading-slash
 	// normalisation and the `commentDedupBodyPrefix` cap.
 	CommentDedupKey = commentDedupKey
+
+	// BuildConversation re-exports the per-command conversation walk
+	// helper so tests can pin (1) the UserMentioned gate, (2) the
+	// soft-fail-on-list-error contract, (3) the live-files filter,
+	// without standing up the full Execute flow.
+	BuildConversation = (*ReviewCommand).buildConversation
 )
 
 // AnnotationThreadStatus re-exports the unexported package constant

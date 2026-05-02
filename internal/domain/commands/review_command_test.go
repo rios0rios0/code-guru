@@ -745,6 +745,10 @@ type recordingReviewProvider struct {
 	// or pre-existing inline comments (dedup pass) without standing up
 	// a full provider. Nil means "no comments on the PR yet".
 	existingComments []forgeEntities.PullRequestComment
+	// listCommentsErr, when set, makes `ListPullRequestComments` return
+	// the error instead of `existingComments`. Used by the conversation
+	// walk's soft-fail-on-list-error test path.
+	listCommentsErr error
 }
 
 type recordedPRComment struct {
@@ -789,6 +793,9 @@ func (r *recordingReviewProvider) ListPullRequestComments(
 	_ forgeEntities.Repository,
 	_ int,
 ) ([]forgeEntities.PullRequestComment, error) {
+	if r.listCommentsErr != nil {
+		return nil, r.listCommentsErr
+	}
 	return r.existingComments, nil
 }
 
@@ -1199,5 +1206,102 @@ func TestExecuteReviewOnceGate(t *testing.T) {
 		// then
 		require.Error(t, err)
 		assert.ErrorIs(t, err, expectedErr)
+	})
+}
+
+func TestBuildConversation(t *testing.T) {
+	t.Parallel()
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	const prID = 4242
+	diffs := []entities.FileDiff{{Path: "internal/foo.go", Diff: "@@ -1,1 +1,1 @@", Language: "go"}}
+
+	t.Run("should return nil when UserMentioned is false", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a PR with several existing bot threads, but the run
+		// was push-triggered (no mention). The conversation walk must
+		// stay nil so first-pass review prompts are byte-for-byte
+		// identical to the pre-conversation shape.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			existingComments: []forgeEntities.PullRequestComment{
+				{ID: 1, Line: 10, FilePath: "internal/foo.go", Body: "[high] x", Author: "code-guru[bot]"},
+			},
+		}
+
+		// when
+		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID, diffs,
+			commands.ReviewOptions{UserMentioned: false})
+
+		// then
+		assert.Nil(t, got)
+	})
+
+	t.Run("should populate the conversation when UserMentioned is true", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			existingComments: []forgeEntities.PullRequestComment{
+				{ID: 1, Line: 10, FilePath: "internal/foo.go", Body: "[high] nil-check", Author: "code-guru[bot]"},
+				{ID: 2, Line: 10, FilePath: "internal/foo.go", Body: "we already handle that", Author: "alice", InReplyToID: 1},
+			},
+		}
+
+		// when
+		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID, diffs,
+			commands.ReviewOptions{UserMentioned: true})
+
+		// then
+		require.Len(t, got, 1)
+		assert.Equal(t, "internal/foo.go", got[0].FilePath)
+		assert.Equal(t, 10, got[0].Line)
+		require.Len(t, got[0].Comments, 2)
+		assert.Equal(t, "code-guru[bot]", got[0].Comments[0].Author)
+		assert.Equal(t, "alice", got[0].Comments[1].Author)
+	})
+
+	t.Run("should soft-fail to nil when ListPullRequestComments errors", func(t *testing.T) {
+		t.Parallel()
+
+		// given: contract is best-effort — a list error must not break
+		// the re-review; the F3 dedup catches any duplicates the LLM
+		// emits without context.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			listCommentsErr: errors.New("transient API blip"),
+		}
+
+		// when
+		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID, diffs,
+			commands.ReviewOptions{UserMentioned: true})
+
+		// then
+		assert.Nil(t, got, "list error must degrade to nil so the re-review still runs")
+	})
+
+	t.Run("should drop threads anchored to files outside the live diff", func(t *testing.T) {
+		t.Parallel()
+
+		// given: bot has prior comments on both a file in the current
+		// diff AND a file the PR no longer touches. Only the live one
+		// should reach the prompt.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			existingComments: []forgeEntities.PullRequestComment{
+				{ID: 1, Line: 10, FilePath: "internal/foo.go", Body: "[high] live", Author: "code-guru[bot]"},
+				{ID: 2, Line: 20, FilePath: "internal/old.go", Body: "[high] stale anchor", Author: "code-guru[bot]"},
+			},
+		}
+
+		// when
+		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID, diffs,
+			commands.ReviewOptions{UserMentioned: true})
+
+		// then
+		require.Len(t, got, 1, "thread anchored to a file outside the diff must be dropped")
+		assert.Equal(t, "internal/foo.go", got[0].FilePath)
 	})
 }
