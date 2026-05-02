@@ -114,6 +114,8 @@ github.com/rios0rios0/gitforge v0.9.7-0.20260501232308-3711bf85d3db h1:R3NKlP2FF
 github.com/rios0rios0/gitforge v0.9.7-0.20260501232308-3711bf85d3db/go.mod h1:ZB504xobtj+VtAipMS3zCSkDL0R+enkYATO6cy1LhT8=
 github.com/rios0rios0/gitforge v0.9.7-0.20260502021424-29fbc8ca405f h1:y95yXqwhT2BdkhmVAlelXUijQEyzn/pLrPzz/tJkxP4=
 github.com/rios0rios0/gitforge v0.9.7-0.20260502021424-29fbc8ca405f/go.mod h1:ZB504xobtj+VtAipMS3zCSkDL0R+enkYATO6cy1LhT8=
+github.com/rios0rios0/gitforge v0.9.7-0.20260502024930-8a99adfc0a70 h1:XIErq5PeSv8ddgkkMUVCvaFXrrNHt9MwlkJ1L17lKxM=
+github.com/rios0rios0/gitforge v0.9.7-0.20260502024930-8a99adfc0a70/go.mod h1:ZB504xobtj+VtAipMS3zCSkDL0R+enkYATO6cy1LhT8=
 github.com/rios0rios0/langforge v0.6.4 h1:h4oveXaSr5TSJ/xoE5EOTeuH31PHq1TCtIqqFmL+hDE=
 github.com/rios0rios0/langforge v0.6.4/go.mod h1:QHefw3xS25KCg5lYRgKXjfNdTstFQNO3tWogSHYFyo4=
 github.com/rios0rios0/testkit v0.2.0 h1:HT03bSFmpyLt8SRnPQD1cJk66mHWIV7QY0gI/fnTCLo=
