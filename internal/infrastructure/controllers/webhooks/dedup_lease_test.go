@@ -43,9 +43,11 @@ type fakeLeaseClient struct {
 	createErr   error // when non-nil AND not AlreadyExists, every Create returns this
 	deleteErr   error // when non-nil AND not NotFound, every Delete returns this
 	getErr      error // when non-nil AND not NotFound, every Get returns this
+	updateErr   error // when non-nil, every Update returns this
 	createCalls int
 	deleteCalls int
 	getCalls    int
+	updateCalls int
 }
 
 func newFakeLeaseClient() *fakeLeaseClient {
@@ -122,8 +124,34 @@ func (f *fakeLeaseClient) Delete(_ context.Context, name string, opts metav1.Del
 	return nil
 }
 
+func (f *fakeLeaseClient) Update(_ context.Context, lease *coordinationv1.Lease, _ metav1.UpdateOptions) (*coordinationv1.Lease, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updateCalls++
+	if f.updateErr != nil {
+		return nil, f.updateErr
+	}
+	existing, ok := f.leases[lease.Name]
+	if !ok {
+		return nil, apierrors.NewNotFound(
+			schema.GroupResource{Group: "coordination.k8s.io", Resource: "leases"},
+			lease.Name,
+		)
+	}
+	// Mirror the K8s API server: Update writes the supplied spec on top
+	// of the existing object's identity (UID stays). The renewal path
+	// only mutates `RenewTime`, but the fake honours whatever the
+	// caller wrote so a future test that wants to assert the full spec
+	// round-trip can do so.
+	stored := lease.DeepCopy()
+	stored.UID = existing.UID
+	f.leases[lease.Name] = stored
+	return stored, nil
+}
+
 func (f *fakeLeaseClient) WithCreateError(err error) *fakeLeaseClient { f.createErr = err; return f }
 func (f *fakeLeaseClient) WithDeleteError(err error) *fakeLeaseClient { f.deleteErr = err; return f }
+func (f *fakeLeaseClient) WithUpdateError(err error) *fakeLeaseClient { f.updateErr = err; return f }
 
 // AgeAllLeases backdates every stored lease's acquire/renew time so
 // the next takeover-path Get observes them as stale. Lets a test set
@@ -143,6 +171,22 @@ func (f *fakeLeaseClient) StoredCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.leases)
+}
+
+// findLeaseByKey returns the single stored lease in the fake (callers
+// pass the dedup key only as documentation — the production
+// `sanitizeLeaseName` produces a hash-suffixed name that the test does
+// not need to recompute). Fails the test if zero or multiple leases are
+// stored, so the caller can assume there is exactly one to inspect.
+func (f *fakeLeaseClient) findLeaseByKey(t *testing.T, _ string) *coordinationv1.Lease {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	require.Len(t, f.leases, 1, "test expected exactly one lease in the fake")
+	for _, lease := range f.leases {
+		return lease.DeepCopy()
+	}
+	return nil
 }
 
 // TestK8sLeaseDedup pins the cross-pod dedup contract. Every row
@@ -191,13 +235,13 @@ func TestK8sLeaseDedup(t *testing.T) {
 	t.Run("should take over a stale lease (previous holder crashed mid-review) and re-acquire", func(t *testing.T) {
 		// given: pod-a acquired the lease and then "crashed" — we
 		// simulate the crash by aging the stored lease past the
-		// 300-s leaseDurationSeconds. Without takeover this would
+		// `leaseDurationSeconds` (60s) freshness window. Without takeover this would
 		// block every future webhook for the PR forever because
 		// Kubernetes does not auto-delete Lease objects.
 		client := newFakeLeaseClient()
 		podA := webhooks.NewK8sLeaseDedup(client, "pod-a-crashed")
 		require.False(t, podA.SeenRecently(context.Background(), key), "precondition: pod-a acquires before crashing")
-		client.AgeAllLeases(2000) // far past the 900-s freshness window
+		client.AgeAllLeases(120) // far past the 60-s freshness window
 
 		podB := webhooks.NewK8sLeaseDedup(client, "pod-b")
 
@@ -333,5 +377,93 @@ func TestK8sLeaseDedup(t *testing.T) {
 				"lease names must end with an alphanumeric (RFC 1123)",
 			)
 		}
+	})
+}
+
+func TestK8sLeaseDedupRenew(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should refresh the lease's renewTime via Update", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		client := newFakeLeaseClient()
+		dedup := webhooks.NewK8sLeaseDedup(client, "pod-a")
+		require.False(t, dedup.SeenRecently(context.Background(), "key"))
+
+		// freeze the original RenewTime so we can compare against it
+		client.AgeAllLeases(5)
+
+		// when
+		dedup.Renew(context.Background(), "key")
+
+		// then: the Update path was exercised AND the stored RenewTime
+		// is now in the recent-past window (we refreshed it).
+		assert.Equal(t, 1, client.updateCalls)
+		stored := client.findLeaseByKey(t, "key")
+		require.NotNil(t, stored.Spec.RenewTime)
+		assert.WithinDuration(t, time.Now(), stored.Spec.RenewTime.Time, 2*time.Second,
+			"Renew must move RenewTime to roughly now")
+	})
+
+	t.Run("should keep the loop alive when the API server returns an error", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the contract says renewal failures must NOT panic and
+		// must NOT kill the loop — a transient API blip during a 5-min
+		// review must not orphan the lease. The helper just needs to
+		// return; the loop's outer context manages liveness.
+		client := newFakeLeaseClient()
+		require.False(t, webhooks.NewK8sLeaseDedup(client, "pod-a").
+			SeenRecently(context.Background(), "key"))
+		client.WithUpdateError(errors.New("503 service unavailable"))
+
+		// when / then
+		require.NotPanics(t, func() {
+			webhooks.NewK8sLeaseDedup(client, "pod-a").Renew(context.Background(), "key")
+		})
+		assert.Equal(t, 1, client.updateCalls, "the error path still attempted the Update before logging")
+	})
+
+	t.Run("should be a no-op when the lease was already released", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a renewer that races with `Forget` (the worker handler
+		// completed and the deferred ReleaseDedup ran) must not
+		// resurrect the lease on a subsequent Renew tick.
+		client := newFakeLeaseClient()
+		dedup := webhooks.NewK8sLeaseDedup(client, "pod-a")
+		require.False(t, dedup.SeenRecently(context.Background(), "key"))
+		dedup.Forget(context.Background(), "key")
+
+		// when
+		dedup.Renew(context.Background(), "key")
+
+		// then: Get returned NotFound, no Update was attempted, no
+		// resurrection.
+		assert.Equal(t, 0, client.updateCalls)
+		assert.Empty(t, client.leases, "Renew must NOT resurrect a released lease")
+	})
+}
+
+func TestLeaseDurationAndRenewIntervalInvariant(t *testing.T) {
+	t.Parallel()
+
+	// Pin the load-bearing invariant: a single Renew tick + one full
+	// API timeout must always land before the lease's freshness window
+	// closes, otherwise an in-flight review's own lease becomes
+	// takeover-eligible while the holder is still alive — exactly the
+	// double-review failure mode the dedup is supposed to prevent.
+	t.Run("should keep leaseDurationSeconds > leaseRenewInterval + leaseAPITimeout", func(t *testing.T) {
+		t.Parallel()
+
+		// given / when
+		duration := time.Duration(webhooks.LeaseDurationSecondsForTest) * time.Second
+		renew := webhooks.LeaseRenewIntervalForTest
+		apiTimeout := webhooks.LeaseAPITimeoutForTest
+
+		// then
+		assert.Greater(t, duration, renew+apiTimeout,
+			"leaseDurationSeconds must exceed renew interval + API timeout so a single Update completes inside the freshness window")
 	})
 }

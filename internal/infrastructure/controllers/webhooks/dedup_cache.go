@@ -49,6 +49,18 @@ type WebhookDedup interface {
 	// caller order (including double-rollback in defensive cleanup
 	// paths).
 	Forget(ctx context.Context, key string)
+
+	// Renew refreshes a record made by `SeenRecently` so a long-running
+	// review can hold the dedup slot beyond a single freshness window.
+	// The K8s-Lease backend implements this as a `Patch` on the lease's
+	// `renewTime`; the in-memory backend treats it as a no-op because
+	// per-pod cache entries already last for the full TTL set at
+	// construction. Calling `Renew` for an unknown key MUST be a no-op
+	// so a renewer that races with `Forget` cannot resurrect a released
+	// slot. Implementations log renewal failures at warn but MUST NOT
+	// panic — a transient backend blip must not orphan an in-flight
+	// review.
+	Renew(ctx context.Context, key string)
 }
 
 // webhookDedupCache is a tiny in-memory TTL cache used to short-circuit
@@ -163,6 +175,14 @@ func (d *inMemoryDedup) SeenRecently(_ context.Context, key string) bool {
 func (d *inMemoryDedup) Forget(_ context.Context, key string) {
 	d.cache.forget(key)
 }
+
+// Renew is a no-op for the in-memory backend. The TTL set at construction
+// already covers the worst-case review wall-time on the single-pod path
+// (no cross-pod takeover to defend against), so there is nothing to
+// refresh — the entry simply lasts until `Forget` removes it. The method
+// exists only to satisfy the WebhookDedup contract; the K8s-Lease backend
+// is the one that actually patches the lease's `renewTime`.
+func (d *inMemoryDedup) Renew(_ context.Context, _ string) {}
 
 // newInMemoryDedup is the production constructor for the in-memory
 // dedup backend. It is the default the dispatcher wires when no
