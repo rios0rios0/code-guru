@@ -83,3 +83,29 @@ func (c *WebhookDedupCache) SeenRecently(key string, now time.Time) bool {
 // `submitter.Submit`) fails, calling Forget puts the cache back to
 // the state that lets a retry through.
 func (c *WebhookDedupCache) Forget(key string) { c.forget(key) }
+
+// Renewal-loop invariant constants re-exported so the
+// `TestLeaseDurationAndRenewIntervalInvariant` row in
+// `dedup_lease_test.go` can pin the relationship without forcing the
+// production constants to be exported. A future refactor that drops
+// the freshness window below `renew interval + API timeout` would
+// silently regress the dedup correctness — the invariant test fails
+// if that ever happens.
+var (
+	LeaseDurationSecondsForTest = leaseDurationSeconds
+	LeaseRenewIntervalForTest   = leaseRenewInterval
+	LeaseAPITimeoutForTest      = leaseAPITimeout
+)
+
+// DedupRenewIntervalForTest re-exports the dispatcher-level renewal
+// cadence so tests can assert the loop's tick frequency without
+// timing-sensitive sleeps.
+var DedupRenewIntervalForTest = dedupRenewInterval
+
+// MarkInFlightForTest exposes the unexported `trackInFlight` helper so
+// external dispatcher tests can populate the in-flight set without
+// driving the full webhook handler stack. The production code only
+// calls `trackInFlight` from `dedupSeen` (after `SeenRecently` returns
+// false); the test analogue avoids the SeenRecently call so the test
+// can assert the populated `ReleaseAllInFlight` path in isolation.
+func (d *Dispatcher) MarkInFlightForTest(key string) { d.trackInFlight(key) }
