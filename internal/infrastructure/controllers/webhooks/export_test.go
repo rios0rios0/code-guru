@@ -101,3 +101,11 @@ var (
 // cadence so tests can assert the loop's tick frequency without
 // timing-sensitive sleeps.
 var DedupRenewIntervalForTest = dedupRenewInterval
+
+// MarkInFlightForTest exposes the unexported `trackInFlight` helper so
+// external dispatcher tests can populate the in-flight set without
+// driving the full webhook handler stack. The production code only
+// calls `trackInFlight` from `dedupSeen` (after `SeenRecently` returns
+// false); the test analogue avoids the SeenRecently call so the test
+// can assert the populated `ReleaseAllInFlight` path in isolation.
+func (d *Dispatcher) MarkInFlightForTest(key string) { d.trackInFlight(key) }

@@ -30,6 +30,14 @@ const (
 	// not orphan their dedup leases for long.
 	defaultShutdownTimeout   = 90 * time.Second
 	defaultReadHeaderTimeout = 10 * time.Second
+	// releaseAllInFlightTimeout caps the dedup mass-release phase that
+	// runs after `pool.Shutdown` returns. Built off a fresh
+	// `context.Background()` so the budget is independent of the drain
+	// timeout (which may already be exhausted by long-running review
+	// cancellations). 15 s is enough for tens of `Forget` round-trips
+	// against the K8s API server while staying short enough that pod
+	// termination does not stretch SLA-visibly.
+	releaseAllInFlightTimeout = 15 * time.Second
 )
 
 // ServeController handles the "serve" subcommand for the webhook server.
@@ -96,8 +104,11 @@ func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
 			// Renew the dedup slot on a ticker for the lifetime of the
 			// review so a long job (LLM reviews routinely 5-10 min) does
 			// not let its own lease lapse and get stolen by the takeover
-			// path. The renewal goroutine's context is the job's context,
-			// so the deferred ReleaseDedup above also stops it; on a hard
+			// path. The renewal goroutine's context is `renewCtx`, a
+			// child of the job's context that the `defer cancelRenew()`
+			// below explicitly cancels when this handler returns —
+			// `ReleaseDedup` itself does NOT cancel any context, the
+			// child-context cancel is what stops the loop. On a hard
 			// crash the goroutine dies with the pod and the lease becomes
 			// stale within ~leaseDurationSeconds, unblocking the next
 			// webhook delivery in seconds rather than minutes.
@@ -166,7 +177,17 @@ func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
 	// safety net for whatever this call cannot release. Captured live
 	// at 2026-05-02T00:18Z where four orphaned leases blocked PR
 	// reviews for 12 minutes after a routine `kubectl rollout restart`.
-	c.dispatcher.ReleaseAllInFlight(shutdownCtx)
+	//
+	// `releaseCtx` is built fresh from `context.Background()` so the
+	// release phase always gets its own bounded budget — `shutdownCtx`
+	// may already be expired or have very little budget left after
+	// `server.Shutdown` and `pool.Shutdown` consumed (or exceeded) the
+	// drain timeout, in which case passing it through would skip every
+	// `Forget` due to context cancellation and leave the leases in
+	// etcd anyway.
+	releaseCtx, releaseCancel := context.WithTimeout(context.Background(), releaseAllInFlightTimeout)
+	defer releaseCancel()
+	c.dispatcher.ReleaseAllInFlight(releaseCtx)
 
 	logger.Info("server stopped")
 }

@@ -127,10 +127,10 @@ const leaseAPITimeout = 5 * time.Second
 const leaseDurationSeconds int32 = 60
 
 // leaseRenewInterval is how often an in-flight review's renewal
-// goroutine PATCHes the lease's `renewTime`. MUST be strictly less
-// than `leaseDurationSeconds - leaseAPITimeout` so a single missed
-// renewal (e.g. the API server is slow) does not let the lease
-// expire while the pod is still alive. The 2× ratio
+// goroutine refreshes the lease's `renewTime` via `Get` + `Update`.
+// MUST be strictly less than `leaseDurationSeconds - leaseAPITimeout`
+// so a single missed renewal (e.g. the API server is slow) does not
+// let the lease expire while the pod is still alive. The 2× ratio
 // (renew at half the freshness window) follows the standard K8s
 // lease-renewal pattern (see `k8s.io/client-go/tools/leaderelection`
 // for the same shape) and gives one full retry budget per window.
@@ -416,11 +416,11 @@ func (d *K8sLeaseDedup) Renew(ctx context.Context, key string) {
 
 	// `Get` first so the `Update` carries the current `ResourceVersion`
 	// (mandatory for conflict-detection on K8s updates) and the existing
-	// `holderIdentity` / `acquireTime` round-trip unchanged. A `Patch`
-	// would avoid the round-trip but the `LeaseClient` interface kept
-	// the surface small — `Get` + `Update` is well under one second of
-	// latency in practice and matches the shape `SeenRecently` already
-	// uses for the takeover path.
+	// `holderIdentity` / `acquireTime` round-trip unchanged. A separate
+	// `Patch` verb would avoid the round-trip but the `LeaseClient`
+	// interface kept the surface small — `Get` + `Update` is well under
+	// one second of latency in practice and matches the shape
+	// `SeenRecently` already uses for the takeover path.
 	existing, err := d.client.Get(callCtx, leaseName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		logger.WithFields(logger.Fields{
@@ -430,10 +430,7 @@ func (d *K8sLeaseDedup) Renew(ctx context.Context, key string) {
 		return
 	}
 	if err != nil {
-		logger.WithFields(logger.Fields{
-			"key":        key,
-			"lease_name": leaseName,
-		}).Warnf("dedup-lease: Renew Get failed (%v) — keeping the loop alive; the next tick may succeed", err)
+		d.logRenewError(key, leaseName, "Get", err)
 		return
 	}
 
@@ -441,11 +438,40 @@ func (d *K8sLeaseDedup) Renew(ctx context.Context, key string) {
 	existing.Spec.RenewTime = &now
 
 	if _, updateErr := d.client.Update(callCtx, existing, metav1.UpdateOptions{}); updateErr != nil {
+		// Update racing with Forget / takeover Delete returns NotFound;
+		// that is the expected shape, not a fault. Drop to debug so
+		// shutdown / takeover scenarios stay quiet in operator logs.
+		if apierrors.IsNotFound(updateErr) {
+			logger.WithFields(logger.Fields{
+				"key":        key,
+				"lease_name": leaseName,
+			}).Debugf("dedup-lease: Renew Update returned NotFound — lease was concurrently released or stolen; nothing to refresh")
+			return
+		}
+		d.logRenewError(key, leaseName, "Update", updateErr)
+	}
+}
+
+// logRenewError centralises the warn-vs-debug decision for transient
+// renewal failures so the Get and Update branches stay in sync. Errors
+// caused by the loop's own context being cancelled (the documented
+// shutdown path: `defer cancelRenew()` on job completion, or the
+// `context.WithTimeout` running out under a wedged API server) are
+// logged at debug because they are exactly what the contract expects;
+// every other error logs at warn so an operator scanning logs sees the
+// API-server blips that warrant investigation.
+func (d *K8sLeaseDedup) logRenewError(key, leaseName, op string, err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		logger.WithFields(logger.Fields{
 			"key":        key,
 			"lease_name": leaseName,
-		}).Warnf("dedup-lease: Renew Update failed (%v) — keeping the loop alive; the next tick may succeed", updateErr)
+		}).Debugf("dedup-lease: Renew %s aborted by ctx (%v) — expected during shutdown / job completion", op, err)
+		return
 	}
+	logger.WithFields(logger.Fields{
+		"key":        key,
+		"lease_name": leaseName,
+	}).Warnf("dedup-lease: Renew %s failed (%v) — keeping the loop alive; the next tick may succeed", op, err)
 }
 
 // sanitizeLeaseName converts an arbitrary dedup key (e.g.
