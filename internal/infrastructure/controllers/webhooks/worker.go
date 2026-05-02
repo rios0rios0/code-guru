@@ -29,6 +29,14 @@ type Job struct {
 	// the lifetime of the etcd object. Empty when no dedup backend is
 	// wired (purely defensive — the production wiring always sets it).
 	DedupKey string
+	// UserMentioned signals that this job was triggered by a user
+	// comment containing `@code-guru` (the comment-event webhook path).
+	// When true, the dispatcher tells the review command to bypass the
+	// review-once gate so the user-requested re-review actually runs
+	// even if the bot already posted a "review complete" annotation.
+	// Push-triggered jobs leave this false so the gate applies and
+	// the PR is not flooded on every commit.
+	UserMentioned bool
 }
 
 // JobHandler processes a single Job. Returning an error logs the failure but does not

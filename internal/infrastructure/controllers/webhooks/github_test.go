@@ -374,3 +374,124 @@ func TestHandleGitHubPropagatesIsDraft(t *testing.T) {
 		assert.False(t, jobs[0].PR.IsDraft, "non-draft webhook payload must keep PR.IsDraft=false")
 	})
 }
+
+func ghIssueCommentPayload(body string) string {
+	return `{
+  "action": "created",
+  "comment": {
+    "body": ` + jsonString(body) + `,
+    "user": {"login": "felipe"}
+  },
+  "issue": {
+    "number": 12,
+    "title": "Add feature X",
+    "html_url": "https://github.com/rios0rios0/demo/pull/12",
+    "state": "open",
+    "user": {"login": "felipe"},
+    "pull_request": {"url": "https://api.github.com/repos/rios0rios0/demo/pulls/12"}
+  },
+  "repository": {
+    "name": "demo",
+    "full_name": "rios0rios0/demo",
+    "html_url": "https://github.com/rios0rios0/demo",
+    "owner": {"login": "rios0rios0"}
+  },
+  "installation": {"id": 1234}
+}`
+}
+
+// jsonString quotes a string for inline JSON literals; small helper so the
+// payload templates above stay readable.
+func jsonString(s string) string {
+	out := []byte(`"`)
+	for _, r := range s {
+		switch r {
+		case '"':
+			out = append(out, '\\', '"')
+		case '\\':
+			out = append(out, '\\', '\\')
+		case '\n':
+			out = append(out, '\\', 'n')
+		default:
+			out = append(out, []byte(string(r))...)
+		}
+	}
+	return string(append(out, '"'))
+}
+
+func TestHandleGitHubIssueCommentMention(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should enqueue a UserMentioned job when the comment contains @code-guru", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		body := ghIssueCommentPayload("@code-guru please re-review the auth changes")
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+		req := githubRequest(t, ghSecret, body, "issue_comment")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		require.Equal(t, http.StatusAccepted, w.Code)
+		jobs := sub.Jobs()
+		require.Len(t, jobs, 1)
+		assert.True(t, jobs[0].UserMentioned, "mention payload must set Job.UserMentioned=true")
+		assert.Equal(t, 12, jobs[0].PR.ID)
+	})
+
+	t.Run("should respond 204 when the comment has no @code-guru mention", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		body := ghIssueCommentPayload("LGTM, thanks!")
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+		req := githubRequest(t, ghSecret, body, "issue_comment")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 204 when the action is not 'created'", func(t *testing.T) {
+		t.Parallel()
+
+		// given: an edited / deleted comment must NOT re-trigger the
+		// review even when it contains the mention.
+		body := `{"action":"edited","comment":{"body":"@code-guru re-review","user":{"login":"felipe"}},"issue":{"number":12,"pull_request":{"url":"x"}},"repository":{"full_name":"rios0rios0/demo"},"installation":{"id":1}}`
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+		req := githubRequest(t, ghSecret, body, "issue_comment")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 204 when the comment is on a regular issue (not a PR)", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a real issue comment (no `pull_request` field on the
+		// issue) must NOT trigger the review.
+		body := `{"action":"created","comment":{"body":"@code-guru please review","user":{"login":"felipe"}},"issue":{"number":12},"repository":{"full_name":"rios0rios0/demo"},"installation":{"id":1}}`
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+		req := githubRequest(t, ghSecret, body, "issue_comment")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+}
