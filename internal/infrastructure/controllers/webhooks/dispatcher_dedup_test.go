@@ -4,7 +4,6 @@ package webhooks_test
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -23,12 +22,11 @@ import (
 // Mutex-guarded because the renewal goroutine fires from a background
 // context.
 type recordingDedup struct {
-	mu          sync.Mutex
-	seen        []string
-	forgotten   []string
-	renewed     []string
-	seenResult  bool // what SeenRecently returns; default false (acquire)
-	forgetError error
+	mu         sync.Mutex
+	seen       []string
+	forgotten  []string
+	renewed    []string
+	seenResult bool // what SeenRecently returns; default false (acquire)
 }
 
 func newRecordingDedup() *recordingDedup { return &recordingDedup{} }
@@ -128,43 +126,7 @@ func TestRenewDedupLoopExitsOnContextCancel(t *testing.T) {
 func TestReleaseAllInFlight(t *testing.T) {
 	t.Parallel()
 
-	t.Run("should Forget every key acquired since construction", func(t *testing.T) {
-		t.Parallel()
-
-		// given: drive `SeenRecently` through the public submit path
-		// is not available without the full handler stack, so the
-		// test acquires keys via the public surface that the handler
-		// itself uses — `dedupSeen` is unexported, so we drive it
-		// through the dedup stub directly and rely on `SetDedup` to
-		// have wired it. Specifically: the dispatcher's internal
-		// in-flight set is populated by `dedupSeen` (called by the
-		// webhook handlers); here we call SetDedup with a backend
-		// that records, then exercise the public ReleaseAllInFlight
-		// after manually marking keys as in-flight via the public
-		// rollback surface (calling SeenRecently on the dedup
-		// directly does not populate the dispatcher set).
-		//
-		// A simpler approach: call ReleaseAllInFlight on a fresh
-		// dispatcher with no in-flight keys and assert the no-op
-		// shape, then drive the populated case via the fact that
-		// `dedupSeen` returning false populates the set — which we
-		// can prove by going through HandleAzureDevOps in a sibling
-		// integration test. For the unit test here we cover (1) the
-		// no-op-on-empty path and (2) idempotency under
-		// double-release, which together pin the contract this
-		// helper has to honour.
-		dedup := newRecordingDedup()
-		d := newDispatcherWithDedup(t, dedup)
-
-		// when: release with nothing in flight
-		d.ReleaseAllInFlight(context.Background())
-
-		// then: no Forget calls (nothing to release) and no panic
-		_, forgotten, _ := dedup.snapshot()
-		assert.Empty(t, forgotten, "ReleaseAllInFlight on an empty set must be a no-op")
-	})
-
-	t.Run("should be idempotent under double-release", func(t *testing.T) {
+	t.Run("should be a no-op when no keys are in flight", func(t *testing.T) {
 		t.Parallel()
 
 		// given
@@ -172,28 +134,56 @@ func TestReleaseAllInFlight(t *testing.T) {
 		d := newDispatcherWithDedup(t, dedup)
 
 		// when
-		require.NotPanics(t, func() {
-			d.ReleaseAllInFlight(context.Background())
-			d.ReleaseAllInFlight(context.Background())
-		})
+		d.ReleaseAllInFlight(context.Background())
 
 		// then
 		_, forgotten, _ := dedup.snapshot()
-		assert.Empty(t, forgotten)
+		assert.Empty(t, forgotten, "ReleaseAllInFlight on an empty set must be a no-op")
 	})
 
-	t.Run("should not propagate Forget errors as panics", func(t *testing.T) {
+	t.Run("should Forget every in-flight key", func(t *testing.T) {
+		t.Parallel()
+
+		// given: populate the in-flight set via the test-only
+		// `MarkInFlightForTest` helper (production code populates it
+		// from `dedupSeen` after `SeenRecently` returns false). Three
+		// distinct keys cover the iteration path so a future implementer
+		// who switches the underlying map for an ordered slice or a
+		// channel still hits the "every key" assertion.
+		dedup := newRecordingDedup()
+		d := newDispatcherWithDedup(t, dedup)
+		d.MarkInFlightForTest("ado:repo-1:42")
+		d.MarkInFlightForTest("ado:repo-1:43")
+		d.MarkInFlightForTest("gh:org/repo:7")
+
+		// when
+		d.ReleaseAllInFlight(context.Background())
+
+		// then
+		_, forgotten, _ := dedup.snapshot()
+		assert.ElementsMatch(t,
+			[]string{"ado:repo-1:42", "ado:repo-1:43", "gh:org/repo:7"},
+			forgotten,
+			"every in-flight key must reach the dedup backend's Forget")
+	})
+
+	t.Run("should clear the set so a second release is a no-op", func(t *testing.T) {
 		t.Parallel()
 
 		// given
 		dedup := newRecordingDedup()
-		dedup.forgetError = errors.New("transient")
 		d := newDispatcherWithDedup(t, dedup)
+		d.MarkInFlightForTest("ado:repo-1:42")
 
-		// when / then
-		require.NotPanics(t, func() {
-			d.ReleaseAllInFlight(context.Background())
-		})
+		// when
+		d.ReleaseAllInFlight(context.Background())
+		d.ReleaseAllInFlight(context.Background())
+
+		// then: the first release Forgets once; the second is a no-op
+		// because the set was drained under the lock.
+		_, forgotten, _ := dedup.snapshot()
+		assert.Equal(t, []string{"ado:repo-1:42"}, forgotten,
+			"the set must be drained on the first release so the second is a no-op")
 	})
 }
 

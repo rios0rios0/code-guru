@@ -52,14 +52,15 @@ type WebhookDedup interface {
 
 	// Renew refreshes a record made by `SeenRecently` so a long-running
 	// review can hold the dedup slot beyond a single freshness window.
-	// The K8s-Lease backend implements this as a `Patch` on the lease's
-	// `renewTime`; the in-memory backend treats it as a no-op because
-	// per-pod cache entries already last for the full TTL set at
-	// construction. Calling `Renew` for an unknown key MUST be a no-op
-	// so a renewer that races with `Forget` cannot resurrect a released
-	// slot. Implementations log renewal failures at warn but MUST NOT
-	// panic — a transient backend blip must not orphan an in-flight
-	// review.
+	// The K8s-Lease backend implements this as a `Get` + `Update` on
+	// the lease's `renewTime` (full Update so the request carries the
+	// current `ResourceVersion` for conflict detection); the in-memory
+	// backend treats it as a no-op because per-pod cache entries already
+	// last for the full TTL set at construction. Calling `Renew` for an
+	// unknown key MUST be a no-op so a renewer that races with `Forget`
+	// cannot resurrect a released slot. Implementations log renewal
+	// failures at warn but MUST NOT panic — a transient backend blip
+	// must not orphan an in-flight review.
 	Renew(ctx context.Context, key string)
 }
 
