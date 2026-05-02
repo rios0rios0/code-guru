@@ -24,11 +24,21 @@ import (
 // rather than hard-coding a list, the caller passes a predicate so the
 // matcher stays out of this package and the assembler stays pure.
 //
+// `liveFiles` is the set of file paths in the current PR diff. Threads
+// anchored to a file outside that set are dropped — without the filter,
+// a re-review would see prior bot comments on lines that are no longer
+// in the diff and try to "respond" inline on a stale anchor (the
+// post-pipeline's `dropStaleComments` would then drop them, but only
+// after the LLM has already wasted tokens deliberating). Passing nil
+// keeps every thread regardless of file (used by tests that have no
+// diff to compare against).
+//
 // Algorithm:
 //
 //  1. Collect every comment whose author satisfies isBot AND that is a
-//     top-level inline comment (Line > 0, InReplyToID == 0). Each
-//     becomes a thread root.
+//     top-level inline comment (Line > 0, InReplyToID == 0) AND that
+//     is anchored to a file present in liveFiles. Each becomes a
+//     thread root.
 //  2. For every other inline comment whose InReplyToID points at one of
 //     those roots (directly or transitively via a chain of replies),
 //     append it to that thread's Comments.
@@ -44,6 +54,7 @@ import (
 func BuildReviewConversation(
 	comments []forgeEntities.PullRequestComment,
 	isBot func(author string) bool,
+	liveFiles map[string]struct{},
 ) []entities.ReviewThread {
 	if len(comments) == 0 || isBot == nil {
 		return nil
@@ -56,24 +67,7 @@ func BuildReviewConversation(
 		byID[c.ID] = c
 	}
 
-	// Discover thread roots: top-level inline comments authored by the
-	// bot. ThreadID is the platform-specific stable identifier for the
-	// conversation (gitforge derives it from the root comment ID), so
-	// it doubles as the key the reply walk attaches to.
-	roots := map[int64]*entities.ReviewThread{}
-	for _, c := range comments {
-		if c.Line <= 0 || c.InReplyToID != 0 || !isBot(c.Author) {
-			continue
-		}
-		roots[c.ID] = &entities.ReviewThread{
-			FilePath: c.FilePath,
-			Line:     c.Line,
-			Comments: []entities.ReviewMessage{
-				{Author: c.Author, Body: c.Body},
-			},
-		}
-	}
-
+	roots := discoverThreadRoots(comments, isBot, liveFiles)
 	if len(roots) == 0 {
 		return nil
 	}
@@ -128,6 +122,49 @@ func BuildReviewConversation(
 	return threads
 }
 
+// discoverThreadRoots collects every top-level inline comment authored
+// by the bot — these become the conversation's thread roots. Comments
+// anchored to a file outside `liveFiles` are dropped (when liveFiles is
+// non-nil) so a re-review's prompt does not include stale anchors. The
+// returned map is keyed by the root comment's ID so the reply walk can
+// match `InReplyToID` chains in O(1).
+func discoverThreadRoots(
+	comments []forgeEntities.PullRequestComment,
+	isBot func(author string) bool,
+	liveFiles map[string]struct{},
+) map[int64]*entities.ReviewThread {
+	roots := map[int64]*entities.ReviewThread{}
+	for _, c := range comments {
+		if c.Line <= 0 || c.InReplyToID != 0 || !isBot(c.Author) {
+			continue
+		}
+		if liveFiles != nil {
+			if _, live := liveFiles[normalizeConversationFilePath(c.FilePath)]; !live {
+				continue
+			}
+		}
+		roots[c.ID] = &entities.ReviewThread{
+			FilePath: c.FilePath,
+			Line:     c.Line,
+			Comments: []entities.ReviewMessage{
+				{Author: c.Author, Body: c.Body},
+			},
+		}
+	}
+	return roots
+}
+
+// normalizeConversationFilePath strips a leading `/` so ADO-shape
+// paths (`/internal/foo.go`) compare equal to the AI-emitted
+// `internal/foo.go` form. Mirrors the same normalisation the dedup
+// pipeline uses on the post side.
+func normalizeConversationFilePath(p string) string {
+	if len(p) > 0 && p[0] == '/' {
+		return p[1:]
+	}
+	return p
+}
+
 // walkToRoot resolves a reply's chain of InReplyToID pointers up to a
 // known thread root. Returns the matching root ID when the chain
 // terminates on one of `roots`; returns 0 when the chain leads to a
@@ -164,11 +201,24 @@ func walkToRoot(
 const maxReplyChainDepth = 32
 
 // IsBotAuthor returns a predicate the conversation walker uses to
-// identify the bot's own comments. The match is substring-based and
-// case-insensitive so it tolerates the per-platform variations:
-// GitHub posts as `code-guru[bot]`; Azure DevOps posts as the
-// configured PAT identity which often looks like
-// `code-guru@<tenant>`. The single substring `code-guru` covers both.
+// identify the bot's own comments. The match is **strict** so user
+// names that happen to contain `code-guru` as a substring (e.g.
+// `code-guru-fan`, `alice+code-guru@example.com`) are NOT pulled into
+// the conversation context as if they were prior bot findings.
+//
+// The author matches when, after a case-insensitive comparison, the
+// string starts with the literal `code-guru` AND the next character
+// is one of:
+//
+//   - end of string (the bot identity is exactly `code-guru`)
+//   - `[` — the GitHub App login shape (`code-guru[bot]`)
+//   - `@` — the Azure DevOps PAT-identity shape (`code-guru@<tenant>`)
+//
+// Anything else is rejected: a continuation alphanumeric / `-` / `+`
+// would mean the `code-guru` is part of a longer identifier (a real
+// user with a coincidentally matching prefix), and a leading `+` or
+// `.` (as in `alice+code-guru@…`) means `code-guru` is in the local
+// part of someone else's email.
 //
 // Returned as a closure (rather than a free function) so a future
 // configuration can override the matcher per deployment without
@@ -176,27 +226,23 @@ const maxReplyChainDepth = 32
 func IsBotAuthor() func(string) bool {
 	const botMarker = "code-guru"
 	return func(author string) bool {
-		return containsFold(author, botMarker)
-	}
-}
-
-// containsFold is a tiny case-insensitive substring helper local to
-// this package — `strings.Contains` would force the caller to ToLower
-// both sides on every call, and `strings.EqualFold` is exact-match
-// only.
-func containsFold(s, substr string) bool {
-	if substr == "" {
-		return true
-	}
-	if len(s) < len(substr) {
-		return false
-	}
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if equalFold(s[i:i+len(substr)], substr) {
+		if len(author) < len(botMarker) {
+			return false
+		}
+		head := author[:len(botMarker)]
+		if !equalFold(head, botMarker) {
+			return false
+		}
+		if len(author) == len(botMarker) {
 			return true
 		}
+		switch author[len(botMarker)] {
+		case '[', '@':
+			return true
+		default:
+			return false
+		}
 	}
-	return false
 }
 
 // equalFold is `strings.EqualFold`-without-the-import — kept inline so
