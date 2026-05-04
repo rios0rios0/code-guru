@@ -755,6 +755,15 @@ type recordingReviewProvider struct {
 	// the error instead of `existingComments`. Used by the conversation
 	// walk's soft-fail-on-list-error test path.
 	listCommentsErr error
+	// merges records every call to `MergePullRequest` so tests can
+	// assert auto-merge behaviour on the trivial fast path.
+	merges    []recordedMerge
+	mergeErr  error
+}
+
+type recordedMerge struct {
+	prID     int
+	strategy string
 }
 
 type recordedPRComment struct {
@@ -803,6 +812,16 @@ func (r *recordingReviewProvider) ListPullRequestComments(
 		return nil, r.listCommentsErr
 	}
 	return r.existingComments, nil
+}
+
+func (r *recordingReviewProvider) MergePullRequest(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	prID int,
+	strategy string,
+) error {
+	r.merges = append(r.merges, recordedMerge{prID: prID, strategy: strategy})
+	return r.mergeErr
 }
 
 func TestAnnotationThreadStatusContract(t *testing.T) {
@@ -1393,5 +1412,129 @@ func TestExecuteRunsTrivialDetectionRegardlessOfCIPassed(t *testing.T) {
 		assert.Equal(t, "trivial", result.Summary)
 		assert.Equal(t, []string{"CHANGELOG.md"}, registry.lastFiles,
 			"the leading `/` Azure DevOps prefixes onto every path must be stripped before the detector sees it — otherwise bump detectors miss their required-files match against `CHANGELOG.md`")
+	})
+}
+
+func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
+	t.Parallel()
+
+	// Pins the trivial-path post / merge contract surfaced by smoke
+	// `<internal-repo>#NNNNN`: two pods posted four duplicate
+	// approvals between them because the trivial path's old
+	// `[Auto-Approved]` body did not contain `**Code Guru review`,
+	// so the F2 review-once gate did not catch the second ADO
+	// `pullrequest.updated` delivery. Native review submission also
+	// echoed the body, doubling every review.
+	//
+	// New contract:
+	//   - One PR-wide comment containing the F2 marker.
+	//   - Native review submission carries an empty body so it
+	//     does not duplicate the annotation.
+	//   - `TrivialAutoMerge=true` triggers `MergePullRequest`;
+	//     `false` (or a non-approve verdict) does not.
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	pr := forgeEntities.PullRequestDetail{
+		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "docs", URL: "https://example/pr/4242"},
+	}
+
+	newCmd := func(verdict string) (*commands.ReviewCommand, *recordingReviewProvider) {
+		registry := &recordingRegistry{verdict: verdict}
+		rules := &doubles.StubRulesRepository{}
+		rc := commands.NewReviewCommand(failingAIReviewer{}, rules, registry)
+		provider := &recordingReviewProvider{
+			files: []forgeEntities.PullRequestFile{{Path: "/CHANGELOG.md"}},
+		}
+		return rc, provider
+	}
+
+	t.Run("should post exactly one PR-wide comment carrying the `**Code Guru review` F2 marker on approve", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc, provider := newCmd("approve")
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			SubmitNativeReview: true,
+		})
+
+		// then
+		require.NoError(t, err)
+		require.Len(t, provider.calls, 1, "exactly one PR-wide comment must be posted on a trivial-approve verdict — duplicates flooded the smoke PR before this contract pinned it")
+		assert.Contains(t, provider.calls[0].body, "**Code Guru review",
+			"the trivial-path comment MUST contain the F2 review-once-gate marker substring; without it the second ADO `pullrequest.updated` delivery re-runs the trivial path and posts again")
+		assert.NotContains(t, provider.calls[0].body, "[Auto-Approved]",
+			"the legacy `[Auto-Approved]` prefix has been replaced by the unified completion annotation — its presence would mean the dedup contract regressed")
+	})
+
+	t.Run("should submit a native review with empty body (vote-only) so it does not duplicate the annotation", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc, provider := newCmd("approve")
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			SubmitNativeReview: true,
+		})
+
+		// then
+		require.NoError(t, err)
+		require.Len(t, provider.submissions, 1, "native review submission still records the reviewer-panel vote")
+		assert.Empty(t, provider.submissions[0].Body,
+			"the native submission's body MUST be empty so gitforge does not post the trivial summary as a second PR-wide comment alongside the annotation")
+	})
+
+	t.Run("should call MergePullRequest with the configured strategy when TrivialAutoMerge=true and verdict=approve", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc, provider := newCmd("approve")
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			TrivialAutoMerge:     true,
+			TrivialMergeStrategy: "squash",
+		})
+
+		// then
+		require.NoError(t, err)
+		require.Len(t, provider.merges, 1, "auto-merge must fire on a trivial-approve verdict when the operator opted in")
+		assert.Equal(t, 4242, provider.merges[0].prID)
+		assert.Equal(t, "squash", provider.merges[0].strategy,
+			"the configured merge strategy must reach gitforge unchanged — empty falls back to the platform default, but `squash` is an explicit operator choice")
+	})
+
+	t.Run("should NOT call MergePullRequest when TrivialAutoMerge=false (the default)", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc, provider := newCmd("approve")
+
+		// when: TrivialAutoMerge omitted — defaults to false
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{})
+
+		// then
+		require.NoError(t, err)
+		assert.Empty(t, provider.merges,
+			"auto-merge is opt-in by design; the default config must NEVER complete a PR cross-system without operator consent")
+	})
+
+	t.Run("should NOT call MergePullRequest when verdict=reject even with TrivialAutoMerge=true", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc, provider := newCmd("reject")
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			TrivialAutoMerge: true,
+		})
+
+		// then
+		require.NoError(t, err)
+		assert.Empty(t, provider.merges,
+			"auto-merge fires only on the approve verdict — a trivial detector that rejects (e.g. an incomplete bump per `.autobump.yaml`) must never auto-merge")
 	})
 }
