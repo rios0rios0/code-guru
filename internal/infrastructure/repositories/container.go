@@ -37,9 +37,22 @@ func RegisterProviders(container *dig.Container) error {
 		return err
 	}
 
-	// register a default empty trivial detector registry (overridden at controller level when enabled)
-	if err := container.Provide(func() repositories.TrivialDetectorRegistry {
-		return trivial.NewDetectorRegistry(nil)
+	// Trivial detector registry, built from `Settings.Trivial` so the
+	// webhook dispatcher (which receives this registry via DI and
+	// never rebuilds it) sees the configured adapter list. Both this
+	// provider and the CLI `review` controller delegate to
+	// `trivial.NewDetectorRegistryFromConfig` so the
+	// enabled/empty-list logic stays in one place — past production
+	// bugs came from these paths drifting apart. The injected
+	// `*entities.Settings` is the same struct the CLI loads via
+	// `resolveSettings` (explicit `--config`, then auto-discovered
+	// YAML, falling back to env), so any deployment shape that
+	// populates `Trivial.Adapters` reaches both paths.
+	if err := container.Provide(func(s *entities.Settings) repositories.TrivialDetectorRegistry {
+		if s == nil {
+			return trivial.NewDetectorRegistry(nil)
+		}
+		return trivial.NewDetectorRegistryFromConfig(s.Trivial)
 	}); err != nil {
 		return err
 	}

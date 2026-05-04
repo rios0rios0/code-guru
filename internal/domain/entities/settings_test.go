@@ -3,6 +3,8 @@
 package entities_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -221,5 +223,63 @@ func TestNewSettingsFromEnvNativeReviewDefault(t *testing.T) {
 		require.NotNil(t, settings.AI.SubmitNativeReview)
 		assert.False(t, *settings.AI.SubmitNativeReview)
 		assert.False(t, settings.AI.NativeReviewSubmissionEnabled())
+	})
+}
+
+func TestNewSettingsTrivialEnvOverride(t *testing.T) {
+	// Pins the contract that `CODE_GURU_TRIVIAL_ADAPTERS` overrides
+	// `trivial.adapters` from a loaded YAML. The webhook dispatcher
+	// reads `*Settings` once at boot and never re-reads env, so without
+	// this overlay a deployment using a config file would silently
+	// ignore the env var and the trivial path would stay dark — the
+	// exact failure mode that surfaced on the dev cluster smoke PR
+	// before this overlay landed.
+
+	writeYAML := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+trivial:
+  enabled: true
+  adapters:
+    - docs-only
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		return path
+	}
+
+	t.Run("should override the YAML adapter list when CODE_GURU_TRIVIAL_ADAPTERS is set", func(t *testing.T) {
+		// given: a YAML config that lists only `docs-only`, plus an env
+		// var that asks for the bump detectors instead.
+		path := writeYAML(t)
+		t.Setenv("CODE_GURU_TRIVIAL_ADAPTERS", "bump-go,docs-only")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, settings.Trivial.Enabled)
+		assert.Equal(t, []string{"bump-go", "docs-only"}, settings.Trivial.Adapters,
+			"env var must override YAML so deployments can flip adapters per-environment without re-rendering the config file")
+	})
+
+	t.Run("should preserve the YAML adapter list when CODE_GURU_TRIVIAL_ADAPTERS is unset", func(t *testing.T) {
+		// given: same YAML, no env var.
+		path := writeYAML(t)
+		t.Setenv("CODE_GURU_TRIVIAL_ADAPTERS", "")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, settings.Trivial.Enabled)
+		assert.Equal(t, []string{"docs-only"}, settings.Trivial.Adapters,
+			"unset env var must leave the YAML-loaded adapters in place")
 	})
 }

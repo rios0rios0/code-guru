@@ -67,9 +67,9 @@ func NewPool(workerCount, queueSize int, handler JobHandler) *Pool {
 	}
 
 	// The cancel function is stored on the pool and invoked by Shutdown via
-	// defer; gosec cannot trace that cross-method call, so the lint warning is
-	// suppressed at the source.
-	baseCtx, cancelBase := context.WithCancel(context.Background()) //nolint:gosec // cancelBase released in Shutdown
+	// defer; the cross-method release is what makes this safe even though
+	// the local lifetime ends here.
+	baseCtx, cancelBase := context.WithCancel(context.Background())
 	p := &Pool{
 		queue:      make(chan Job, queueSize),
 		handler:    handler,
