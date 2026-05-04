@@ -15,10 +15,13 @@ import (
 	"github.com/rios0rios0/codeguru/internal/support"
 )
 
-// verdictComment is the LLM/parser vocab for "I have feedback but no
-// strong opinion". Mirrors `internal/support/verdict_mapper.go`'s
-// constant; defined locally because that one is unexported.
-const verdictComment = "comment"
+// Verdict strings emitted on the review path. Mirrors the unexported
+// constants in `internal/support/verdict_mapper.go`; defined locally
+// because those are private to that package.
+const (
+	verdictApprove = "approve"
+	verdictComment = "comment"
+)
 
 // Review is the interface for the review command.
 type Review interface {
@@ -59,6 +62,22 @@ type ReviewOptions struct {
 	// the user has explicitly asked for another pass. Push-triggered
 	// reviews (the default) leave this false so the gate applies.
 	UserMentioned bool
+
+	// TrivialAutoMerge, when true, calls `provider.MergePullRequest`
+	// after a trivial-approve verdict. Off by default — the gate is
+	// "operator explicitly opted-in" because auto-merge is a
+	// destructive cross-system action that bypasses human review.
+	// Wired from `Settings.Trivial.AutoMerge` at each call site.
+	// Failures degrade gracefully: a merge error logs at warn and the
+	// verdict still stands.
+	TrivialAutoMerge bool
+
+	// TrivialMergeStrategy is the gitforge merge-strategy string
+	// (`"merge"` / `"squash"` / `"rebase"`) used when
+	// `TrivialAutoMerge` is true. Empty falls back to the platform's
+	// default merge strategy. Wired from
+	// `Settings.Trivial.MergeStrategy`.
+	TrivialMergeStrategy string
 }
 
 // ReviewCommand orchestrates a single PR review.
@@ -277,19 +296,48 @@ func (c *ReviewCommand) handleTrivialDetection(
 	}
 
 	if !opts.DryRun {
-		switch detection.Verdict {
-		case "approve":
-			c.postApprovalComment(ctx, provider, repo, pr.ID, detection.Summary)
-		case "reject":
-			c.postRejectionComment(ctx, provider, repo, pr.ID, detection.Summary)
+		// Single PR-wide comment that carries the `**Code Guru review`
+		// substring so the F2 review-once gate (`alreadyReviewed`)
+		// catches the next webhook delivery for the same PR. ADO
+		// fires both `pullrequest.created` AND `pullrequest.updated`
+		// for every new PR; without the marker the second delivery
+		// (arriving seconds after the first finishes and releases the
+		// dedup lease) finds no marker and re-runs the trivial path —
+		// observed live on `backend/user-http#NNNNN` where two pods
+		// posted four duplicate approvals between them.
+		c.postReviewCompleteAnnotation(ctx, provider, repo, pr.ID, result)
+		// Reviewer-panel vote mirrors the text annotation. Body is
+		// intentionally empty so this submission does not duplicate
+		// the annotation as a separate PR-wide comment on ADO; the
+		// vote alone is enough to surface the verdict in the panel.
+		c.submitNativeReview(ctx, provider, repo, pr.ID, detection.Verdict, "", opts)
+		// Auto-merge gated by `Settings.Trivial.AutoMerge` (env
+		// `CODE_GURU_TRIVIAL_AUTO_MERGE=true`). Best-effort: a merge
+		// failure logs at warn and the verdict still stands; the PR
+		// author can complete the merge manually from the platform UI.
+		if detection.Verdict == verdictApprove && opts.TrivialAutoMerge {
+			c.autoMergeTrivial(ctx, provider, repo, pr.ID, opts.TrivialMergeStrategy)
 		}
-		// Native review submission piggybacks on the same verdict the
-		// trivial detector emits — Approved / Changes Requested in the
-		// reviewer panel mirrors the text comment posted above.
-		c.submitNativeReview(ctx, provider, repo, pr.ID, detection.Verdict, detection.Summary, opts)
 	}
 
 	return result
+}
+
+// autoMergeTrivial completes the PR via the underlying provider after
+// a trivial-approve verdict. `strategy` maps to gitforge's
+// `MergePullRequest` strategy string (`"merge"` / `"squash"` /
+// `"rebase"`); empty falls back to the platform default.
+func (c *ReviewCommand) autoMergeTrivial(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+	strategy string,
+) {
+	logger.Infof("PR #%d: auto-merging (strategy=%q) per trivial PR policy", prID, strategy)
+	if err := provider.MergePullRequest(ctx, repo, prID, strategy); err != nil {
+		logger.Warnf("PR #%d: auto-merge failed: %v -- the trivial-approve verdict still stands", prID, err)
+	}
 }
 
 // forgeFileContentFetcherAdapter adapts a ReviewProvider (type-asserted to
@@ -348,32 +396,6 @@ func (c *ReviewCommand) buildDiffs(
 	}
 
 	return diffs, nil
-}
-
-func (c *ReviewCommand) postApprovalComment(
-	ctx context.Context,
-	provider forgeEntities.ReviewProvider,
-	repo forgeEntities.Repository,
-	prID int,
-	summary string,
-) {
-	body := fmt.Sprintf("**[Auto-Approved]** %s", summary)
-	if err := provider.PostPullRequestComment(ctx, repo, prID, body); err != nil {
-		logger.Errorf("failed to post approval comment: %v", err)
-	}
-}
-
-func (c *ReviewCommand) postRejectionComment(
-	ctx context.Context,
-	provider forgeEntities.ReviewProvider,
-	repo forgeEntities.Repository,
-	prID int,
-	summary string,
-) {
-	body := fmt.Sprintf("**[Rejected]** %s", summary)
-	if err := provider.PostPullRequestComment(ctx, repo, prID, body); err != nil {
-		logger.Errorf("failed to post rejection comment: %v", err)
-	}
 }
 
 // postReviewFailedAnnotation drops a single PR-wide notice when the

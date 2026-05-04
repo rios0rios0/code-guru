@@ -16,9 +16,17 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added `Settings.Trivial.AutoMerge` (env `CODE_GURU_TRIVIAL_AUTO_MERGE`, default `false`) and `Settings.Trivial.MergeStrategy` (env `CODE_GURU_TRIVIAL_MERGE_STRATEGY`, empty falls back to platform default) so a trivial-approve verdict can optionally complete the PR via `provider.MergePullRequest`. Off by default — the gate is "operator must explicitly opt in" because auto-merge bypasses human review and merges cross-system. A merge failure degrades gracefully: the trivial-approve verdict still stands and a warn log captures the error so the PR author can finish the merge manually. Pinned by `TestTrivialFastPathPostsSingleMarkerAndOptionalMerge` (auto-merge fires on approve, skipped on the default `false`, skipped on a `reject` verdict even with `AutoMerge=true`) and two new `TestNewSettings*` rows that verify env-overlay precedence
+
 ### Changed
 
 - changed the Go module dependencies to their latest versions
+
+### Fixed
+
+- fixed the trivial fast path posting two PR-wide comments per review (the `[Auto-Approved]` body from `postApprovalComment` plus the body the native review submission echoed) AND not emitting the `**Code Guru review` substring the F2 review-once gate looks for. The combined effect on the dev cluster: a smoke `docs-only` PR got two reviews from two pods (four PR-wide comments total) — the first delivery's lease completed in ~1s, the second ADO `pullrequest.updated` event arrived 7s later after the lease released, found no marker, and re-ran the trivial path. `handleTrivialDetection` now posts a single completion-style annotation via `postReviewCompleteAnnotation` (carries the F2 marker) and submits the native review with an empty body so the reviewer-panel vote does not duplicate as a second comment. `postApprovalComment` and `postRejectionComment` are removed
 
 ### Fixed
 
