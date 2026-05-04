@@ -78,6 +78,16 @@ type ReviewOptions struct {
 	// default merge strategy. Wired from
 	// `Settings.Trivial.MergeStrategy`.
 	TrivialMergeStrategy string
+
+	// TrivialBypassPolicy, when true, asks the provider to skip
+	// branch policies (`Required reviewers`, `Minimum approver count`,
+	// etc.) on the auto-merge call. Off by default — bypass strictly
+	// requires the bot's identity to hold the platform-level
+	// `Bypass policies when completing pull requests` permission, so
+	// turning this on without that permission turns previously-working
+	// auto-merges into hard 403s. Wired from
+	// `Settings.Trivial.BypassPolicy`.
+	TrivialBypassPolicy bool
 }
 
 // ReviewCommand orchestrates a single PR review.
@@ -316,43 +326,50 @@ func (c *ReviewCommand) handleTrivialDetection(
 		// failure logs at warn and the verdict still stands; the PR
 		// author can complete the merge manually from the platform UI.
 		if detection.Verdict == verdictApprove && opts.TrivialAutoMerge {
-			c.autoMergeTrivial(ctx, provider, repo, pr.ID, opts.TrivialMergeStrategy)
+			c.autoMergeTrivial(ctx, provider, repo, pr.ID, opts.TrivialMergeStrategy, opts.TrivialBypassPolicy)
 		}
 	}
 
 	return result
 }
 
-// autoMergeTrivial force-completes the PR via the underlying provider
-// after a trivial-approve verdict. `strategy` maps to gitforge's
+// autoMergeTrivial completes the PR via the underlying provider after
+// a trivial-approve verdict. `strategy` maps to gitforge's
 // `MergePullRequest` strategy string (`"merge"` / `"squash"` /
 // `"rebase"` / `"rebaseMerge"`); empty falls back to the platform
 // default.
 //
-// The TrivialAutoMerge contract is "force-merge with policy bypass":
-// when an operator opts in via `CODE_GURU_TRIVIAL_AUTO_MERGE=true`,
-// they are explicitly asking the bot to bypass branch-policy checks
-// (`Required reviewers`, `Minimum number of reviewers`, etc.) that
-// would otherwise reject the auto-merge with
-// `GitPullRequestUpdateRejectedByPolicyException`. We pass
-// `WithBypassPolicy` unconditionally; the calling identity's PAT /
-// App must hold the platform-level "bypass policies" permission for
-// the bypass to take effect (otherwise ADO still returns 403 with
-// the same `forbidden by policy` error). On GitHub the option is a
-// no-op — bypass there is governed by the authenticated user's
-// permission model rather than a per-call flag.
+// `bypassPolicy` is opt-in via `Settings.Trivial.BypassPolicy`
+// (env `CODE_GURU_TRIVIAL_BYPASS_POLICIES`). When true, the bot
+// passes `gitforge.WithBypassPolicy(...)` so ADO skips branch
+// policies (`Required reviewers`, `Minimum approver count`) that
+// would otherwise reject the merge with
+// `GitPullRequestUpdateRejectedByPolicyException`. The bot's
+// identity must hold the platform-level
+// `Bypass policies when completing pull requests` permission for
+// the bypass to take effect; without it ADO still returns 403.
+// Bypass is kept as a separate flag (rather than baked into
+// AutoMerge) so deployments where the bot has merge permission but
+// NOT bypass permission still benefit from polite-merge auto-
+// completion, instead of every auto-merge attempt becoming a
+// hard 403. On GitHub the option is a no-op — bypass there is
+// governed by the authenticated user's permission model rather than
+// a per-call flag.
 func (c *ReviewCommand) autoMergeTrivial(
 	ctx context.Context,
 	provider forgeEntities.ReviewProvider,
 	repo forgeEntities.Repository,
 	prID int,
 	strategy string,
+	bypassPolicy bool,
 ) {
-	logger.Infof("PR #%d: force-merging (strategy=%q, bypass=true) per trivial PR policy", prID, strategy)
-	if err := provider.MergePullRequest(
-		ctx, repo, prID, strategy,
-		forgeEntities.WithBypassPolicy("auto-merged by code-guru trivial PR policy"),
-	); err != nil {
+	logger.Infof("PR #%d: auto-merging (strategy=%q, bypass=%v) per trivial PR policy", prID, strategy, bypassPolicy)
+
+	var mergeOpts []forgeEntities.MergeOption
+	if bypassPolicy {
+		mergeOpts = append(mergeOpts, forgeEntities.WithBypassPolicy("auto-merged by code-guru trivial PR policy"))
+	}
+	if err := provider.MergePullRequest(ctx, repo, prID, strategy, mergeOpts...); err != nil {
 		logger.Warnf("PR #%d: auto-merge failed: %v -- the trivial-approve verdict still stands", prID, err)
 	}
 }
