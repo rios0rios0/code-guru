@@ -16,6 +16,7 @@ import (
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
+	doubles "github.com/rios0rios0/codeguru/test/domain/doubles/repositories"
 )
 
 func TestShouldPostSummary(t *testing.T) {
@@ -1311,21 +1312,23 @@ func TestBuildConversation(t *testing.T) {
 	})
 }
 
-// stubAlwaysDetectingRegistry is a TrivialDetectorRegistry that always
-// returns Detected=true with a fixed verdict. Used to assert that the
-// command short-circuits to the trivial path before reaching the AI.
-type stubAlwaysDetectingRegistry struct {
-	verdict string
+// recordingRegistry is a TrivialDetectorRegistry that always returns
+// Detected=true with a fixed verdict, and records the file paths it
+// receives so the test can pin the leading-`/` normalisation contract.
+type recordingRegistry struct {
+	verdict   string
+	lastFiles []string
 }
 
-func (s *stubAlwaysDetectingRegistry) Detect(
+func (r *recordingRegistry) Detect(
 	_ context.Context,
-	_ repositories.DetectionContext,
+	dctx repositories.DetectionContext,
 ) (repositories.TrivialDetector, repositories.DetectionResult, bool) {
+	r.lastFiles = append([]string(nil), dctx.Files...)
 	d := &stubNamedDetector{name: "stub"}
 	return d, repositories.DetectionResult{
 		Detected: true,
-		Verdict:  s.verdict,
+		Verdict:  r.verdict,
 		Summary:  "trivial",
 	}, true
 }
@@ -1363,14 +1366,18 @@ func TestExecuteRunsTrivialDetectionRegardlessOfCIPassed(t *testing.T) {
 	t.Run("should return the trivial verdict when CIPassed is false", func(t *testing.T) {
 		t.Parallel()
 
-		// given: a registry that always detects, an AI that panics if
-		// reached, and CIPassed left at its zero value (false). The
-		// provider returns at least one file so Execute does not
-		// short-circuit on the empty-files branch.
-		registry := &stubAlwaysDetectingRegistry{verdict: "approve"}
-		rc := commands.NewReviewCommand(failingAIReviewer{}, nil, registry)
+		// given: an ADO-shape leading-`/` path (Azure DevOps's
+		// `GetPullRequestFiles` prefixes one onto every path); a
+		// registry that always detects + records the paths it sees;
+		// an AI that panics if reached; a non-nil rules repo so a
+		// future regression that disables the trivial path produces
+		// the AI panic — not a `nil rulesRepo` panic that would
+		// confuse the failure mode. CIPassed left at its zero value.
+		registry := &recordingRegistry{verdict: "approve"}
+		rules := &doubles.StubRulesRepository{}
+		rc := commands.NewReviewCommand(failingAIReviewer{}, rules, registry)
 		provider := &recordingReviewProvider{
-			files: []forgeEntities.PullRequestFile{{Path: "CHANGELOG.md"}},
+			files: []forgeEntities.PullRequestFile{{Path: "/CHANGELOG.md"}},
 		}
 
 		// when
@@ -1384,5 +1391,7 @@ func TestExecuteRunsTrivialDetectionRegardlessOfCIPassed(t *testing.T) {
 		assert.Equal(t, "approve", result.Verdict,
 			"Execute must propagate the trivial detector's verdict even with CIPassed=false")
 		assert.Equal(t, "trivial", result.Summary)
+		assert.Equal(t, []string{"CHANGELOG.md"}, registry.lastFiles,
+			"the leading `/` Azure DevOps prefixes onto every path must be stripped before the detector sees it — otherwise bump detectors miss their required-files match against `CHANGELOG.md`")
 	})
 }
