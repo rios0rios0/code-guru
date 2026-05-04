@@ -110,10 +110,14 @@ func (c *ReviewCommand) Execute(
 		return &entities.ReviewResult{PullRequestURL: pr.URL, Verdict: "comment", Summary: "no files changed"}, nil
 	}
 
-	// collect file paths
+	// collect file paths. Normalised via `normalizeFilePath` to strip
+	// the leading `/` Azure DevOps prefixes onto every path — without
+	// it the bump detectors compare `/CHANGELOG.md` against their
+	// `CHANGELOG.md` required-files set and incorrectly flag an
+	// otherwise-valid bump PR as missing the changelog.
 	var paths []string
 	for _, f := range files {
-		paths = append(paths, f.Path)
+		paths = append(paths, normalizeFilePath(f.Path))
 	}
 
 	// Trivial PR detection runs unconditionally — each detector
