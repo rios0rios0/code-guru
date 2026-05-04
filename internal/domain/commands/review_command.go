@@ -323,10 +323,24 @@ func (c *ReviewCommand) handleTrivialDetection(
 	return result
 }
 
-// autoMergeTrivial completes the PR via the underlying provider after
-// a trivial-approve verdict. `strategy` maps to gitforge's
+// autoMergeTrivial force-completes the PR via the underlying provider
+// after a trivial-approve verdict. `strategy` maps to gitforge's
 // `MergePullRequest` strategy string (`"merge"` / `"squash"` /
-// `"rebase"`); empty falls back to the platform default.
+// `"rebase"` / `"rebaseMerge"`); empty falls back to the platform
+// default.
+//
+// The TrivialAutoMerge contract is "force-merge with policy bypass":
+// when an operator opts in via `CODE_GURU_TRIVIAL_AUTO_MERGE=true`,
+// they are explicitly asking the bot to bypass branch-policy checks
+// (`Required reviewers`, `Minimum number of reviewers`, etc.) that
+// would otherwise reject the auto-merge with
+// `GitPullRequestUpdateRejectedByPolicyException`. We pass
+// `WithBypassPolicy` unconditionally; the calling identity's PAT /
+// App must hold the platform-level "bypass policies" permission for
+// the bypass to take effect (otherwise ADO still returns 403 with
+// the same `forbidden by policy` error). On GitHub the option is a
+// no-op — bypass there is governed by the authenticated user's
+// permission model rather than a per-call flag.
 func (c *ReviewCommand) autoMergeTrivial(
 	ctx context.Context,
 	provider forgeEntities.ReviewProvider,
@@ -334,8 +348,11 @@ func (c *ReviewCommand) autoMergeTrivial(
 	prID int,
 	strategy string,
 ) {
-	logger.Infof("PR #%d: auto-merging (strategy=%q) per trivial PR policy", prID, strategy)
-	if err := provider.MergePullRequest(ctx, repo, prID, strategy); err != nil {
+	logger.Infof("PR #%d: force-merging (strategy=%q, bypass=true) per trivial PR policy", prID, strategy)
+	if err := provider.MergePullRequest(
+		ctx, repo, prID, strategy,
+		forgeEntities.WithBypassPolicy("auto-merged by code-guru trivial PR policy"),
+	); err != nil {
 		logger.Warnf("PR #%d: auto-merge failed: %v -- the trivial-approve verdict still stands", prID, err)
 	}
 }
