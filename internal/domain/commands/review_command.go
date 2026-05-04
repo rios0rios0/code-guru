@@ -110,14 +110,23 @@ func (c *ReviewCommand) Execute(
 		return &entities.ReviewResult{PullRequestURL: pr.URL, Verdict: "comment", Summary: "no files changed"}, nil
 	}
 
-	// collect file paths
+	// collect file paths. Normalised via `normalizeFilePath` to strip
+	// the leading `/` Azure DevOps prefixes onto every path — without
+	// it the bump detectors compare `/CHANGELOG.md` against their
+	// `CHANGELOG.md` required-files set and incorrectly flag an
+	// otherwise-valid bump PR as missing the changelog.
 	var paths []string
 	for _, f := range files {
-		paths = append(paths, f.Path)
+		paths = append(paths, normalizeFilePath(f.Path))
 	}
 
-	// check trivial PR detection (no LLM call needed)
-	if c.detectorRegistry != nil && opts.CIPassed {
+	// Trivial PR detection runs unconditionally — each detector
+	// self-validates what counts as "trivial enough" (bump detectors
+	// require a matching `.autobump.yaml`, docs-only requires every
+	// file be Markdown). No CI gate: every entry point hardcodes
+	// CIPassed=false, so any gate on it would silently disable the
+	// entire trivial path.
+	if c.detectorRegistry != nil {
 		if result := c.handleTrivialDetection(ctx, provider, repo, pr, paths, opts); result != nil {
 			return result, nil
 		}
