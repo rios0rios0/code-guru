@@ -13,7 +13,6 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
-	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 	infraRepos "github.com/rios0rios0/codeguru/internal/infrastructure/repositories"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
 	"github.com/rios0rios0/codeguru/internal/support"
@@ -119,11 +118,10 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// build trivial detector registry if enabled
-	var detectorRegistry repositories.TrivialDetectorRegistry
-	if settings.Trivial.Enabled && len(settings.Trivial.Adapters) > 0 {
-		detectorRegistry = trivial.NewDetectorRegistry(settings.Trivial.Adapters)
-	}
+	// Use the same helper as the long-lived webhook DI provider so
+	// the CLI and `serve` paths cannot drift on what counts as
+	// "trivial detection enabled".
+	detectorRegistry := trivial.NewDetectorRegistryFromConfig(settings.Trivial)
 
 	// create the review command with settings-based dependencies
 	aiReviewer := c.aiReviewerFactory.Create(settings)

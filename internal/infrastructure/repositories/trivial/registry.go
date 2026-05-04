@@ -3,6 +3,7 @@ package trivial
 import (
 	"context"
 
+	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 )
 
@@ -34,6 +35,20 @@ func NewDetectorRegistry(enabled []string) *DetectorRegistry {
 		}
 	}
 	return &DetectorRegistry{detectors: detectors}
+}
+
+// NewDetectorRegistryFromConfig is the canonical translation from a
+// loaded `entities.TrivialConfig` to a runtime registry. Both the CLI
+// `review` controller and the long-lived webhook DI provider call this
+// — having one helper prevents the kind of webhook-vs-CLI drift that
+// shipped an empty registry to the dispatcher path. An empty / disabled
+// config yields an empty registry which short-circuits in
+// `handleTrivialDetection`.
+func NewDetectorRegistryFromConfig(cfg entities.TrivialConfig) *DetectorRegistry {
+	if !cfg.Enabled || len(cfg.Adapters) == 0 {
+		return NewDetectorRegistry(nil)
+	}
+	return NewDetectorRegistry(cfg.Adapters)
 }
 
 // Detect checks the file list against all enabled detectors.
