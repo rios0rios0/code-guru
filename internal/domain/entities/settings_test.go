@@ -282,4 +282,53 @@ trivial:
 		assert.Equal(t, []string{"docs-only"}, settings.Trivial.Adapters,
 			"unset env var must leave the YAML-loaded adapters in place")
 	})
+
+	t.Run("should honour CODE_GURU_TRIVIAL_AUTO_MERGE and CODE_GURU_TRIVIAL_MERGE_STRATEGY", func(t *testing.T) {
+		// given
+		path := writeYAML(t)
+		t.Setenv("CODE_GURU_TRIVIAL_AUTO_MERGE", "true")
+		t.Setenv("CODE_GURU_TRIVIAL_MERGE_STRATEGY", "squash")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, settings.Trivial.AutoMerge,
+			"CODE_GURU_TRIVIAL_AUTO_MERGE=true must reach Settings.Trivial.AutoMerge so the dispatcher path can opt in to merging trivial PRs")
+		assert.Equal(t, "squash", settings.Trivial.MergeStrategy,
+			"the merge strategy env var must reach Settings.Trivial.MergeStrategy so operators can pick `merge` / `squash` / `rebase` per environment")
+	})
+}
+
+func TestNewSettingsFromEnvTrivialAutoMerge(t *testing.T) {
+	t.Run("should default AutoMerge=false when the env var is unset", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.False(t, settings.Trivial.AutoMerge,
+			"auto-merge MUST default off — opting in is an explicit operator decision because it bypasses human review")
+		assert.Empty(t, settings.Trivial.MergeStrategy,
+			"empty merge strategy lets gitforge fall back to the platform default")
+	})
+
+	t.Run("should parse AutoMerge=true and MergeStrategy from env", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+		t.Setenv("CODE_GURU_TRIVIAL_AUTO_MERGE", "true")
+		t.Setenv("CODE_GURU_TRIVIAL_MERGE_STRATEGY", "rebase")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, settings.Trivial.AutoMerge)
+		assert.Equal(t, "rebase", settings.Trivial.MergeStrategy)
+	})
 }
