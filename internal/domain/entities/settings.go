@@ -108,6 +108,17 @@ type TrivialConfig struct {
 	// falls back to the platform default. Honours
 	// `CODE_GURU_TRIVIAL_MERGE_STRATEGY`.
 	MergeStrategy string `yaml:"merge_strategy"`
+	// BypassPolicy, when true, asks the provider to skip branch
+	// policies (`Required reviewers`, `Minimum approver count`, etc.)
+	// when AutoMerge fires. Off by default — bypass strictly requires
+	// the bot's identity to hold the platform-level
+	// `Bypass policies when completing pull requests` permission, so
+	// turning this on without that permission turns previously-working
+	// auto-merges into hard 403s. Operators in environments where the
+	// bot has merge permission but NOT bypass permission should leave
+	// this off and let `Required reviewers` policies remain
+	// authoritative. Honours `CODE_GURU_TRIVIAL_BYPASS_POLICIES`.
+	BypassPolicy bool `yaml:"bypass_policy"`
 }
 
 // ServerConfig holds settings for the webhook server.
@@ -168,6 +179,11 @@ func NewSettings(path string) (*Settings, error) {
 	}
 	if raw := strings.TrimSpace(os.Getenv("CODE_GURU_TRIVIAL_MERGE_STRATEGY")); raw != "" {
 		settings.Trivial.MergeStrategy = raw
+	}
+	if raw := strings.TrimSpace(os.Getenv("CODE_GURU_TRIVIAL_BYPASS_POLICIES")); raw != "" {
+		if v, parseErr := strconv.ParseBool(raw); parseErr == nil {
+			settings.Trivial.BypassPolicy = v
+		}
 	}
 
 	if validateErr := validateSettings(&settings); validateErr != nil {
@@ -233,6 +249,7 @@ func NewSettingsFromEnv() (*Settings, error) {
 			Adapters:      adapters,
 			AutoMerge:     parseBoolEnv("CODE_GURU_TRIVIAL_AUTO_MERGE", false),
 			MergeStrategy: strings.TrimSpace(os.Getenv("CODE_GURU_TRIVIAL_MERGE_STRATEGY")),
+			BypassPolicy:  parseBoolEnv("CODE_GURU_TRIVIAL_BYPASS_POLICIES", false),
 		},
 		Server: ServerConfig{
 			Port:                 port,
