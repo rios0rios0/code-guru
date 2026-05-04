@@ -14,7 +14,7 @@ var updateNodeAllowed = map[string]bool{
 	"package-lock.json": true,
 	"yarn.lock":         true,
 	"pnpm-lock.yaml":    true,
-	"CHANGELOG.md":      true,
+	changelogFile:       true,
 }
 
 // UpdateNodeDetector detects Node.js dependency update PRs.
@@ -40,7 +40,7 @@ func (d *UpdateNodeDetector) Detect(
 	}
 	return repositories.DetectionResult{
 		Detected: true,
-		Verdict:  "approve",
+		Verdict:  verdictApprove,
 		Summary: fmt.Sprintf(
 			"Node.js dependency update detected (%d files). Auto-approved by trivial PR policy.",
 			len(dctx.Files),

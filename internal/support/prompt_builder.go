@@ -117,7 +117,7 @@ Guidelines:
 // content cannot break out of".
 func escapeFence(body string) string {
 	const fence = "```"
-	const escaped = "`​``"
+	const escaped = "`\u200b``"
 	return strings.ReplaceAll(body, fence, escaped)
 }
 
