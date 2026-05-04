@@ -37,20 +37,22 @@ func RegisterProviders(container *dig.Container) error {
 		return err
 	}
 
-	// Trivial detector registry. Built from `Settings.Trivial.Adapters`
-	// so the webhook dispatcher (which receives this via DI and never
-	// rebuilds it) honours `CODE_GURU_TRIVIAL_ADAPTERS`. The CLI
-	// `review` controller still builds its own registry per-call from a
-	// fresh `NewSettingsFromEnv()` read; this provider is the source of
-	// truth for the long-lived `serve` path. An empty / disabled
-	// adapter list yields an empty registry, which short-circuits to
-	// `Detected=false` — i.e. trivial detection is opt-in and silent
-	// when not configured.
+	// Trivial detector registry, built from `Settings.Trivial` so the
+	// webhook dispatcher (which receives this registry via DI and
+	// never rebuilds it) sees the configured adapter list. Both this
+	// provider and the CLI `review` controller delegate to
+	// `trivial.NewDetectorRegistryFromConfig` so the
+	// enabled/empty-list logic stays in one place — past production
+	// bugs came from these paths drifting apart. The injected
+	// `*entities.Settings` is the same struct the CLI loads via
+	// `resolveSettings` (explicit `--config`, then auto-discovered
+	// YAML, falling back to env), so any deployment shape that
+	// populates `Trivial.Adapters` reaches both paths.
 	if err := container.Provide(func(s *entities.Settings) repositories.TrivialDetectorRegistry {
-		if s == nil || !s.Trivial.Enabled || len(s.Trivial.Adapters) == 0 {
+		if s == nil {
 			return trivial.NewDetectorRegistry(nil)
 		}
-		return trivial.NewDetectorRegistry(s.Trivial.Adapters)
+		return trivial.NewDetectorRegistryFromConfig(s.Trivial)
 	}); err != nil {
 		return err
 	}
