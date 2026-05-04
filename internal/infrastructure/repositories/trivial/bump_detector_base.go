@@ -53,7 +53,7 @@ func detectBump(
 	// fallback: all files matched the default set
 	return repositories.DetectionResult{
 		Detected: true,
-		Verdict:  "approve",
+		Verdict:  verdictApprove,
 		Summary: fmt.Sprintf(
 			"%s version bump detected (%d files). Auto-approved by trivial PR policy.",
 			detectorName, len(dctx.Files),
@@ -86,7 +86,7 @@ func loadAutobumpRequired(
 
 	versionPaths := autobump.ResolveVersionFilePaths(cfg, autobumpLangKey, dctx.RepoName)
 
-	required := map[string]bool{"CHANGELOG.md": true}
+	required := map[string]bool{changelogFile: true}
 	for _, p := range versionPaths {
 		required[p] = true
 	}
@@ -115,7 +115,7 @@ func validateAutobumpRequired(
 	if len(missing) > 0 {
 		return repositories.DetectionResult{
 			Detected: true,
-			Verdict:  "reject",
+			Verdict:  verdictReject,
 			Summary: fmt.Sprintf(
 				"%s version bump is incomplete per .autobump.yaml: %s",
 				detectorName, strings.Join(missing, ", "),
@@ -125,7 +125,7 @@ func validateAutobumpRequired(
 
 	return repositories.DetectionResult{
 		Detected: true,
-		Verdict:  "approve",
+		Verdict:  verdictApprove,
 		Summary: fmt.Sprintf(
 			"%s version bump detected (%d files, validated against .autobump.yaml). Auto-approved by trivial PR policy.",
 			detectorName,

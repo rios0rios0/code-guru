@@ -7,6 +7,16 @@ import (
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 )
 
+// Shared constants used by every detector in this package. The verdict
+// strings are part of the trivial-detector vocabulary (cross-mapped to
+// the LLM vocab in `internal/support/verdict_mapper.go`); `changelogFile`
+// is the canonical CHANGELOG path the bump / update detectors require.
+const (
+	verdictApprove = "approve"
+	verdictReject  = "reject"
+	changelogFile  = "CHANGELOG.md"
+)
+
 // allDetectors contains all built-in trivial PR detectors keyed by name.
 //
 //nolint:gochecknoglobals // constant lookup map

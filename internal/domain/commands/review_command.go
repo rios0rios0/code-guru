@@ -15,6 +15,11 @@ import (
 	"github.com/rios0rios0/codeguru/internal/support"
 )
 
+// verdictComment is the LLM/parser vocab for "I have feedback but no
+// strong opinion". Mirrors `internal/support/verdict_mapper.go`'s
+// constant; defined locally because that one is unexported.
+const verdictComment = "comment"
+
 // Review is the interface for the review command.
 type Review interface {
 	Execute(
@@ -107,7 +112,7 @@ func (c *ReviewCommand) Execute(
 
 	if len(files) == 0 {
 		logger.Infof("PR #%d has no changed files, skipping", pr.ID)
-		return &entities.ReviewResult{PullRequestURL: pr.URL, Verdict: "comment", Summary: "no files changed"}, nil
+		return &entities.ReviewResult{PullRequestURL: pr.URL, Verdict: verdictComment, Summary: "no files changed"}, nil
 	}
 
 	// collect file paths. Normalised via `normalizeFilePath` to strip
@@ -524,7 +529,7 @@ type completionStats struct {
 // completion notice — pinned per Copilot review on PR #104 thread
 // `PRRT_kwDOJKAEo85-6ErC`.
 func reviewCompletionStats(result *entities.ReviewResult) completionStats {
-	stats := completionStats{verdict: "comment"}
+	stats := completionStats{verdict: verdictComment}
 	if result == nil {
 		return stats
 	}
@@ -779,7 +784,7 @@ func (c *ReviewCommand) shouldSkip(
 		logger.Infof("PR #%d is a draft, skipping review (set ai.review_drafts=true to override)", pr.ID)
 		return &entities.ReviewResult{
 			PullRequestURL: pr.URL,
-			Verdict:        "comment",
+			Verdict:        verdictComment,
 			Summary:        "skipped: pull request is a draft",
 		}
 	}
@@ -787,7 +792,7 @@ func (c *ReviewCommand) shouldSkip(
 		logger.Infof("PR #%d already reviewed; skipping (mention @code-guru in a comment to request re-review)", pr.ID)
 		return &entities.ReviewResult{
 			PullRequestURL: pr.URL,
-			Verdict:        "comment",
+			Verdict:        verdictComment,
 			Summary:        "skipped: pull request has already been reviewed; mention @code-guru in a comment to request re-review",
 		}
 	}

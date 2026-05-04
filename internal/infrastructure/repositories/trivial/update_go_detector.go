@@ -10,9 +10,9 @@ import (
 
 //nolint:gochecknoglobals // constant lookup map
 var updateGoAllowed = map[string]bool{
-	"go.mod":       true,
-	"go.sum":       true,
-	"CHANGELOG.md": true,
+	"go.mod":      true,
+	"go.sum":      true,
+	changelogFile: true,
 }
 
 // UpdateGoDetector detects Go dependency update PRs.
@@ -35,7 +35,7 @@ func (d *UpdateGoDetector) Detect(_ context.Context, dctx repositories.Detection
 	}
 	return repositories.DetectionResult{
 		Detected: true,
-		Verdict:  "approve",
+		Verdict:  verdictApprove,
 		Summary: fmt.Sprintf(
 			"Go dependency update detected (%d files). Auto-approved by trivial PR policy.",
 			len(dctx.Files),

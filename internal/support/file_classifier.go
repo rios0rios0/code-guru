@@ -4,6 +4,8 @@ import (
 	"github.com/rios0rios0/langforge/pkg/domain/entities"
 )
 
+const langJava = "java"
+
 // languageToRuleCategory maps langforge Language constants to code-guru rule category names.
 //
 //nolint:gochecknoglobals // read-only lookup table used as a constant
@@ -11,9 +13,9 @@ var languageToRuleCategory = map[entities.Language]string{
 	entities.LanguageGo:         "golang",
 	entities.LanguageNode:       "javascript",
 	entities.LanguagePython:     "python",
-	entities.LanguageJava:       "java",
-	entities.LanguageJavaGradle: "java",
-	entities.LanguageJavaMaven:  "java",
+	entities.LanguageJava:       langJava,
+	entities.LanguageJavaGradle: langJava,
+	entities.LanguageJavaMaven:  langJava,
 	entities.LanguageRuby:       "ruby",
 	entities.LanguageCSharp:     "csharp",
 	entities.LanguageTerraform:  "terraform",
