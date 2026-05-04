@@ -116,8 +116,13 @@ func (c *ReviewCommand) Execute(
 		paths = append(paths, f.Path)
 	}
 
-	// check trivial PR detection (no LLM call needed)
-	if c.detectorRegistry != nil && opts.CIPassed {
+	// Trivial PR detection runs unconditionally — each detector
+	// self-validates what counts as "trivial enough" (bump detectors
+	// require a matching `.autobump.yaml`, docs-only requires every
+	// file be Markdown). No CI gate: every entry point hardcodes
+	// CIPassed=false, so any gate on it would silently disable the
+	// entire trivial path.
+	if c.detectorRegistry != nil {
 		if result := c.handleTrivialDetection(ctx, provider, repo, pr, paths, opts); result != nil {
 			return result, nil
 		}

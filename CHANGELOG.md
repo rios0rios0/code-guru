@@ -20,6 +20,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 - changed the Go module dependencies to their latest versions
 
+### Fixed
+
+- fixed trivial PR detection (`docs-only`, `bump-go`, `bump-node`, `bump-python`, `update-go`, `update-node`, `update-python`) so it actually runs in production. The gate at `internal/domain/commands/review_command.go` short-circuited the entire trivial path when `opts.CIPassed` was false, but every entry point — CLI (`review_controller.go`), GitHub webhook (`webhooks/github.go`), Azure DevOps webhook (`webhooks/azuredevops.go`) — hardcodes `CIPassed: false`. The gate was dead code that suppressed every detector since the feature shipped. Each detector self-validates what counts as "trivial enough" (bump detectors require a matching `.autobump.yaml`, `docs-only` requires every file be Markdown), so the CI gate was not load-bearing. Pinned by a new `TestExecuteRunsTrivialDetectionRegardlessOfCIPassed` test row in `commands/review_command_test.go` (a stub registry that always detects + an AI reviewer that panics if reached → `Execute` returns the trivial verdict with `CIPassed: false`)
+
 ## [1.6.0] - 2026-05-03
 
 ### Added
