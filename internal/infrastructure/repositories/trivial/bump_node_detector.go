@@ -9,7 +9,7 @@ import (
 //nolint:gochecknoglobals // constant lookup map
 var bumpNodeAllowed = map[string]bool{
 	"package.json": true,
-	"CHANGELOG.md": true,
+	changelogFile:  true,
 }
 
 // BumpNodeDetector detects Node.js version bump (release ceremony) PRs.

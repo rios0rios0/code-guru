@@ -28,7 +28,7 @@ func (d *DocsOnlyDetector) Detect(_ context.Context, dctx repositories.Detection
 	}
 	return repositories.DetectionResult{
 		Detected: true,
-		Verdict:  "approve",
+		Verdict:  verdictApprove,
 		Summary: fmt.Sprintf(
 			"Documentation-only change detected (%d markdown files). Auto-approved by trivial PR policy.",
 			len(dctx.Files),

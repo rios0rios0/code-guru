@@ -8,7 +8,7 @@ import (
 
 //nolint:gochecknoglobals // constant lookup map
 var bumpGoAllowed = map[string]bool{
-	"CHANGELOG.md": true,
+	changelogFile: true,
 }
 
 // BumpGoDetector detects Go version bump (release ceremony) PRs.

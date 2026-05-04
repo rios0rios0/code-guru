@@ -9,7 +9,7 @@ import (
 
 //nolint:gochecknoglobals // constant lookup map
 var bumpPythonExact = map[string]bool{
-	"CHANGELOG.md": true,
+	changelogFile: true,
 }
 
 // BumpPythonDetector detects Python version bump (release ceremony) PRs.
