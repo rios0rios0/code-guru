@@ -151,6 +151,14 @@ const _ uint = uint(int64(leaseDurationSeconds)*int64(time.Second)) -
 // own log instead of producing an opaque API-server error.
 const k8sNameMaxLen = 253
 
+// Logrus field keys reused across every lease-backend log call. Pulled
+// out so a future rename only happens once and the linter's repeated-
+// string-literal alarm goes quiet.
+const (
+	logFieldKey       = "key"
+	logFieldLeaseName = "lease_name"
+)
+
 // LeaseClient is the narrow subset of
 // `k8s.io/client-go/kubernetes/typed/coordination/v1.LeaseInterface`
 // the dedup backend actually uses. Defining our own narrow port keeps
@@ -265,8 +273,8 @@ func (d *K8sLeaseDedup) SeenRecently(ctx context.Context, key string) bool {
 		return false
 	} else if !apierrors.IsAlreadyExists(err) {
 		logger.WithFields(logger.Fields{
-			"key":        key,
-			"lease_name": leaseName,
+			logFieldKey:       key,
+			logFieldLeaseName: leaseName,
 		}).Warnf("dedup-lease: Create failed (%v) — falling back to process the webhook", err)
 		return false
 	}
@@ -286,8 +294,8 @@ func (d *K8sLeaseDedup) SeenRecently(ctx context.Context, key string) bool {
 	}
 	if err != nil {
 		logger.WithFields(logger.Fields{
-			"key":        key,
-			"lease_name": leaseName,
+			logFieldKey:       key,
+			logFieldLeaseName: leaseName,
 		}).Warnf("dedup-lease: Get after AlreadyExists failed (%v) — treating as duplicate to be safe", err)
 		return true
 	}
@@ -303,17 +311,17 @@ func (d *K8sLeaseDedup) SeenRecently(ctx context.Context, key string) bool {
 	deleteOpts := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}
 	if delErr := d.client.Delete(callCtx, leaseName, deleteOpts); delErr != nil && !apierrors.IsNotFound(delErr) {
 		logger.WithFields(logger.Fields{
-			"key":        key,
-			"lease_name": leaseName,
-			"holder":     stringValue(existing.Spec.HolderIdentity),
+			logFieldKey:       key,
+			logFieldLeaseName: leaseName,
+			"holder":          stringValue(existing.Spec.HolderIdentity),
 		}).Warnf("dedup-lease: takeover Delete failed (%v) — treating as duplicate; the next delivery will retry", delErr)
 		return true
 	}
 	if _, retryErr := d.client.Create(callCtx, d.buildLease(leaseName), metav1.CreateOptions{}); retryErr == nil {
 		logger.WithFields(logger.Fields{
-			"key":         key,
-			"lease_name":  leaseName,
-			"prev_holder": stringValue(existing.Spec.HolderIdentity),
+			logFieldKey:       key,
+			logFieldLeaseName: leaseName,
+			"prev_holder":     stringValue(existing.Spec.HolderIdentity),
 		}).Info("dedup-lease: took over a stale lease (previous holder likely crashed mid-review)")
 		return false
 	}
@@ -386,8 +394,8 @@ func (d *K8sLeaseDedup) Forget(ctx context.Context, key string) {
 		return
 	}
 	logger.WithFields(logger.Fields{
-		"key":        key,
-		"lease_name": leaseName,
+		logFieldKey:       key,
+		logFieldLeaseName: leaseName,
 	}).Warnf("dedup-lease: Delete failed (%v) — lease will block new deliveries until the next caller's takeover path runs Get + UID-conditioned Delete", err)
 }
 
@@ -424,8 +432,8 @@ func (d *K8sLeaseDedup) Renew(ctx context.Context, key string) {
 	existing, err := d.client.Get(callCtx, leaseName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		logger.WithFields(logger.Fields{
-			"key":        key,
-			"lease_name": leaseName,
+			logFieldKey:       key,
+			logFieldLeaseName: leaseName,
 		}).Debugf("dedup-lease: Renew Get returned NotFound — lease was likely released or stolen; the renewal loop will keep trying until the worker cancels it")
 		return
 	}
@@ -443,8 +451,8 @@ func (d *K8sLeaseDedup) Renew(ctx context.Context, key string) {
 		// shutdown / takeover scenarios stay quiet in operator logs.
 		if apierrors.IsNotFound(updateErr) {
 			logger.WithFields(logger.Fields{
-				"key":        key,
-				"lease_name": leaseName,
+				logFieldKey:       key,
+				logFieldLeaseName: leaseName,
 			}).Debugf("dedup-lease: Renew Update returned NotFound — lease was concurrently released or stolen; nothing to refresh")
 			return
 		}
@@ -463,14 +471,14 @@ func (d *K8sLeaseDedup) Renew(ctx context.Context, key string) {
 func (d *K8sLeaseDedup) logRenewError(key, leaseName, op string, err error) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		logger.WithFields(logger.Fields{
-			"key":        key,
-			"lease_name": leaseName,
+			logFieldKey:       key,
+			logFieldLeaseName: leaseName,
 		}).Debugf("dedup-lease: Renew %s aborted by ctx (%v) — expected during shutdown / job completion", op, err)
 		return
 	}
 	logger.WithFields(logger.Fields{
-		"key":        key,
-		"lease_name": leaseName,
+		logFieldKey:       key,
+		logFieldLeaseName: leaseName,
 	}).Warnf("dedup-lease: Renew %s failed (%v) — keeping the loop alive; the next tick may succeed", op, err)
 }
 
