@@ -15,6 +15,8 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
+	"github.com/rios0rios0/codeguru/internal/domain/repositories"
+	doubles "github.com/rios0rios0/codeguru/test/domain/doubles/repositories"
 )
 
 func TestShouldPostSummary(t *testing.T) {
@@ -740,6 +742,10 @@ type recordingReviewProvider struct {
 	submissions            []forgeEntities.ReviewSubmission
 	submitErr              error
 	getPullRequestFilesErr error
+	// files seeds the response of `GetPullRequestFiles`. When nil and
+	// no error is set, the method returns an empty slice — same as
+	// before this field was added.
+	files []forgeEntities.PullRequestFile
 	// existingComments seeds the response of `ListPullRequestComments`
 	// so tests can simulate an already-reviewed PR (review-once gate)
 	// or pre-existing inline comments (dedup pass) without standing up
@@ -785,7 +791,7 @@ func (r *recordingReviewProvider) GetPullRequestFiles(
 	if r.getPullRequestFilesErr != nil {
 		return nil, r.getPullRequestFilesErr
 	}
-	return nil, nil
+	return r.files, nil
 }
 
 func (r *recordingReviewProvider) ListPullRequestComments(
@@ -1303,5 +1309,89 @@ func TestBuildConversation(t *testing.T) {
 		// then
 		require.Len(t, got, 1, "thread anchored to a file outside the diff must be dropped")
 		assert.Equal(t, "internal/foo.go", got[0].FilePath)
+	})
+}
+
+// recordingRegistry is a TrivialDetectorRegistry that always returns
+// Detected=true with a fixed verdict, and records the file paths it
+// receives so the test can pin the leading-`/` normalisation contract.
+type recordingRegistry struct {
+	verdict   string
+	lastFiles []string
+}
+
+func (r *recordingRegistry) Detect(
+	_ context.Context,
+	dctx repositories.DetectionContext,
+) (repositories.TrivialDetector, repositories.DetectionResult, bool) {
+	r.lastFiles = append([]string(nil), dctx.Files...)
+	d := &stubNamedDetector{name: "stub"}
+	return d, repositories.DetectionResult{
+		Detected: true,
+		Verdict:  r.verdict,
+		Summary:  "trivial",
+	}, true
+}
+
+type stubNamedDetector struct{ name string }
+
+func (s *stubNamedDetector) Name() string { return s.name }
+func (s *stubNamedDetector) Detect(_ context.Context, _ repositories.DetectionContext) repositories.DetectionResult {
+	return repositories.DetectionResult{}
+}
+
+// failingAIReviewer panics if its ReviewDiff is invoked. The trivial
+// path must short-circuit before reaching it; if Execute somehow falls
+// through to the AI call, the panic surfaces the regression cleanly.
+type failingAIReviewer struct{}
+
+func (failingAIReviewer) Name() string { return "fail" }
+func (failingAIReviewer) ReviewDiff(_ context.Context, _ entities.ReviewRequest) (*entities.ReviewResult, error) {
+	panic("AI review must not run when a trivial detector matches")
+}
+
+func TestExecuteRunsTrivialDetectionRegardlessOfCIPassed(t *testing.T) {
+	t.Parallel()
+
+	// Pins the no-CI-gate contract: trivial detection (e.g. docs-only,
+	// bump-go) MUST fire even when CIPassed is false. Before this test
+	// existed the gate at review_command.go suppressed every detector
+	// because no entry point ever set CIPassed=true in production.
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	pr := forgeEntities.PullRequestDetail{
+		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "docs", URL: "https://example/pr/4242"},
+	}
+
+	t.Run("should return the trivial verdict when CIPassed is false", func(t *testing.T) {
+		t.Parallel()
+
+		// given: an ADO-shape leading-`/` path (Azure DevOps's
+		// `GetPullRequestFiles` prefixes one onto every path); a
+		// registry that always detects + records the paths it sees;
+		// an AI that panics if reached; a non-nil rules repo so a
+		// future regression that disables the trivial path produces
+		// the AI panic — not a `nil rulesRepo` panic that would
+		// confuse the failure mode. CIPassed left at its zero value.
+		registry := &recordingRegistry{verdict: "approve"}
+		rules := &doubles.StubRulesRepository{}
+		rc := commands.NewReviewCommand(failingAIReviewer{}, rules, registry)
+		provider := &recordingReviewProvider{
+			files: []forgeEntities.PullRequestFile{{Path: "/CHANGELOG.md"}},
+		}
+
+		// when
+		result, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			DryRun: true,
+		})
+
+		// then
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "approve", result.Verdict,
+			"Execute must propagate the trivial detector's verdict even with CIPassed=false")
+		assert.Equal(t, "trivial", result.Summary)
+		assert.Equal(t, []string{"CHANGELOG.md"}, registry.lastFiles,
+			"the leading `/` Azure DevOps prefixes onto every path must be stripped before the detector sees it — otherwise bump detectors miss their required-files match against `CHANGELOG.md`")
 	})
 }
