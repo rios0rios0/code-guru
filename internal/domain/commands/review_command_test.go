@@ -802,8 +802,10 @@ type recordingReviewProvider struct {
 }
 
 type recordedMerge struct {
-	prID     int
-	strategy string
+	prID         int
+	strategy     string
+	bypassPolicy bool
+	bypassReason string
 }
 
 type recordedPRComment struct {
@@ -859,8 +861,15 @@ func (r *recordingReviewProvider) MergePullRequest(
 	_ forgeEntities.Repository,
 	prID int,
 	strategy string,
+	opts ...forgeEntities.MergeOption,
 ) error {
-	r.merges = append(r.merges, recordedMerge{prID: prID, strategy: strategy})
+	bypass := forgeEntities.ResolveMergeOptions(opts...)
+	r.merges = append(r.merges, recordedMerge{
+		prID:         prID,
+		strategy:     strategy,
+		bypassPolicy: bypass.Enabled,
+		bypassReason: bypass.Reason,
+	})
 	return r.mergeErr
 }
 
@@ -1526,7 +1535,7 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 			"the native submission's body MUST be empty so gitforge does not post the trivial summary as a second PR-wide comment alongside the annotation")
 	})
 
-	t.Run("should call MergePullRequest with the configured strategy when TrivialAutoMerge=true and verdict=approve", func(t *testing.T) {
+	t.Run("should call MergePullRequest with the configured strategy and bypass-policy when TrivialAutoMerge=true and verdict=approve", func(t *testing.T) {
 		t.Parallel()
 
 		// given
@@ -1544,6 +1553,10 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 		assert.Equal(t, 4242, provider.merges[0].prID)
 		assert.Equal(t, "squash", provider.merges[0].strategy,
 			"the configured merge strategy must reach gitforge unchanged — empty falls back to the platform default, but `squash` is an explicit operator choice")
+		assert.True(t, provider.merges[0].bypassPolicy,
+			"TrivialAutoMerge MUST force-merge with policy bypass — without this, branch policies (Required reviewers, Minimum approver count) reject the merge with `GitPullRequestUpdateRejectedByPolicyException`. The flag is opt-in by design and the operator already accepted that risk by setting `CODE_GURU_TRIVIAL_AUTO_MERGE=true`")
+		assert.NotEmpty(t, provider.merges[0].bypassReason,
+			"the bypass reason MUST be non-empty so it lands in the ADO audit trail (ADO rejects empty `bypassReason` strings)")
 	})
 
 	t.Run("should NOT call MergePullRequest when TrivialAutoMerge=false (the default)", func(t *testing.T) {
