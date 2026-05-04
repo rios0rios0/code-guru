@@ -655,6 +655,46 @@ func TestBuildReviewCompleteBody(t *testing.T) {
 		assert.NotContains(t, body, "5 inline comments",
 			"the three PR-wide annotations must NOT inflate the count")
 	})
+
+	t.Run("should include result.Summary as a separate paragraph when non-empty (trivial fast path)", func(t *testing.T) {
+		// given: a trivial-detector-shaped result. Every detector emits
+		// a Summary like the one below; when the trivial path posts its
+		// completion annotation, that rationale is the ONLY place the
+		// PR author sees why the bot reached the verdict.
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		result := &entities.ReviewResult{
+			Verdict: "approve",
+			Summary: "Documentation-only change detected (2 markdown files). Auto-approved by trivial PR policy.",
+		}
+
+		// when
+		body := commands.BuildReviewCompleteBody(ts, result)
+
+		// then
+		assert.Contains(t, body, "**Code Guru review",
+			"the F2 review-once-gate marker must remain in the annotation body")
+		assert.Contains(t, body, result.Summary,
+			"the trivial detector's Summary must surface in the annotation body — without it the PR author only sees the verdict label and loses the rationale (especially important for `reject` verdicts like the bump-detector's missing-files message)")
+	})
+
+	t.Run("should preserve the legacy two-paragraph layout when result.Summary is empty (LLM path)", func(t *testing.T) {
+		// given: the LLM path typically leaves Summary empty because
+		// the rationale lands as inline comments. The completion
+		// annotation has shipped with two paragraphs ("review complete"
+		// + "Verdict: ... " followed by the timestamp) and we must not
+		// regress that layout while wiring the trivial-summary section.
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		result := &entities.ReviewResult{Verdict: "comment"}
+
+		// when
+		body := commands.BuildReviewCompleteBody(ts, result)
+
+		// then: between "comments." and "_Completed" there must be
+		// exactly one blank line — same as before this PR landed.
+		expected := "comments.\n\n_Completed at 2026-05-01T00:00:00Z._"
+		assert.Contains(t, body, expected,
+			"empty Summary must keep the original layout: a single blank line between the verdict line and the timestamp")
+	})
 }
 
 // stubPRStatusGetter is a 1-method test double satisfying

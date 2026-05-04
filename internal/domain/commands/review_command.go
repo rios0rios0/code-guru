@@ -580,13 +580,28 @@ func buildReviewCompleteBody(now time.Time, result *entities.ReviewResult) strin
 	if stats.inlineCommentCount != 1 {
 		commentsLabel = "comments"
 	}
+	// Surface the verdict's human-readable rationale when present.
+	// Mainly for the trivial fast path — every detector emits a
+	// `Summary` like `"Documentation-only change detected (...)"` or
+	// `"bump-go version bump is incomplete per .autobump.yaml: …"`,
+	// and dropping it would leave the PR author with only the
+	// verdict label. The LLM path typically leaves Summary empty
+	// (the rationale lands as inline comments), so the section is
+	// rendered only when there is something to say — preserving the
+	// original two-paragraph layout the LLM path has shipped with.
+	reasonBlock := ""
+	if result != nil && strings.TrimSpace(result.Summary) != "" {
+		reasonBlock = result.Summary + "\n\n"
+	}
 	return fmt.Sprintf(
 		"\xe2\x9c\x85 **Code Guru review complete.**\n\n"+
 			"Verdict: `%s` \xc2\xb7 %d inline %s.\n\n"+
+			"%s"+
 			"_Completed at %s._",
 		stats.verdict,
 		stats.inlineCommentCount,
 		commentsLabel,
+		reasonBlock,
 		now.UTC().Format(time.RFC3339),
 	)
 }
