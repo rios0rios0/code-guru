@@ -186,9 +186,19 @@ trivial:
     - 'update-go'
     - 'bump-go'
     - 'docs-only'
+  auto_merge: false      # opt-in; true completes the PR after a trivial-approve verdict
+  merge_strategy: ''     # 'merge' / 'squash' / 'rebase' — empty falls back to platform default
 ```
 
-Or via environment variables: `CODE_GURU_TRIVIAL_ADAPTERS=update-go,bump-go,docs-only`
+Or via environment variables:
+
+```bash
+CODE_GURU_TRIVIAL_ADAPTERS=update-go,bump-go,docs-only
+CODE_GURU_TRIVIAL_AUTO_MERGE=true
+CODE_GURU_TRIVIAL_MERGE_STRATEGY=squash
+```
+
+`auto_merge` is intentionally off by default — it bypasses human review and merges cross-system, so the gate is "operator must explicitly opt in". A merge failure logs at warn and the trivial-approve verdict still stands; the PR author can complete the merge manually from the platform UI.
 
 ## Server / Webhook Mode
 
@@ -363,6 +373,8 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_RULES_PATH`                | Path to rules directory                                                  |                      |
 | `CODE_GURU_PROVIDER_TOKEN`            | Git provider token                                                       |                      |
 | `CODE_GURU_TRIVIAL_ADAPTERS`          | Comma-separated adapter names                                            |                      |
+| `CODE_GURU_TRIVIAL_AUTO_MERGE`        | Opt-in flag that completes the PR after a trivial-approve verdict        | `false`              |
+| `CODE_GURU_TRIVIAL_MERGE_STRATEGY`    | gitforge merge strategy (`merge` / `squash` / `rebase`); empty = default |                      |
 | `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW`   | Records a native review (Approved / Changes Requested) on the platform's reviewer panel; set to `false` to opt out | `true`               |
 | `CODE_GURU_AI_REVIEW_DRAFTS`          | When `true`, the bot reviews draft PRs as well — by default drafts are skipped | `false`              |
 

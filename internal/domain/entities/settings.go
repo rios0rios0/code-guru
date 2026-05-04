@@ -98,6 +98,16 @@ type RulesConfig struct {
 type TrivialConfig struct {
 	Enabled  bool     `yaml:"enabled"`
 	Adapters []string `yaml:"adapters"`
+	// AutoMerge, when true, calls the provider's merge endpoint after a
+	// trivial-approve verdict. Off by default — this bypasses human
+	// review and merges cross-system, so the gate is "operator must
+	// explicitly opt in". Honours `CODE_GURU_TRIVIAL_AUTO_MERGE`.
+	AutoMerge bool `yaml:"auto_merge"`
+	// MergeStrategy is the gitforge merge strategy applied when
+	// AutoMerge fires (`"merge"` / `"squash"` / `"rebase"`). Empty
+	// falls back to the platform default. Honours
+	// `CODE_GURU_TRIVIAL_MERGE_STRATEGY`.
+	MergeStrategy string `yaml:"merge_strategy"`
 }
 
 // ServerConfig holds settings for the webhook server.
@@ -144,12 +154,20 @@ func NewSettings(path string) (*Settings, error) {
 
 	// Env vars take precedence over YAML for the small set of fields
 	// where deployments commonly use a config file as a baseline and
-	// override per-environment via env. Today this is just
-	// `CODE_GURU_TRIVIAL_ADAPTERS`; expand with discipline — every
-	// override here erodes the "config file is authoritative"
+	// override per-environment via env. Expand with discipline —
+	// every override here erodes the "config file is authoritative"
 	// guarantee, so only add fields that genuinely need it.
 	if envAdapters := parseTrivialAdaptersEnv(); len(envAdapters) > 0 {
-		settings.Trivial = TrivialConfig{Enabled: true, Adapters: envAdapters}
+		settings.Trivial.Enabled = true
+		settings.Trivial.Adapters = envAdapters
+	}
+	if raw := strings.TrimSpace(os.Getenv("CODE_GURU_TRIVIAL_AUTO_MERGE")); raw != "" {
+		if v, parseErr := strconv.ParseBool(raw); parseErr == nil {
+			settings.Trivial.AutoMerge = v
+		}
+	}
+	if raw := strings.TrimSpace(os.Getenv("CODE_GURU_TRIVIAL_MERGE_STRATEGY")); raw != "" {
+		settings.Trivial.MergeStrategy = raw
 	}
 
 	if validateErr := validateSettings(&settings); validateErr != nil {
@@ -211,8 +229,10 @@ func NewSettingsFromEnv() (*Settings, error) {
 			Path: os.Getenv("CODE_GURU_RULES_PATH"),
 		},
 		Trivial: TrivialConfig{
-			Enabled:  len(adapters) > 0,
-			Adapters: adapters,
+			Enabled:       len(adapters) > 0,
+			Adapters:      adapters,
+			AutoMerge:     parseBoolEnv("CODE_GURU_TRIVIAL_AUTO_MERGE", false),
+			MergeStrategy: strings.TrimSpace(os.Getenv("CODE_GURU_TRIVIAL_MERGE_STRATEGY")),
 		},
 		Server: ServerConfig{
 			Port:                 port,
