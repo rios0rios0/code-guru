@@ -16,6 +16,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Changed
+
+- bumped `github.com/rios0rios0/gitforge` to `v1.0.1-0.20260504201352-69d6aef74a00` (post-merge `feat/ado-merge-strategy-rebase-merge`) to pick up the new `"rebaseMerge"` -> ADO mergeStrategy `4` mapping. Without this bump, deployments setting `CODE_GURU_TRIVIAL_MERGE_STRATEGY=rebaseMerge` would be silently downgraded to `squash` by the previous gitforge default fallback. Pairs with the dev cluster Terraform change that adds `CODE_GURU_TRIVIAL_MERGE_STRATEGY=rebaseMerge` so the trivial fast path can complete PRs through Azure DevOps branch policies that require "Rebase with merge commit" as the only allowed strategy
+
 ### Added
 
 - added `Settings.Trivial.AutoMerge` (env `CODE_GURU_TRIVIAL_AUTO_MERGE`, default `false`) and `Settings.Trivial.MergeStrategy` (env `CODE_GURU_TRIVIAL_MERGE_STRATEGY`, empty falls back to platform default) so a trivial-approve verdict can optionally complete the PR via `provider.MergePullRequest`. Off by default — the gate is "operator must explicitly opt in" because auto-merge bypasses human review and merges cross-system. A merge failure degrades gracefully: the trivial-approve verdict still stands and a warn log captures the error so the PR author can finish the merge manually. Pinned by `TestTrivialFastPathPostsSingleMarkerAndOptionalMerge` (auto-merge fires on approve, skipped on the default `false`, skipped on a `reject` verdict even with `AutoMerge=true`) and two new `TestNewSettings*` rows that verify env-overlay precedence
