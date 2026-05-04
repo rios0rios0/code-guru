@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
 )
@@ -389,4 +390,48 @@ func (s *stubFileContentFetcher) GetFileContent(_ context.Context, path string) 
 func (s *stubFileContentFetcher) HasFile(_ context.Context, path string) bool {
 	_, ok := s.files[path]
 	return ok
+}
+
+func TestNewDetectorRegistryFromConfig(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dctx := repositories.DetectionContext{Files: []string{"README.md"}}
+
+	cases := []struct {
+		name      string
+		cfg       entities.TrivialConfig
+		wantFound bool
+	}{
+		{
+			name:      "should yield empty registry when Enabled=false (drift guard)",
+			cfg:       entities.TrivialConfig{Enabled: false, Adapters: []string{"docs-only"}},
+			wantFound: false,
+		},
+		{
+			name:      "should yield empty registry when Adapters is empty",
+			cfg:       entities.TrivialConfig{Enabled: true, Adapters: nil},
+			wantFound: false,
+		},
+		{
+			name:      "should register the configured adapters when Enabled=true and Adapters non-empty",
+			cfg:       entities.TrivialConfig{Enabled: true, Adapters: []string{"docs-only"}},
+			wantFound: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			registry := trivial.NewDetectorRegistryFromConfig(tc.cfg)
+
+			// when
+			_, _, found := registry.Detect(ctx, dctx)
+
+			// then
+			assert.Equal(t, tc.wantFound, found)
+		})
+	}
 }

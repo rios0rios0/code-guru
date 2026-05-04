@@ -12,7 +12,7 @@ import (
 //nolint:gochecknoglobals // constant lookup map
 var updatePythonExact = map[string]bool{
 	"pyproject.toml": true,
-	"CHANGELOG.md":   true,
+	changelogFile:    true,
 }
 
 // UpdatePythonDetector detects Python dependency update PRs.
@@ -40,7 +40,7 @@ func (d *UpdatePythonDetector) Detect(
 	}
 	return repositories.DetectionResult{
 		Detected: true,
-		Verdict:  "approve",
+		Verdict:  verdictApprove,
 		Summary: fmt.Sprintf(
 			"Python dependency update detected (%d files). Auto-approved by trivial PR policy.",
 			len(dctx.Files),

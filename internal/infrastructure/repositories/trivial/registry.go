@@ -3,7 +3,18 @@ package trivial
 import (
 	"context"
 
+	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
+)
+
+// Shared constants used by every detector in this package. The verdict
+// strings are part of the trivial-detector vocabulary (cross-mapped to
+// the LLM vocab in `internal/support/verdict_mapper.go`); `changelogFile`
+// is the canonical CHANGELOG path the bump / update detectors require.
+const (
+	verdictApprove = "approve"
+	verdictReject  = "reject"
+	changelogFile  = "CHANGELOG.md"
 )
 
 // allDetectors contains all built-in trivial PR detectors keyed by name.
@@ -34,6 +45,20 @@ func NewDetectorRegistry(enabled []string) *DetectorRegistry {
 		}
 	}
 	return &DetectorRegistry{detectors: detectors}
+}
+
+// NewDetectorRegistryFromConfig is the canonical translation from a
+// loaded `entities.TrivialConfig` to a runtime registry. Both the CLI
+// `review` controller and the long-lived webhook DI provider call this
+// — having one helper prevents the kind of webhook-vs-CLI drift that
+// shipped an empty registry to the dispatcher path. An empty / disabled
+// config yields an empty registry which short-circuits in
+// `handleTrivialDetection`.
+func NewDetectorRegistryFromConfig(cfg entities.TrivialConfig) *DetectorRegistry {
+	if !cfg.Enabled || len(cfg.Adapters) == 0 {
+		return NewDetectorRegistry(nil)
+	}
+	return NewDetectorRegistry(cfg.Adapters)
 }
 
 // Detect checks the file list against all enabled detectors.
