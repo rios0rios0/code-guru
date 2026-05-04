@@ -142,11 +142,39 @@ func NewSettings(path string) (*Settings, error) {
 	settings.Server.WebhookSecret = configEntities.ResolveToken(settings.Server.WebhookSecret)
 	settings.GitHubApp.PrivateKey = configEntities.ResolveToken(settings.GitHubApp.PrivateKey)
 
+	// Env vars take precedence over YAML for the small set of fields
+	// where deployments commonly use a config file as a baseline and
+	// override per-environment via env. Today this is just
+	// `CODE_GURU_TRIVIAL_ADAPTERS`; expand with discipline — every
+	// override here erodes the "config file is authoritative"
+	// guarantee, so only add fields that genuinely need it.
+	if envAdapters := parseTrivialAdaptersEnv(); len(envAdapters) > 0 {
+		settings.Trivial = TrivialConfig{Enabled: true, Adapters: envAdapters}
+	}
+
 	if validateErr := validateSettings(&settings); validateErr != nil {
 		return nil, validateErr
 	}
 
 	return &settings, nil
+}
+
+// parseTrivialAdaptersEnv parses `CODE_GURU_TRIVIAL_ADAPTERS` into a
+// trimmed slice of adapter names. Returns nil when unset or empty.
+// Lives at the package level so `NewSettings` (YAML path) and
+// `NewSettingsFromEnv` (env-only path) share the same parsing.
+func parseTrivialAdaptersEnv() []string {
+	raw := os.Getenv("CODE_GURU_TRIVIAL_ADAPTERS")
+	if raw == "" {
+		return nil
+	}
+	var adapters []string
+	for a := range strings.SplitSeq(raw, ",") {
+		if trimmed := strings.TrimSpace(a); trimmed != "" {
+			adapters = append(adapters, trimmed)
+		}
+	}
+	return adapters
 }
 
 // NewSettingsFromEnv builds settings entirely from environment variables.
@@ -158,14 +186,7 @@ func NewSettingsFromEnv() (*Settings, error) {
 	workers, _ := strconv.Atoi(envOrDefault("CODE_GURU_SERVER_WORKERS", strconv.Itoa(runtime.NumCPU())))
 	shutdownTimeout, _ := time.ParseDuration(envOrDefault("CODE_GURU_SERVER_SHUTDOWN_TIMEOUT", "30s"))
 
-	var adapters []string
-	if raw := os.Getenv("CODE_GURU_TRIVIAL_ADAPTERS"); raw != "" {
-		for a := range strings.SplitSeq(raw, ",") {
-			if trimmed := strings.TrimSpace(a); trimmed != "" {
-				adapters = append(adapters, trimmed)
-			}
-		}
-	}
+	adapters := parseTrivialAdaptersEnv()
 
 	settings := &Settings{
 		AI: AIConfig{
