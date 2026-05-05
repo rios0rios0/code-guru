@@ -739,8 +739,46 @@ type recordingReviewProvider struct {
 	listCommentsErr error
 	// merges records every call to `MergePullRequest` so tests can
 	// assert auto-merge behaviour on the trivial fast path.
-	merges    []recordedMerge
-	mergeErr  error
+	merges   []recordedMerge
+	mergeErr error
+	// threadComments records every inline `PostPullRequestThreadComment`
+	// the command issues so tests can pin the resolution-reply contract
+	// (one reply per resolved/outstanding/outdated thread, on the same
+	// file:line as the original bot thread).
+	threadComments []recordedThreadComment
+	// threadCommentErr, when set, is returned by
+	// `PostPullRequestThreadComment` so tests can drive the soft-fail
+	// path (a reply failure must NOT block the rest of the resolutions
+	// or the surrounding review).
+	threadCommentErr error
+	// threadCommentNextID is the value returned as the new thread ID
+	// from `PostPullRequestThreadComment`. Tests rarely care about the
+	// returned value (it is captured for the future "edit on second
+	// push" feature), so the default of 0 is fine.
+	threadCommentNextID int
+	// threadStatusUpdates records every
+	// `UpdatePullRequestThreadStatus` call so tests can assert the
+	// auto-close behaviour for `resolved` / `outdated` resolutions.
+	threadStatusUpdates []recordedThreadStatusUpdate
+	// threadStatusErr, when set, is returned from
+	// `UpdatePullRequestThreadStatus` so the resolution-soft-fail
+	// contract can be exercised end-to-end.
+	threadStatusErr error
+}
+
+// recordedThreadComment captures one inline thread-comment post.
+type recordedThreadComment struct {
+	filePath string
+	line     int
+	body     string
+}
+
+// recordedThreadStatusUpdate captures one
+// `UpdatePullRequestThreadStatus` call so tests can pin the auto-close
+// contract.
+type recordedThreadStatusUpdate struct {
+	threadID int
+	status   string
 }
 
 type recordedMerge struct {
@@ -825,6 +863,40 @@ func (r *recordingReviewProvider) GetPullRequestStatus(
 	_ int,
 ) (string, error) {
 	return "active", nil
+}
+
+func (r *recordingReviewProvider) PostPullRequestThreadComment(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	_ int,
+	filePath string,
+	line int,
+	body string,
+	_ ...forgeEntities.CommentOption,
+) (int, error) {
+	r.threadComments = append(r.threadComments, recordedThreadComment{
+		filePath: filePath,
+		line:     line,
+		body:     body,
+	})
+	if r.threadCommentErr != nil {
+		return 0, r.threadCommentErr
+	}
+	return r.threadCommentNextID, nil
+}
+
+func (r *recordingReviewProvider) UpdatePullRequestThreadStatus(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	_ int,
+	threadID int,
+	status string,
+) error {
+	r.threadStatusUpdates = append(r.threadStatusUpdates, recordedThreadStatusUpdate{
+		threadID: threadID,
+		status:   status,
+	})
+	return r.threadStatusErr
 }
 
 func TestAnnotationThreadStatusContract(t *testing.T) {
@@ -1242,7 +1314,6 @@ func TestBuildConversation(t *testing.T) {
 
 	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 	const prID = 4242
-	diffs := []entities.FileDiff{{Path: "internal/foo.go", Diff: "@@ -1,1 +1,1 @@", Language: "go"}}
 
 	t.Run("should return nil when UserMentioned is false", func(t *testing.T) {
 		t.Parallel()
@@ -1259,7 +1330,7 @@ func TestBuildConversation(t *testing.T) {
 		}
 
 		// when
-		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID, diffs,
+		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID,
 			commands.ReviewOptions{UserMentioned: false})
 
 		// then
@@ -1279,7 +1350,7 @@ func TestBuildConversation(t *testing.T) {
 		}
 
 		// when
-		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID, diffs,
+		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID,
 			commands.ReviewOptions{UserMentioned: true})
 
 		// then
@@ -1303,19 +1374,22 @@ func TestBuildConversation(t *testing.T) {
 		}
 
 		// when
-		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID, diffs,
+		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID,
 			commands.ReviewOptions{UserMentioned: true})
 
 		// then
 		assert.Nil(t, got, "list error must degrade to nil so the re-review still runs")
 	})
 
-	t.Run("should drop threads anchored to files outside the live diff", func(t *testing.T) {
+	t.Run("should keep threads anchored to files outside the live diff so the LLM can mark them outdated", func(t *testing.T) {
 		t.Parallel()
 
 		// given: bot has prior comments on both a file in the current
-		// diff AND a file the PR no longer touches. Only the live one
-		// should reach the prompt.
+		// diff AND a file the PR no longer touches. Both must reach the
+		// prompt — the stale-file thread is precisely the case the
+		// `outdated` resolution status exists for, and dropping it at
+		// the conversation stage would deny the LLM the chance to
+		// auto-close it.
 		rc := commands.NewReviewCommand(nil, nil, nil)
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
@@ -1325,12 +1399,15 @@ func TestBuildConversation(t *testing.T) {
 		}
 
 		// when
-		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID, diffs,
+		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID,
 			commands.ReviewOptions{UserMentioned: true})
 
 		// then
-		require.Len(t, got, 1, "thread anchored to a file outside the diff must be dropped")
-		assert.Equal(t, "internal/foo.go", got[0].FilePath)
+		require.Len(t, got, 2, "every prior bot thread must reach the LLM regardless of whether its file is still in the latest diff — that is what enables the `outdated` resolution path")
+		paths := []string{got[0].FilePath, got[1].FilePath}
+		assert.Contains(t, paths, "internal/foo.go")
+		assert.Contains(t, paths, "internal/old.go",
+			"the stale-file thread must reach the prompt so the LLM can classify it as `outdated`; if it never appears in the conversation, the bot can never auto-close it")
 	})
 }
 
@@ -1657,4 +1734,505 @@ func TestExecuteLLMPathSubmitsNativeReviewWithEmptyBody(t *testing.T) {
 		assert.Equal(t, 1, summaryOccurrences,
 			"the LLM summary text MUST appear in exactly ONE PR-wide comment (the annotation). The standalone summary post that `postComments` used to emit on no-inline-comments reviews is removed in favour of letting the annotation be the single source of truth — without this gate we'd drift back into the duplicate-summary failure mode the live PR surfaced.")
 	})
+}
+
+// TestApplyThreadResolutions pins the resolution-aware re-review
+// contract introduced by the `feat/resolution-aware-rereview` work:
+// instead of re-emitting the same finding (or reworded duplicate) on
+// every `@code-guru` mention, the bot now classifies every prior bot
+// thread as `resolved` / `outstanding` / `outdated` and acts on each
+// classification surgically — one reply per thread, plus an auto-close
+// for `resolved` / `outdated` so the PR author does not have to dismiss
+// addressed threads by hand.
+func TestApplyThreadResolutions(t *testing.T) {
+	t.Parallel()
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	const prID = 4242
+
+	// fixedThreads is the conversation block the walker would have
+	// produced from the prior bot inline comments. Each thread carries
+	// the gitforge ThreadID so the auto-close path has a concrete
+	// integer to forward to UpdatePullRequestThreadStatus.
+	fixedThreads := []entities.ReviewThread{
+		{
+			FilePath:      "internal/foo.go",
+			Line:          10,
+			ThreadID:      111,
+			RootCommentID: 1,
+			Comments: []entities.ReviewMessage{
+				{Author: "code-guru[bot]", Body: "[high] possible nil deref"},
+			},
+		},
+		{
+			FilePath:      "internal/bar.go",
+			Line:          20,
+			ThreadID:      222,
+			RootCommentID: 2,
+			Comments: []entities.ReviewMessage{
+				{Author: "code-guru[bot]", Body: "[medium] avoid global state"},
+			},
+		},
+	}
+
+	t.Run("should post one reply per resolution and update status for resolved threads", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the LLM classifies thread #111 as resolved (the diff
+		// fixed it) and thread #222 as outstanding (still present).
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+		resolutions := []entities.ThreadResolution{
+			{FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "Diff adds the nil check."},
+			{FilePath: "internal/bar.go", Line: 20, Status: "outstanding", Explanation: "Latest diff still references the global."},
+		}
+
+		// when
+		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, fixedThreads, resolutions)
+
+		// then: one reply per resolution, each anchored on the original
+		// thread's file:line so the user sees the bot engaging with the
+		// existing thread instead of opening a parallel comment.
+		require.Len(t, provider.threadComments, 2,
+			"there must be exactly one reply per ThreadResolution — duplicate replies would re-create the flooding the resolution path is designed to fix")
+		assert.Equal(t, "internal/foo.go", provider.threadComments[0].filePath)
+		assert.Equal(t, 10, provider.threadComments[0].line)
+		assert.Contains(t, provider.threadComments[0].body, "Resolved",
+			"the resolved-reply body must carry the explicit Resolved headline so the PR author can tell at a glance the bot considers this addressed")
+		assert.Contains(t, provider.threadComments[0].body, "Diff adds the nil check.",
+			"the LLM's explanation must surface in the reply body — without it the user has the verdict but no rationale")
+		assert.Equal(t, "internal/bar.go", provider.threadComments[1].filePath)
+		assert.Equal(t, 20, provider.threadComments[1].line)
+		assert.Contains(t, provider.threadComments[1].body, "outstanding",
+			"the outstanding-reply body must mention `outstanding` so the user knows the concern is still open")
+
+		// only the `resolved` thread should auto-close — `outstanding`
+		// keeps the thread `active` since the bot is restating the
+		// concern, not closing the loop.
+		require.Len(t, provider.threadStatusUpdates, 1,
+			"only the resolved/outdated resolutions should call UpdatePullRequestThreadStatus; outstanding leaves the thread active")
+		assert.Equal(t, 111, provider.threadStatusUpdates[0].threadID,
+			"the auto-close must target the resolved thread, not the outstanding one")
+		assert.Equal(t, "fixed", provider.threadStatusUpdates[0].status,
+			"`resolved` must map to the platform `fixed` state — that is what ADO renders as a closed-with-resolution thread")
+
+		// the returned anchor set must only carry CLOSED-thread
+		// anchors — `outstanding` keeps the prior thread active, and a
+		// new comment on the same line is more likely a separate
+		// finding than a duplicate, so suppressing it would be more
+		// aggressive than the duplicate-guard the dedup gate is meant
+		// to be. With `resolved` + `outstanding` here, only the
+		// `resolved` anchor (`internal/foo.go:10`) must be in the set.
+		require.Len(t, handled, 1,
+			"the dedup gate must drop new comments only on anchors whose prior thread is now closed; outstanding anchors must remain free for distinct new findings")
+		_, ok := handled["internal/foo.go:10"]
+		assert.True(t, ok, "the resolved-status anchor must be in the dedup gate so a duplicate of the same finding gets suppressed")
+	})
+
+	t.Run("should map outdated to closed and auto-close the thread", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+		resolutions := []entities.ThreadResolution{
+			{FilePath: "internal/foo.go", Line: 10, Status: "outdated", Explanation: "The function in question was deleted."},
+		}
+
+		// when
+		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, fixedThreads, resolutions)
+
+		// then
+		require.Len(t, provider.threadComments, 1)
+		assert.Contains(t, provider.threadComments[0].body, "Outdated",
+			"the outdated-reply body must mention `Outdated` so the user knows the concern no longer applies")
+		require.Len(t, provider.threadStatusUpdates, 1)
+		assert.Equal(t, "closed", provider.threadStatusUpdates[0].status,
+			"`outdated` must map to the platform `closed` state — soft-close without making a content claim")
+		assert.Len(t, handled, 1)
+	})
+
+	t.Run("should disambiguate duplicate anchors via the synthetic prompt id", func(t *testing.T) {
+		t.Parallel()
+
+		// given: two prior bot threads share the same `<file>:<line>`
+		// anchor — the failure mode this fix addresses. Without the
+		// synthetic id, the post-pipeline's anchor map would collapse
+		// both threads onto one entry and silently lose every
+		// resolution past the first. With the id, each resolution
+		// routes to the correct thread.
+		twoThreadsSameAnchor := []entities.ReviewThread{
+			{
+				FilePath: "internal/foo.go", Line: 10, ThreadID: 111, RootCommentID: 1,
+				Comments: []entities.ReviewMessage{{Author: "code-guru[bot]", Body: "[high] nil-check"}},
+			},
+			{
+				FilePath: "internal/foo.go", Line: 10, ThreadID: 222, RootCommentID: 5,
+				Comments: []entities.ReviewMessage{{Author: "code-guru[bot]", Body: "[medium] separate concern on the same line"}},
+			},
+		}
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+		resolutions := []entities.ThreadResolution{
+			{ID: "T1", FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "Diff added the nil check."},
+			{ID: "T2", FilePath: "internal/foo.go", Line: 10, Status: "outdated", Explanation: "The unrelated concern no longer applies."},
+		}
+
+		// when
+		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, twoThreadsSameAnchor, resolutions)
+
+		// then: BOTH resolutions must route to their correct thread —
+		// the auto-close calls must hit ThreadID 111 (T1, resolved →
+		// fixed) and ThreadID 222 (T2, outdated → closed). Without the
+		// id-based match the post-pipeline would silently drop one of
+		// these.
+		require.Len(t, provider.threadComments, 2,
+			"each prior thread sharing the anchor must receive its own reply when the LLM disambiguates via id")
+		require.Len(t, provider.threadStatusUpdates, 2,
+			"both closing resolutions must trigger an UpdatePullRequestThreadStatus call — without the id-based match one would be silently dropped")
+		statusByThreadID := map[int]string{}
+		for _, u := range provider.threadStatusUpdates {
+			statusByThreadID[u.threadID] = u.status
+		}
+		assert.Equal(t, "fixed", statusByThreadID[111],
+			"T1 → resolved must map ThreadID 111 to `fixed`")
+		assert.Equal(t, "closed", statusByThreadID[222],
+			"T2 → outdated must map ThreadID 222 to `closed` — without the id-based match this would have routed to ThreadID 111 (a wrong-thread auto-close) or been dropped")
+		assert.Len(t, handled, 1,
+			"both resolutions close the same anchor `internal/foo.go:10`, so the dedup gate has one normalised key (the set, not the list)")
+	})
+
+	t.Run("should normalise leading slash so ADO-shape paths match conversation anchors", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the LLM emits the unprefixed path (matching the prompt's
+		// `Thread T1 on internal/foo.go:10` header) but the conversation walker
+		// captured the ADO-shape `/internal/foo.go`. Both must compare equal
+		// after normalisation, otherwise every ADO re-review would skip every
+		// resolution as "unmatched".
+		threadsADO := []entities.ReviewThread{
+			{
+				FilePath: "/internal/foo.go", Line: 10, ThreadID: 111, RootCommentID: 1,
+				Comments: []entities.ReviewMessage{{Author: "code-guru[bot]", Body: "x"}},
+			},
+		}
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+		resolutions := []entities.ThreadResolution{
+			{FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "Done."},
+		}
+
+		// when
+		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, threadsADO, resolutions)
+
+		// then
+		require.Len(t, provider.threadComments, 1, "ADO/AI path normalisation must let the resolution match the conversation thread")
+		assert.Len(t, handled, 1)
+	})
+
+	t.Run("should skip a resolution whose anchor matches no prior thread (LLM hallucinated anchor)", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the LLM emits a resolution for a file:line the prompt
+		// never showed it. Without this guard, the bot would post an
+		// inline reply on a random line and call status updates on a
+		// thread that does not exist.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+		resolutions := []entities.ThreadResolution{
+			{FilePath: "does/not/exist.go", Line: 99, Status: "resolved", Explanation: "."},
+		}
+
+		// when
+		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, fixedThreads, resolutions)
+
+		// then
+		assert.Empty(t, provider.threadComments, "an unmatched resolution must not produce a stray inline comment somewhere on the PR")
+		assert.Empty(t, provider.threadStatusUpdates, "an unmatched resolution must not attempt a status update on a thread that does not exist")
+		assert.Empty(t, handled, "no anchor was handled, so the dedup gate must remain empty")
+	})
+
+	t.Run("should skip the auto-close when the thread has no usable ThreadID", func(t *testing.T) {
+		t.Parallel()
+
+		// given: GitHub today does not always carry a thread-status
+		// concept; gitforge surfaces ThreadID=0 in that case. The
+		// reply still posts (the user benefits from the explanation),
+		// but the auto-close call is skipped because there is no thread
+		// for the provider to update.
+		threadsNoID := []entities.ReviewThread{
+			{
+				FilePath: "internal/foo.go", Line: 10, ThreadID: 0, RootCommentID: 1,
+				Comments: []entities.ReviewMessage{{Author: "code-guru[bot]", Body: "x"}},
+			},
+		}
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+		resolutions := []entities.ThreadResolution{
+			{FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "Done."},
+		}
+
+		// when
+		commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, threadsNoID, resolutions)
+
+		// then
+		require.Len(t, provider.threadComments, 1, "the explanation reply still posts even when the auto-close is unsupported")
+		assert.Empty(t, provider.threadStatusUpdates,
+			"a ThreadID of 0 must NOT trigger an UpdatePullRequestThreadStatus call — the provider has no handle to act on")
+	})
+
+	t.Run("should return nil and skip when there are no resolutions", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+
+		// when
+		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, fixedThreads, nil)
+
+		// then
+		assert.Nil(t, handled)
+		assert.Empty(t, provider.threadComments)
+		assert.Empty(t, provider.threadStatusUpdates)
+	})
+
+	t.Run("should still mark the anchor handled even when the reply post fails", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the soft-fail contract — a reply failure must still
+		// suppress the duplicate inline comment in `postComments` on the
+		// same anchor. Otherwise a transient ADO blip would let the bot
+		// post the comment that the resolution was supposed to replace.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			threadCommentErr: errors.New("transient ADO 503"),
+		}
+		resolutions := []entities.ThreadResolution{
+			{FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "Done."},
+		}
+
+		// when
+		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, fixedThreads, resolutions)
+
+		// then
+		require.Len(t, provider.threadComments, 1, "the helper attempted the post once before the error path took over")
+		assert.Empty(t, provider.threadStatusUpdates,
+			"a reply failure must short-circuit the auto-close so the bot does not advertise a `fixed` thread that has no visible reply")
+		assert.Len(t, handled, 1,
+			"the anchor must be marked handled even on reply failure so the surrounding postComments still drops the duplicate inline comment")
+	})
+}
+
+// TestExecuteMentionPathAppliesThreadResolutions wires the LLM stub to a
+// recording provider end-to-end so the resolution-aware re-review path
+// is exercised through Execute, not just through the helper. This is
+// the test that fails if a future refactor disconnects ThreadResolutions
+// from the post-pipeline (e.g. someone forgets to forward it through a
+// new wrapper) — the helper-level tests above would still pass even
+// then.
+func TestExecuteMentionPathAppliesThreadResolutions(t *testing.T) {
+	t.Parallel()
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	pr := forgeEntities.PullRequestDetail{
+		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "feat", URL: "https://example/pr/4242"},
+	}
+
+	t.Run("should reply on each prior thread, auto-close the resolved one, and drop the duplicated new comment", func(t *testing.T) {
+		t.Parallel()
+
+		// given:
+		//   * one prior bot inline thread on internal/foo.go:10 (ThreadID 111).
+		//   * the LLM marks that thread `resolved` AND emits a new
+		//     comment on the same anchor — the duplicate-flood failure
+		//     mode this whole change is fixing. The dedup-by-anchor
+		//     gate must drop that new comment so the thread does NOT
+		//     receive both a "Resolved" reply AND a duplicate "still
+		//     not handled" inline comment.
+		rules := &doubles.StubRulesRepository{}
+		ai := &doubles.StubAIReviewerRepository{
+			NameValue: "stub",
+			Result: &entities.ReviewResult{
+				Verdict: "approve",
+				Summary: "All prior issues addressed.",
+				ThreadResolutions: []entities.ThreadResolution{
+					{
+						FilePath:    "internal/foo.go",
+						Line:        10,
+						Status:      "resolved",
+						Explanation: "The new diff guards against nil before deref.",
+					},
+				},
+				Comments: []entities.ReviewComment{
+					{
+						FilePath: "internal/foo.go",
+						Line:     10,
+						Severity: "warning",
+						Body:     "Reworded restatement of the prior nil-check finding.",
+					},
+				},
+			},
+		}
+		rc := commands.NewReviewCommand(ai, rules, nil)
+		provider := &recordingReviewProvider{
+			files: []forgeEntities.PullRequestFile{
+				{Path: "internal/foo.go", Patch: "@@ -10 +10 @@\n-old\n+new\n"},
+			},
+			existingComments: []forgeEntities.PullRequestComment{
+				{ID: 1, ThreadID: 111, Line: 10, FilePath: "internal/foo.go", Body: "[high] consider nil-check", Author: "code-guru[bot]"},
+			},
+		}
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			UserMentioned: true,
+		})
+
+		// then
+		require.NoError(t, err)
+
+		// 1. exactly one inline reply on the prior thread's anchor —
+		//    the bot engaged with the existing thread instead of
+		//    flooding the PR with a parallel comment.
+		require.Len(t, provider.threadComments, 1,
+			"the mention path must produce exactly one reply per prior thread; the new `comments[]` entry on the same anchor must NOT also produce an inline post — that is the duplicate-flood failure mode")
+		assert.Equal(t, "internal/foo.go", provider.threadComments[0].filePath)
+		assert.Equal(t, 10, provider.threadComments[0].line)
+		assert.Contains(t, provider.threadComments[0].body, "Resolved",
+			"the resolved-status reply must surface the green-check headline so the user sees the bot considers the prior concern addressed")
+
+		// 2. the resolved thread must auto-close so the user does not
+		//    have to dismiss it by hand.
+		require.Len(t, provider.threadStatusUpdates, 1,
+			"a resolved status must call UpdatePullRequestThreadStatus so the platform thread state matches the bot's verdict")
+		assert.Equal(t, 111, provider.threadStatusUpdates[0].threadID)
+		assert.Equal(t, "fixed", provider.threadStatusUpdates[0].status)
+
+		// 3. the LLM's prompt must have received the conversation —
+		//    pin the contract so a future refactor that disconnects
+		//    BuildConversation from ReviewRequest fails here.
+		require.Len(t, ai.LastRequest.Conversation, 1,
+			"the LLM must receive the prior thread as conversation context — that is what lets it judge whether the concern is resolved")
+		assert.Equal(t, int64(111), ai.LastRequest.Conversation[0].ThreadID,
+			"the gitforge ThreadID must propagate from BuildConversation through ReviewRequest into the LLM call")
+	})
+}
+
+// TestBuildResolutionReplyBody pins the body shape per LLM verdict so a
+// future formatting refactor cannot silently turn the headline into
+// something the PR author cannot scan.
+func TestBuildResolutionReplyBody(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		status       string
+		explanation  string
+		wantHeadline string
+	}{
+		{name: "resolved headline carries the green check", status: "resolved", explanation: "Fixed.", wantHeadline: "Resolved"},
+		{name: "outstanding headline carries the warn", status: "outstanding", explanation: "Still here.", wantHeadline: "Still outstanding"},
+		{name: "outdated headline carries the soft close", status: "outdated", explanation: "Code removed.", wantHeadline: "Outdated"},
+		{name: "unknown status falls back to a generic note", status: "weird", explanation: "?", wantHeadline: "Code Guru re-review note"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			res := entities.ThreadResolution{Status: tc.status, Explanation: tc.explanation}
+
+			// when
+			body := commands.BuildResolutionReplyBody(res)
+
+			// then
+			assert.Contains(t, body, tc.wantHeadline,
+				"every resolution status must produce a headline the PR author can scan without reading the body")
+			assert.Contains(t, body, tc.explanation,
+				"the LLM's explanation must surface in the body verbatim — that is the rationale the user reads")
+		})
+	}
+
+	t.Run("should fall back to a placeholder when the explanation is empty", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the prompt asks for an explanation but malformed
+		// responses sometimes drop it. The body must still render
+		// something readable rather than a trailing blank section.
+		res := entities.ThreadResolution{Status: "resolved", Explanation: ""}
+
+		// when
+		body := commands.BuildResolutionReplyBody(res)
+
+		// then
+		assert.Contains(t, body, "(no explanation provided)",
+			"an empty explanation must surface a placeholder so the body is never just a bare headline")
+	})
+}
+
+// TestMapResolutionStatusToThreadState pins the LLM-vocabulary →
+// platform-vocabulary mapping the auto-close path forwards to gitforge.
+// A regression here would silently change how resolved threads render
+// on Azure DevOps (`fixed` vs. `closed` vs. `active`).
+func TestMapResolutionStatusToThreadState(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		status string
+		want   string
+	}{
+		{name: "resolved maps to fixed", status: "resolved", want: "fixed"},
+		{name: "outdated maps to closed", status: "outdated", want: "closed"},
+		{name: "outstanding leaves the thread active", status: "outstanding", want: "active"},
+		{name: "case-insensitive: RESOLVED still maps to fixed", status: "RESOLVED", want: "fixed"},
+		{name: "trims whitespace before mapping", status: "  resolved  ", want: "fixed"},
+		{name: "unknown verbiage falls back to active so the bot never auto-closes by accident", status: "weird", want: "active"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given / when
+			got := commands.MapResolutionStatusToThreadState(tc.status)
+
+			// then
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestShouldCloseResolution pins which LLM verdicts trigger the
+// auto-close path. `outstanding` must NOT close the thread — the bot is
+// restating the concern, not signalling resolution.
+func TestShouldCloseResolution(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		status string
+		want   bool
+	}{
+		{name: "resolved closes", status: "resolved", want: true},
+		{name: "outdated closes", status: "outdated", want: true},
+		{name: "outstanding does NOT close", status: "outstanding", want: false},
+		{name: "case-insensitive resolved still closes", status: "Resolved", want: true},
+		{name: "unknown verbiage does NOT close (defensive)", status: "approve", want: false},
+		{name: "empty does NOT close", status: "", want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given / when
+			got := commands.ShouldCloseResolution(tc.status)
+
+			// then
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }

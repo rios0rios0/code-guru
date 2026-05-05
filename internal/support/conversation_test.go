@@ -182,6 +182,29 @@ func TestBuildReviewConversation(t *testing.T) {
 		require.Len(t, threads, 1)
 		require.Len(t, threads[0].Comments, 3, "deep replies must still attach to the bot root")
 	})
+
+	t.Run("should populate ThreadID and RootCommentID on each thread for the auto-close path", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the resolution-aware re-review path needs the
+		// gitforge ThreadID on every thread so the post-pipeline can
+		// call UpdatePullRequestThreadStatus when the LLM marks a
+		// thread as resolved. Without this propagation the auto-close
+		// would silently fail with ThreadID=0.
+		comments := []forgeEntities.PullRequestComment{
+			{ID: 1, ThreadID: 111, Line: 10, FilePath: "a.go", Body: "[high] x", Author: "code-guru[bot]"},
+		}
+
+		// when
+		threads := support.BuildReviewConversation(comments, isBot, nil)
+
+		// then
+		require.Len(t, threads, 1)
+		assert.Equal(t, int64(111), threads[0].ThreadID,
+			"the gitforge ThreadID must reach the post-pipeline so UpdatePullRequestThreadStatus has a concrete handle to act on")
+		assert.Equal(t, int64(1), threads[0].RootCommentID,
+			"the root bot comment ID must reach the post-pipeline for future thread-reply / edit-on-second-push features")
+	})
 }
 
 func TestIsBotAuthor(t *testing.T) {
