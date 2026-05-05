@@ -201,12 +201,13 @@ func (c *ReviewCommand) Execute(
 	// findings — see `support.BuildReviewConversation` for the shape.
 	// First-pass reviews leave Conversation nil so the prompt is
 	// byte-for-byte the same as before this change landed.
+	conversation := c.buildConversation(ctx, provider, repo, pr.ID, diffs, opts)
 	request := entities.ReviewRequest{
 		Repository:   repo,
 		PullRequest:  pr,
 		Diffs:        diffs,
 		Rules:        rules,
-		Conversation: c.buildConversation(ctx, provider, repo, pr.ID, diffs, opts),
+		Conversation: conversation,
 	}
 
 	result, err := c.aiReviewer.ReviewDiff(ctx, request)
@@ -248,7 +249,15 @@ func (c *ReviewCommand) Execute(
 				len(result.Comments),
 			)
 		} else {
-			c.postComments(ctx, provider, repo, pr.ID, result)
+			// On the mention re-review path, act on the LLM's per-thread
+			// resolution decisions BEFORE posting any new inline comments.
+			// `applyThreadResolutions` posts one short reply per prior
+			// thread + auto-resolves the threads marked `resolved`, and
+			// returns the set of (file, line) pairs the LLM has already
+			// addressed so `postComments` can drop new comments that
+			// would otherwise land as a duplicate on the same anchor.
+			handled := c.applyThreadResolutions(ctx, provider, repo, pr.ID, conversation, result.ThreadResolutions)
+			c.postComments(ctx, provider, repo, pr.ID, result, handled)
 			// After the inline / summary comments land, post a tiny
 			// completion notice so the PR author sees a visible
 			// transition from "reviewing" (PR #102) to "done".
@@ -779,6 +788,7 @@ func (c *ReviewCommand) postComments(
 	repo forgeEntities.Repository,
 	prID int,
 	result *entities.ReviewResult,
+	handledAnchors map[string]struct{},
 ) {
 	// Note: the closed-PR re-check that decides whether to post at
 	// all lives in `Execute` so a single `GetPullRequestStatus` call
@@ -803,6 +813,7 @@ func (c *ReviewCommand) postComments(
 	// summary paragraph.
 
 	comments := c.dropStaleComments(ctx, provider, repo, prID, result.Comments)
+	comments = c.dropResolvedAnchorComments(prID, comments, handledAnchors)
 	comments = c.dropDuplicateComments(ctx, provider, repo, prID, comments)
 
 	for _, comment := range comments {
@@ -1221,6 +1232,229 @@ func summarizeStaleFilePaths(dropped []entities.ReviewComment) string {
 		return strings.Join(paths, ", ")
 	}
 	return fmt.Sprintf("%s (+%d more)", strings.Join(paths[:maxShown], ", "), len(paths)-maxShown)
+}
+
+// applyThreadResolutions consumes the LLM's per-prior-thread verdict on
+// the mention re-review path. For every entry the bot:
+//
+//  1. matches the resolution to one of the threads the conversation
+//     walker built (by normalised file path + line — the durable key the
+//     LLM saw in the prompt's `Thread on <file>:<line>` header);
+//  2. posts a short inline reply on the same anchor so the user sees the
+//     bot engaging with the existing thread instead of opening a brand
+//     new comment somewhere else;
+//  3. for `resolved` and `outdated` verdicts, calls
+//     `UpdatePullRequestThreadStatus` so the thread no longer renders as
+//     "active / awaiting reviewer" — operationally the difference
+//     between "the bot says it is fixed" (which the user has to click
+//     to dismiss) and "the bot marked it fixed" (which closes itself).
+//
+// Returns the set of normalised `(file, line)` anchors the function
+// addressed, so the caller's `postComments` pass can drop any new
+// `Comments` entry the LLM also emitted on the same anchor — that is
+// the duplicate-flood failure mode this whole change is fixing.
+//
+// Best-effort: a missing thread match logs at debug and skips that
+// resolution rather than failing the review (the LLM occasionally
+// hallucinates a thread anchor that does not exist in the prompt). A
+// reply / status-update failure logs at warn and proceeds — the next
+// review run will re-attempt via the same thread_resolutions path.
+//
+// Returns nil (and a nil set) when there are no resolutions to apply,
+// which is the normal first-pass case.
+func (c *ReviewCommand) applyThreadResolutions(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+	threads []entities.ReviewThread,
+	resolutions []entities.ThreadResolution,
+) map[string]struct{} {
+	if len(resolutions) == 0 || len(threads) == 0 {
+		return nil
+	}
+
+	// Index threads by normalised (file, line) so the LLM-emitted key
+	// matches the conversation-walker's key without the caller having
+	// to remember which side strips the leading `/`.
+	byAnchor := make(map[string]entities.ReviewThread, len(threads))
+	for _, t := range threads {
+		byAnchor[threadAnchorKey(t.FilePath, t.Line)] = t
+	}
+
+	handled := make(map[string]struct{}, len(resolutions))
+	for _, res := range resolutions {
+		key := threadAnchorKey(res.FilePath, res.Line)
+		thread, ok := byAnchor[key]
+		if !ok {
+			logger.Debugf(
+				"PR #%d: thread_resolutions entry for %s:%d does not match any prior bot thread; skipping",
+				prID, res.FilePath, res.Line,
+			)
+			continue
+		}
+		// Mark the anchor as handled BEFORE the network calls below so
+		// a transient post / status-update failure still suppresses the
+		// duplicate comment in `postComments` — the LLM has already
+		// classified this anchor and we never want it to land twice on
+		// the same review.
+		handled[key] = struct{}{}
+
+		body := buildResolutionReplyBody(res)
+		if _, err := provider.PostPullRequestThreadComment(
+			ctx, repo, prID, thread.FilePath, thread.Line, body,
+		); err != nil {
+			logger.Warnf(
+				"PR #%d: failed to post resolution reply on %s:%d (status=%s): %v",
+				prID, thread.FilePath, thread.Line, res.Status, err,
+			)
+			continue
+		}
+
+		if shouldCloseResolution(res.Status) && thread.ThreadID > 0 {
+			status := mapResolutionStatusToThreadState(res.Status)
+			if err := provider.UpdatePullRequestThreadStatus(
+				ctx, repo, prID, int(thread.ThreadID), status,
+			); err != nil {
+				logger.Warnf(
+					"PR #%d: failed to set thread %d on %s:%d to %q: %v — reply was posted, only the auto-close failed",
+					prID, thread.ThreadID, thread.FilePath, thread.Line, status, err,
+				)
+			}
+		}
+	}
+
+	if len(handled) > 0 {
+		logger.Infof(
+			"PR #%d: applied %d thread resolution(s) on the re-review path",
+			prID, len(handled),
+		)
+	}
+	return handled
+}
+
+// resolutionStatus* literals are the canonical strings the LLM emits in
+// `ThreadResolution.Status`. Defined as constants so the prompt and the
+// post-pipeline cannot drift apart silently — a future tweak to the
+// prompt that introduces a fourth state will fail compilation here.
+const (
+	resolutionStatusResolved    = "resolved"
+	resolutionStatusOutstanding = "outstanding"
+	resolutionStatusOutdated    = "outdated"
+)
+
+// shouldCloseResolution returns true when the resolution status maps to
+// a thread state that should auto-close the thread (so the PR author
+// does not have to dismiss it by hand). `outstanding` keeps the thread
+// `active` — the bot is restating the concern, not closing the loop.
+func shouldCloseResolution(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case resolutionStatusResolved, resolutionStatusOutdated:
+		return true
+	default:
+		return false
+	}
+}
+
+// mapResolutionStatusToThreadState turns the LLM's vocabulary into the
+// platform thread-status string expected by gitforge's
+// `UpdatePullRequestThreadStatus`. Azure DevOps recognises `"fixed"` /
+// `"closed"` / `"active"`; GitHub silently ignores the value (no thread-
+// status concept on its REST review surface).
+func mapResolutionStatusToThreadState(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case resolutionStatusResolved:
+		return "fixed"
+	case resolutionStatusOutdated:
+		return "closed"
+	default:
+		return "active"
+	}
+}
+
+// buildResolutionReplyBody renders the inline reply the bot posts on
+// each prior thread. The body opens with a short status header so the
+// PR author can see the bot's verdict at a glance, followed by the
+// LLM's `Explanation` so the rationale lives next to the original
+// concern rather than scattered across the PR. Falls back to a generic
+// "no explanation provided" placeholder when the LLM emits an empty
+// `Explanation` (defensive — the prompt asks for one, but malformed
+// responses sometimes drop the field).
+func buildResolutionReplyBody(res entities.ThreadResolution) string {
+	header := resolutionHeader(res.Status)
+	explanation := strings.TrimSpace(res.Explanation)
+	if explanation == "" {
+		explanation = "(no explanation provided)"
+	}
+	return fmt.Sprintf("%s\n\n%s", header, explanation)
+}
+
+// resolutionHeader renders the headline shown above the explanation in
+// the reply body. Each status maps to a short, distinct line so the PR
+// author can scan a re-reviewed thread and immediately see whether the
+// bot considers the concern addressed, still open, or no longer
+// applicable.
+func resolutionHeader(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case resolutionStatusResolved:
+		return "\xe2\x9c\x85 **Resolved by Code Guru re-review.**"
+	case resolutionStatusOutstanding:
+		return "\xe2\x9a\xa0\xef\xb8\x8f **Still outstanding per Code Guru re-review.**"
+	case resolutionStatusOutdated:
+		return "\xf0\x9f\x97\x91\xef\xb8\x8f **Outdated per Code Guru re-review.**"
+	default:
+		return "\xf0\x9f\xa4\x96 **Code Guru re-review note.**"
+	}
+}
+
+// threadAnchorKey is the normalised string identifier for a thread
+// anchor. Mirrors `normalizeFilePath` so leading-`/` ADO paths and
+// AI-emitted unprefixed paths collapse onto the same key, which is the
+// rule used elsewhere in this file (dedup, staleness filter,
+// conversation walker).
+func threadAnchorKey(filePath string, line int) string {
+	return fmt.Sprintf("%s:%d", normalizeFilePath(filePath), line)
+}
+
+// dropResolvedAnchorComments removes any inline comment whose
+// `(file, line)` anchor was already addressed by `applyThreadResolutions`.
+// This is the second half of the re-review duplicate guard: the LLM is
+// instructed not to add a `comments` entry for a finding it classified
+// in `thread_resolutions`, but malformed / older responses sometimes do
+// both. Without this filter every re-review where the LLM keeps a
+// finding `outstanding` would land BOTH a thread-resolution reply AND a
+// brand-new inline comment on the same line.
+//
+// PR-wide comments (`Line <= 0`) and comments with no `FilePath` are
+// always kept — `handledAnchors` only carries inline anchors.
+func (c *ReviewCommand) dropResolvedAnchorComments(
+	prID int,
+	comments []entities.ReviewComment,
+	handledAnchors map[string]struct{},
+) []entities.ReviewComment {
+	if len(comments) == 0 || len(handledAnchors) == 0 {
+		return comments
+	}
+	kept := make([]entities.ReviewComment, 0, len(comments))
+	dropped := 0
+	for _, comment := range comments {
+		if comment.Line <= 0 || comment.FilePath == "" {
+			kept = append(kept, comment)
+			continue
+		}
+		if _, hit := handledAnchors[threadAnchorKey(comment.FilePath, comment.Line)]; hit {
+			dropped++
+			continue
+		}
+		kept = append(kept, comment)
+	}
+	if dropped > 0 {
+		logger.Infof(
+			"PR #%d: dropped %d new inline comment(s) whose anchor was already addressed via thread_resolutions",
+			prID, dropped,
+		)
+	}
+	return kept
 }
 
 func allDiffsEmpty(diffs []entities.FileDiff) bool {

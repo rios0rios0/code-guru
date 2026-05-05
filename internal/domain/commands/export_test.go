@@ -77,6 +77,32 @@ var (
 	// soft-fail-on-list-error contract, (3) the live-files filter,
 	// without standing up the full Execute flow.
 	BuildConversation = (*ReviewCommand).buildConversation
+
+	// ApplyThreadResolutions re-exports the resolution-aware
+	// re-review helper so tests can pin the per-resolution behaviour
+	// (reply on every thread, auto-close `resolved` / `outdated`,
+	// leave `outstanding` active, skip unmatched anchors) without
+	// running the full Execute pipeline. Returns the set of handled
+	// (file, line) anchors so the caller can assert the dedup gate
+	// for the surrounding `postComments` pass.
+	ApplyThreadResolutions = (*ReviewCommand).applyThreadResolutions
+
+	// BuildResolutionReplyBody is the pure renderer for the inline
+	// reply body the bot posts on each prior thread. Exposed so tests
+	// can pin the headline-per-status contract without standing up a
+	// stub provider.
+	BuildResolutionReplyBody = buildResolutionReplyBody
+
+	// MapResolutionStatusToThreadState turns the LLM vocabulary
+	// (`resolved` / `outstanding` / `outdated`) into the platform
+	// thread-status string forwarded to gitforge's
+	// `UpdatePullRequestThreadStatus`. Exposed so tests can pin the
+	// mapping without driving the full resolution pipeline.
+	MapResolutionStatusToThreadState = mapResolutionStatusToThreadState
+
+	// ShouldCloseResolution reports whether a given LLM status maps
+	// to a thread state that should auto-close the thread.
+	ShouldCloseResolution = shouldCloseResolution
 )
 
 // AnnotationThreadStatus re-exports the unexported package constant

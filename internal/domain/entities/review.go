@@ -25,6 +25,22 @@ type ReviewResult struct {
 	Verdict        string          `json:"verdict,omitempty"`
 	Comments       []ReviewComment `json:"comments"`
 	Summary        string          `json:"summary"`
+
+	// ThreadResolutions carries the AI's per-thread verdict on every
+	// prior bot review thread that was surfaced in the conversation
+	// block of the user prompt. Populated only on the mention re-review
+	// path (`ReviewOptions.UserMentioned == true`); empty on first-pass
+	// reviews where there are no prior threads to classify.
+	//
+	// Each entry tells the post-pipeline what to do with the existing
+	// thread: `resolved` triggers a thread-status update + a short
+	// confirmation reply, `outstanding` posts a restated reply, and
+	// `outdated` is a soft "no longer applicable" close. The shape lets
+	// the LLM make a structured decision instead of re-emitting (or
+	// silently dropping) findings via `Comments`, which is the failure
+	// mode that drove this PR — every re-review used to flood the PR
+	// with reworded duplicates of the same comment.
+	ThreadResolutions []ThreadResolution `json:"thread_resolutions,omitempty"`
 }
 
 // ReviewRequest encapsulates the input needed to perform a review.
@@ -53,10 +69,51 @@ type ReviewRequest struct {
 type ReviewThread struct {
 	FilePath string
 	Line     int
+	// ThreadID is the provider-specific thread identifier (Azure
+	// DevOps thread ID; GitHub review-comment ID stand-in). Used by
+	// the post-pipeline to call `UpdatePullRequestThreadStatus` when
+	// the LLM marks the thread as resolved, so the operator does not
+	// have to dismiss a "fixed" thread by hand. Zero on platforms
+	// that do not return a usable thread ID.
+	ThreadID int64
+	// RootCommentID is the provider's ID for the top-level bot
+	// comment that started the thread. Surfaced so the post-pipeline
+	// can dedup follow-up replies against the same root and so future
+	// "edit-on-second-push" features have a stable handle on the
+	// original comment.
+	RootCommentID int64
 	// Comments is the chronological message list — index 0 is the
 	// thread root (always one of the bot's prior comments because
 	// the conversation walk starts from the bot's own thread roots).
 	Comments []ReviewMessage
+}
+
+// ThreadResolution is the AI's verdict on a single prior bot review
+// thread on the mention re-review path. The post-pipeline turns it into
+// a thread-status update + a short reply so the PR author sees the bot
+// engaging with each existing thread instead of opening a parallel
+// flood of new comments that say the same thing.
+//
+// Status values map to provider thread states:
+//
+//   - `resolved`   — the diff or the user's reply addressed the
+//     original concern; the bot posts a brief confirmation and updates
+//     the thread status to `fixed` so it stops blocking review.
+//   - `outstanding` — the original concern is still valid; the bot
+//     posts a short restated reply and leaves the thread `active`.
+//   - `outdated`   — the original concern no longer applies (e.g. the
+//     code in question was deleted, the conversation moved on); the
+//     bot soft-closes the thread without making a content claim.
+//
+// FilePath + Line identify which prior thread the entry refers to.
+// Match is keyed on the normalised file path + line because that is
+// the durable identifier the LLM saw in the prompt; the post-pipeline
+// resolves it to a concrete `ThreadID` via the conversation it built.
+type ThreadResolution struct {
+	FilePath    string `json:"file"`
+	Line        int    `json:"line"`
+	Status      string `json:"status"`
+	Explanation string `json:"explanation,omitempty"`
 }
 
 // ReviewMessage is one entry in a ReviewThread's reply chain. Author

@@ -28,8 +28,10 @@ Clean Architecture with domain/infrastructure separation, using Uber DIG for dep
 
 **Trivial PR flow:** CLI input → Controller → Command → DetectorRegistry (no AI) → Post approval/rejection comment via gitforge
 
+**Re-review (mention) flow:** `@code-guru` mention webhook → Worker → ReviewCommand with `UserMentioned=true` → fetch prior bot inline threads via `ListPullRequestComments` → assemble `ReviewThread[]` (carrying gitforge `ThreadID`) → AI prompt now requires per-thread `thread_resolutions` decisions (`resolved`/`outstanding`/`outdated`) BEFORE any new `comments` → `applyThreadResolutions` posts one reply per prior thread + calls `UpdatePullRequestThreadStatus("fixed")` on resolved / `"closed"` on outdated → `dropResolvedAnchorComments` then strips any new comment whose anchor was already addressed, so the same finding never lands twice. First-pass reviews leave `ThreadResolutions` empty, so the prompt and post-pipeline behave exactly as before.
+
 ### Domain Layer (`internal/domain/`)
-- `entities/` — Framework-agnostic domain models: `Settings` (with `ServerConfig`, `GitHubAppConfig`), `ReviewRequest`, `ReviewResult`, `ReviewComment`, `FileDiff`, `Rule`, `AuthToken`, `AppVersion`, `Controller`/`FlagBinder` interfaces
+- `entities/` — Framework-agnostic domain models: `Settings` (with `ServerConfig`, `GitHubAppConfig`), `ReviewRequest`, `ReviewResult` (now carries `ThreadResolutions`), `ReviewComment`, `ReviewThread` (with `ThreadID` / `RootCommentID`), `ThreadResolution`, `FileDiff`, `Rule`, `AuthToken`, `AppVersion`, `Controller`/`FlagBinder` interfaces
 - `repositories/` — Interfaces only: `AIReviewerRepository` (AI engine contract), `RulesRepository` (rule loading contract), `TrivialDetector` + `TrivialDetectorRegistry` (trivial PR detection with `DetectionContext`/`DetectionResult`/`FileContentFetcher`), `TokenRepository` (OAuth token storage), `SelfUpdaterRepository` (binary self-update)
 - `commands/` — Business logic: `ReviewCommand` (single PR with trivial detection), `ReviewAllCommand` (batch), `DiscoverCommand` (list PRs), `AuthCommand` (OAuth login/logout/status), `SelfUpdateCommand`, `VersionCommand`
 
