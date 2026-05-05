@@ -56,7 +56,7 @@ type Dispatcher struct {
 	// the drain timeout cancelled are explicitly released instead of
 	// orphaned in etcd. Without this set every rollout leaks one lease
 	// per job that the 90 s drain budget could not finish — captured live
-	// at 2026-05-02T00:18Z where four orphaned leases blocked PR #12159
+	// at 2026-05-02T00:18Z where four orphaned leases blocked an internal PR
 	// reviews for 12 minutes after a routine `kubectl rollout restart`.
 	inFlightMu sync.Mutex
 	inFlight   map[string]struct{}

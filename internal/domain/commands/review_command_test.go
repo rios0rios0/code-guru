@@ -1468,7 +1468,7 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 	t.Parallel()
 
 	// Pins the trivial-path post / merge contract surfaced by smoke
-	// `backend/user-http#NNNNN`: two pods posted four duplicate
+	// an internal smoke PR: two pods posted four duplicate
 	// approvals between them because the trivial path's old
 	// `[Auto-Approved]` body did not contain `**Code Guru review`,
 	// so the F2 review-once gate did not catch the second ADO
