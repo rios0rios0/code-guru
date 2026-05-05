@@ -13,7 +13,7 @@ The project follows **Clean Architecture** with strict layer separation:
 - **`cmd/code-guru/`** — Application entry point. Builds the DI container, wires Cobra commands, and starts the CLI.
 - **`internal/`** — Internal application wiring (`app.go`, `container.go`) that aggregates controllers.
 - **`internal/domain/`** — Core business logic. Contains entity definitions, repository interfaces, and command implementations. This layer has no infrastructure dependencies.
-  - `entities/` — Domain models (`FileDiff`, `ReviewComment`, `ReviewResult`, `ReviewRequest`, `Rule`, `Settings`, `AuthToken`, `AppVersion`, `Controller`/`FlagBinder` interfaces).
+  - `entities/` — Domain models (`FileDiff`, `ReviewComment`, `ReviewResult` (with `ThreadResolutions`), `ReviewRequest`, `ReviewThread` (with gitforge `ThreadID`/`RootCommentID`), `ThreadResolution`, `Rule`, `Settings`, `AuthToken`, `AppVersion`, `Controller`/`FlagBinder` interfaces).
   - `repositories/` — Abstract interfaces (`AIReviewerRepository`, `RulesRepository`, `TrivialDetector`/`TrivialDetectorRegistry`, `TokenRepository`, `SelfUpdaterRepository`).
   - `commands/` — Use-case implementations (`ReviewCommand`, `ReviewAllCommand`, `DiscoverCommand`, `AuthCommand`, `SelfUpdateCommand`, `VersionCommand`).
 - **`internal/infrastructure/`** — Concrete implementations of domain interfaces.

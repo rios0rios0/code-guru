@@ -144,8 +144,10 @@ func discoverThreadRoots(
 			}
 		}
 		roots[c.ID] = &entities.ReviewThread{
-			FilePath: c.FilePath,
-			Line:     c.Line,
+			FilePath:      c.FilePath,
+			Line:          c.Line,
+			ThreadID:      c.ThreadID,
+			RootCommentID: c.ID,
 			Comments: []entities.ReviewMessage{
 				{Author: c.Author, Body: c.Body},
 			},
