@@ -260,12 +260,16 @@ func (c *ReviewCommand) Execute(
 			// task `#47`. Once that lands, this can be replaced
 			// with marker-thread auto-close.
 			c.postReviewCompleteAnnotation(ctx, provider, repo, pr.ID, result)
-			// Native review submission is additive UX layered on top
-			// of the existing text annotation: the verdict shows up
-			// in the platform's reviewer panel (Approved / Changes
-			// Requested) instead of only inside the comment body.
-			// Gated by `opts.SubmitNativeReview`.
-			c.submitNativeReview(ctx, provider, repo, pr.ID, result.Verdict, result.Summary, opts)
+			// Native review submission records the reviewer-panel vote
+			// (Approved / Changes Requested / Waiting for Author).
+			// Body is intentionally empty so the submission does NOT
+			// duplicate the annotation's summary as a second PR-wide
+			// comment on Azure DevOps. Mirrors the trivial fast path
+			// which already passes "" — both paths now render the
+			// rationale exactly once, inside the completion annotation
+			// produced by `buildReviewCompleteBody` (which surfaces
+			// `result.Summary` since PR #124).
+			c.submitNativeReview(ctx, provider, repo, pr.ID, result.Verdict, "", opts)
 		}
 	}
 
