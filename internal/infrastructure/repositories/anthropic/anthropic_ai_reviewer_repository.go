@@ -104,7 +104,7 @@ func (r *AIReviewerRepository) ReviewDiff(
 	ctx context.Context,
 	request entities.ReviewRequest,
 ) (*entities.ReviewResult, error) {
-	systemPrompt := support.BuildSystemPrompt(request.Rules)
+	systemPrompt := support.BuildSystemPromptFor(request)
 	userPrompt := support.BuildUserPromptWithConversation(
 		request.PullRequest.Title,
 		request.PullRequest.SourceBranch,

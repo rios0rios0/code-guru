@@ -201,7 +201,7 @@ func (c *ReviewCommand) Execute(
 	// findings — see `support.BuildReviewConversation` for the shape.
 	// First-pass reviews leave Conversation nil so the prompt is
 	// byte-for-byte the same as before this change landed.
-	conversation := c.buildConversation(ctx, provider, repo, pr.ID, diffs, opts)
+	conversation := c.buildConversation(ctx, provider, repo, pr.ID, opts)
 	request := entities.ReviewRequest{
 		Repository:   repo,
 		PullRequest:  pr,
@@ -903,7 +903,6 @@ func (c *ReviewCommand) buildConversation(
 	lister pullRequestCommentLister,
 	repo forgeEntities.Repository,
 	prID int,
-	diffs []entities.FileDiff,
 	opts ReviewOptions,
 ) []entities.ReviewThread {
 	if !opts.UserMentioned {
@@ -918,16 +917,18 @@ func (c *ReviewCommand) buildConversation(
 		)
 		return nil
 	}
-	// Live-file set lets the assembler drop conversation threads
-	// anchored to files the current diff no longer touches — the LLM
-	// would otherwise try to "respond" inline on stale anchors that
-	// the post-pipeline's dropStaleComments would then drop, wasting
-	// tokens.
-	liveFiles := make(map[string]struct{}, len(diffs))
-	for _, d := range diffs {
-		liveFiles[normalizeFilePath(d.Path)] = struct{}{}
-	}
-	threads := support.BuildReviewConversation(comments, support.IsBotAuthor(), liveFiles)
+	// Pass `nil` for liveFiles so EVERY prior bot thread reaches the
+	// LLM, including those anchored to files the latest diff no longer
+	// touches. Those are precisely the threads that should come back as
+	// `outdated` in `thread_resolutions` — auto-closing findings whose
+	// code was removed or refactored away is the whole point of the
+	// `outdated` verdict, and filtering them out at the conversation
+	// stage would silently strip the LLM's chance to classify them.
+	// The token cost is intentional: a couple of stale-anchor threads
+	// in the prompt is a fair price to pay for the bot being able to
+	// auto-close them, vs. the alternative where the user is left
+	// dismissing them by hand for the rest of the PR's life.
+	threads := support.BuildReviewConversation(comments, support.IsBotAuthor(), nil)
 	if len(threads) > 0 {
 		logger.Infof(
 			"PR #%d: re-review will include %d prior bot thread(s) as LLM conversation context",
@@ -1238,8 +1239,13 @@ func summarizeStaleFilePaths(dropped []entities.ReviewComment) string {
 // the mention re-review path. For every entry the bot:
 //
 //  1. matches the resolution to one of the threads the conversation
-//     walker built (by normalised file path + line — the durable key the
-//     LLM saw in the prompt's `Thread on <file>:<line>` header);
+//     walker built — primary key is the synthetic `T<n>` id the user
+//     prompt rendered next to each thread (`support.ThreadPromptID`);
+//     fallback is the file+line anchor for older / malformed LLM
+//     responses that drop the id and only when that anchor matches a
+//     single thread. Without the id-first match, two prior bot threads
+//     anchored to the same `<file>:<line>` would collapse onto one map
+//     entry and silently lose every resolution past the first;
 //  2. posts a short inline reply on the same anchor so the user sees the
 //     bot engaging with the existing thread instead of opening a brand
 //     new comment somewhere else;
@@ -1250,9 +1256,16 @@ func summarizeStaleFilePaths(dropped []entities.ReviewComment) string {
 //     to dismiss) and "the bot marked it fixed" (which closes itself).
 //
 // Returns the set of normalised `(file, line)` anchors the function
-// addressed, so the caller's `postComments` pass can drop any new
-// `Comments` entry the LLM also emitted on the same anchor — that is
-// the duplicate-flood failure mode this whole change is fixing.
+// CLOSED (`resolved` / `outdated` only) so the caller's `postComments`
+// pass can drop overlapping new `Comments` entries that would otherwise
+// land as a duplicate of a finding the bot just marked done. Anchors
+// where the resolution was `outstanding` are NOT added: the prior
+// thread is still active, and a separate new comment on the same line
+// is more likely a distinct finding the LLM wants to surface than a
+// duplicate (the prompt forbids restating the same concern via
+// `comments`, so a new entry on an `outstanding` anchor must be
+// describing a different issue). Suppressing it would be more
+// aggressive than the duplicate-guard the dedup gate is meant to be.
 //
 // Best-effort: a missing thread match logs at debug and skips that
 // resolution rather than failing the review (the LLM occasionally
@@ -1274,31 +1287,47 @@ func (c *ReviewCommand) applyThreadResolutions(
 		return nil
 	}
 
-	// Index threads by normalised (file, line) so the LLM-emitted key
-	// matches the conversation-walker's key without the caller having
-	// to remember which side strips the leading `/`.
-	byAnchor := make(map[string]entities.ReviewThread, len(threads))
-	for _, t := range threads {
-		byAnchor[threadAnchorKey(t.FilePath, t.Line)] = t
+	// Index threads by their synthetic prompt id (`T1`, `T2`, ...) AND
+	// by normalised (file, line) so the resolver can match either way:
+	// id-first when the LLM populated it (the only way to disambiguate
+	// duplicate anchors), file+line as a defensive fallback for older
+	// responses that drop the id. The fallback only fires when the
+	// anchor matches exactly one thread — when two threads share an
+	// anchor and the LLM did not emit an id, picking either one would
+	// be wrong, so the resolution is skipped instead of misrouted.
+	byID := make(map[string]entities.ReviewThread, len(threads))
+	byAnchor := make(map[string][]entities.ReviewThread, len(threads))
+	for idx, t := range threads {
+		byID[support.ThreadPromptID(idx)] = t
+		anchor := threadAnchorKey(t.FilePath, t.Line)
+		byAnchor[anchor] = append(byAnchor[anchor], t)
 	}
 
 	handled := make(map[string]struct{}, len(resolutions))
+	applied := 0
 	for _, res := range resolutions {
-		key := threadAnchorKey(res.FilePath, res.Line)
-		thread, ok := byAnchor[key]
+		thread, ok := matchResolutionThread(res, byID, byAnchor)
 		if !ok {
 			logger.Debugf(
-				"PR #%d: thread_resolutions entry for %s:%d does not match any prior bot thread; skipping",
-				prID, res.FilePath, res.Line,
+				"PR #%d: thread_resolutions entry id=%q %s:%d does not uniquely match any prior bot thread; skipping",
+				prID, res.ID, res.FilePath, res.Line,
 			)
 			continue
 		}
-		// Mark the anchor as handled BEFORE the network calls below so
-		// a transient post / status-update failure still suppresses the
-		// duplicate comment in `postComments` — the LLM has already
-		// classified this anchor and we never want it to land twice on
-		// the same review.
-		handled[key] = struct{}{}
+		applied++
+
+		// Only suppress overlapping new inline comments when the
+		// resolution closes the prior thread — `outstanding` keeps
+		// the thread active, so a NEW comment on the same anchor is
+		// more likely a separate finding than a duplicate. Marking
+		// `handled` BEFORE the network calls below preserves the
+		// soft-fail contract: a transient post failure on a closing
+		// resolution still suppresses the duplicate comment in
+		// `postComments`, because the LLM has already classified the
+		// anchor and the next review run will re-attempt the post.
+		if shouldCloseResolution(res.Status) {
+			handled[threadAnchorKey(thread.FilePath, thread.Line)] = struct{}{}
+		}
 
 		body := buildResolutionReplyBody(res)
 		if _, err := provider.PostPullRequestThreadComment(
@@ -1324,13 +1353,38 @@ func (c *ReviewCommand) applyThreadResolutions(
 		}
 	}
 
-	if len(handled) > 0 {
+	if applied > 0 {
 		logger.Infof(
 			"PR #%d: applied %d thread resolution(s) on the re-review path",
-			prID, len(handled),
+			prID, applied,
 		)
 	}
 	return handled
+}
+
+// matchResolutionThread routes one ThreadResolution back to the
+// conversation thread it refers to. The synthetic id (`T1`, `T2`, ...)
+// from the user prompt is the durable key — it is the only thing that
+// can disambiguate two prior bot threads on the same `<file>:<line>`.
+// When the LLM omits the id (older response, malformed payload), fall
+// back to the (file, line) anchor only when it identifies a single
+// thread; on a tie we refuse to guess and skip the resolution because
+// picking either one would silently misroute a verdict.
+func matchResolutionThread(
+	res entities.ThreadResolution,
+	byID map[string]entities.ReviewThread,
+	byAnchor map[string][]entities.ReviewThread,
+) (entities.ReviewThread, bool) {
+	if res.ID != "" {
+		if thread, ok := byID[res.ID]; ok {
+			return thread, true
+		}
+	}
+	candidates := byAnchor[threadAnchorKey(res.FilePath, res.Line)]
+	if len(candidates) == 1 {
+		return candidates[0], true
+	}
+	return entities.ReviewThread{}, false
 }
 
 // resolutionStatus* literals are the canonical strings the LLM emits in
