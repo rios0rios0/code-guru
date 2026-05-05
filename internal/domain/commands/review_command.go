@@ -313,7 +313,7 @@ func (c *ReviewCommand) handleTrivialDetection(
 		// for every new PR; without the marker the second delivery
 		// (arriving seconds after the first finishes and releases the
 		// dedup lease) finds no marker and re-runs the trivial path —
-		// observed live on `<internal-repo>#NNNNN` where two pods
+		// observed live on an internal smoke PR where two pods
 		// posted four duplicate approvals between them.
 		c.postReviewCompleteAnnotation(ctx, provider, repo, pr.ID, result)
 		// Reviewer-panel vote mirrors the text annotation. Body is
