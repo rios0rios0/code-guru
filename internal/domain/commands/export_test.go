@@ -74,8 +74,8 @@ var (
 
 	// BuildConversation re-exports the per-command conversation walk
 	// helper so tests can pin (1) the UserMentioned gate, (2) the
-	// soft-fail-on-list-error contract, (3) the live-files filter,
-	// without standing up the full Execute flow.
+	// soft-fail-on-list-error contract, without standing up the full
+	// Execute flow.
 	BuildConversation = (*ReviewCommand).buildConversation
 
 	// ApplyThreadResolutions re-exports the resolution-aware

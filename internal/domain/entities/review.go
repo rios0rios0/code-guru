@@ -105,11 +105,18 @@ type ReviewThread struct {
 //     code in question was deleted, the conversation moved on); the
 //     bot soft-closes the thread without making a content claim.
 //
-// FilePath + Line identify which prior thread the entry refers to.
-// Match is keyed on the normalised file path + line because that is
-// the durable identifier the LLM saw in the prompt; the post-pipeline
-// resolves it to a concrete `ThreadID` via the conversation it built.
+// `ID` is the synthetic per-prompt identifier (e.g. `T1`, `T2`) the
+// user prompt renders next to each prior thread (`### Thread T1 on
+// <file>:<line>`). It is the durable, unambiguous key for matching a
+// resolution back to its thread when multiple historical bot threads
+// share the same `<file>:<line>` anchor — without it the post-pipeline
+// would collapse them onto one entry and silently lose every
+// resolution past the first. `FilePath` + `Line` remain on the entry
+// as a human-readable hint and as a fallback for LLM responses that
+// drop the id (defensive); the post-pipeline only falls back when the
+// anchor is unique within the prompt.
 type ThreadResolution struct {
+	ID          string `json:"id,omitempty"`
 	FilePath    string `json:"file"`
 	Line        int    `json:"line"`
 	Status      string `json:"status"`

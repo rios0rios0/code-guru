@@ -97,10 +97,40 @@ func TestBuildSystemPrompt(t *testing.T) {
 		assert.Contains(t, noRules, `"verdict": "approve", "summary": "No issues found.", "comments": []`)
 	})
 
-	t.Run("should advertise the thread_resolutions field in the response schema (both templates)", func(t *testing.T) {
+	t.Run("should advertise the thread_resolutions field on the re-review path (both rule modes)", func(t *testing.T) {
 		// given: pin the schema so a future template edit cannot silently
 		// drop `thread_resolutions`, which would put the resolution-aware
 		// re-review path back in the duplicate-flooding failure mode.
+		// On the re-review path BOTH the with-rules and no-rules
+		// templates must carry the field — it is contract-level, not
+		// rules-level.
+		rulesProvided := []entities.Rule{
+			entitybuilders.NewRuleBuilder().WithName("security").WithContent("never expose secrets").BuildRule(),
+		}
+		var rulesEmpty []entities.Rule
+
+		// when
+		withRules := support.BuildSystemPromptForReReview(rulesProvided)
+		noRules := support.BuildSystemPromptForReReview(rulesEmpty)
+
+		// then
+		assert.Contains(t, withRules, "thread_resolutions",
+			"the with-rules re-review system prompt must include thread_resolutions in the response schema so the LLM knows which key to populate")
+		assert.Contains(t, noRules, "thread_resolutions",
+			"the no-rules re-review system prompt must include thread_resolutions for the same reason — the field is contract-level, not rules-level")
+		assert.Contains(t, withRules, "Thread resolution rules",
+			"the with-rules re-review prompt must spell out the resolution-rules section — without it the model has no instructions on how to populate the field")
+		assert.Contains(t, noRules, "Thread resolution rules",
+			"the no-rules re-review prompt must spell out the resolution-rules section for the same reason")
+	})
+
+	t.Run("should NOT mention thread_resolutions on first-pass reviews (both rule modes)", func(t *testing.T) {
+		// given: first-pass reviews have no prior conversation to
+		// classify, so the resolution schema and rules must NOT appear
+		// in the system prompt — keeping first-pass byte-identical to
+		// the pre-resolution shape avoids tempting the model into
+		// emitting an empty `thread_resolutions` array on a path where
+		// the field has no meaning.
 		rulesProvided := []entities.Rule{
 			entitybuilders.NewRuleBuilder().WithName("security").WithContent("never expose secrets").BuildRule(),
 		}
@@ -111,14 +141,31 @@ func TestBuildSystemPrompt(t *testing.T) {
 		noRules := support.BuildSystemPrompt(rulesEmpty)
 
 		// then
-		assert.Contains(t, withRules, "thread_resolutions",
-			"the with-rules system prompt must include thread_resolutions in the response schema so the LLM knows which key to populate on the mention re-review path")
-		assert.Contains(t, noRules, "thread_resolutions",
-			"the no-rules system prompt must include thread_resolutions for the same reason — the field is contract-level, not rules-level")
-		assert.Contains(t, withRules, "Thread resolution rules",
-			"the with-rules prompt must spell out the resolution-rules section — without it the model has no instructions on how to populate the field")
-		assert.Contains(t, noRules, "Thread resolution rules",
-			"the no-rules prompt must spell out the resolution-rules section for the same reason")
+		assert.NotContains(t, withRules, "thread_resolutions",
+			"first-pass reviews must NOT see the thread_resolutions schema — that field is exclusive to the mention re-review path")
+		assert.NotContains(t, noRules, "thread_resolutions",
+			"first-pass reviews must NOT see the thread_resolutions schema regardless of whether rules are configured")
+		assert.NotContains(t, withRules, "Thread resolution rules")
+		assert.NotContains(t, noRules, "Thread resolution rules")
+	})
+
+	t.Run("should advertise the synthetic id field in the re-review schema", func(t *testing.T) {
+		// given: the re-review prompt is what disambiguates two prior
+		// bot threads on the same file:line. Pin the `"id": "T1"` shape
+		// so a future copy edit cannot drop it without breaking the
+		// post-pipeline's id-based match.
+		rules := []entities.Rule{
+			entitybuilders.NewRuleBuilder().WithName("security").WithContent("never expose secrets").BuildRule(),
+		}
+
+		// when
+		got := support.BuildSystemPromptForReReview(rules)
+
+		// then
+		assert.Contains(t, got, `"id": "T1"`,
+			"the re-review schema must show the synthetic-id field in the example so the LLM knows to populate it")
+		assert.Contains(t, got, "T<n>",
+			"the resolution rules must teach the LLM to use the `T<n>` form rather than guessing a thread identifier")
 	})
 
 	t.Run("should not include best-practices wording when rules are provided", func(t *testing.T) {
@@ -222,7 +269,8 @@ func TestBuildUserPromptWithConversation(t *testing.T) {
 
 		// then
 		assert.Contains(t, got, "Prior review conversation")
-		assert.Contains(t, got, "Thread on a.go:10")
+		assert.Contains(t, got, "Thread T1 on a.go:10",
+			"each rendered thread must carry the synthetic per-prompt id (`T1`, `T2`, ...) so the LLM can disambiguate two prior bot threads on the same file:line")
 		assert.Contains(t, got, "Original comment by code-guru[bot]")
 		assert.Contains(t, got, "Reply by alice")
 		assert.Contains(t, got, "we already handle nil above")
