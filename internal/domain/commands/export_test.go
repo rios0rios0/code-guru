@@ -9,8 +9,6 @@ package commands
 // indirection keeps each helper unexported in production builds (the
 // file is gated on the `unit` build tag).
 //
-//   - `ShouldPostSummary`        — gating decision for the PR-wide
-//     summary thread (suppressed when per-issue comments are present).
 //   - `FilterStaleComments`      — partitions AI findings into kept vs
 //     dropped, where dropped means "FilePath is no longer in the
 //     latest PR iteration" (only applies to inline `Line > 0`
@@ -34,7 +32,6 @@ package commands
 //     consumes; tests build a 1-method stub instead of a full
 //     `forgeEntities.ReviewProvider`.
 var (
-	ShouldPostSummary        = shouldPostSummary
 	FilterStaleComments      = filterStaleComments
 	SummarizeStaleFilePaths  = summarizeStaleFilePaths
 	NormalizeFilePathForTest = normalizeFilePath

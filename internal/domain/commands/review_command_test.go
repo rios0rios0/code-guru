@@ -19,73 +19,15 @@ import (
 	doubles "github.com/rios0rios0/codeguru/test/domain/doubles/repositories"
 )
 
-func TestShouldPostSummary(t *testing.T) {
-	t.Parallel()
-
-	t.Run("should suppress summary when inline comments are present", func(t *testing.T) {
-		// given: the user's complaint on `internal/warden-service#NNNN` was that
-		// every push produced a duplicate PR-wide summary thread on top of
-		// the per-file inline threads. Skipping the summary in this case is
-		// the entire point of the gate.
-		result := &entities.ReviewResult{
-			Summary: "Found a few issues",
-			Comments: []entities.ReviewComment{
-				{FilePath: "main.go", Line: 10, Severity: "warning", Body: "..."},
-			},
-		}
-
-		// when
-		ok := commands.ShouldPostSummary(result)
-
-		// then
-		assert.False(t, ok, "summary must not be re-posted when inline comments already cover the issues")
-	})
-
-	t.Run("should post summary when there are no inline comments", func(t *testing.T) {
-		// given: clean reviews (`verdict=approve`, "no issues found") still
-		// need a visible signal that the bot ran — otherwise the operator
-		// has no easy way to tell whether the webhook fired at all.
-		result := &entities.ReviewResult{
-			Verdict:  "approve",
-			Summary:  "No issues found.",
-			Comments: nil,
-		}
-
-		// when
-		ok := commands.ShouldPostSummary(result)
-
-		// then
-		assert.True(t, ok, "summary must still be posted when the review has no inline comments")
-	})
-
-	t.Run("should suppress summary when both summary and comments are empty", func(t *testing.T) {
-		// given: a degenerate empty result — neither summary nor comments —
-		// must produce no PR thread at all. Posting an empty summary would
-		// leave a blank thread on the PR.
-		result := &entities.ReviewResult{Summary: "", Comments: nil}
-
-		// when
-		ok := commands.ShouldPostSummary(result)
-
-		// then
-		assert.False(t, ok, "summary must not be posted when the summary string is empty")
-	})
-
-	t.Run("should treat a whitespace-only summary as non-empty (current contract)", func(t *testing.T) {
-		// given: the predicate's emptiness check is `Summary != ""`, so a
-		// whitespace-only summary is considered non-empty and posted when
-		// `Comments` is empty. Pin this behaviour so a future change to
-		// trim or treat whitespace as empty is deliberate and arrives with
-		// an explicit test update.
-		result := &entities.ReviewResult{Summary: "   ", Comments: nil}
-
-		// when
-		ok := commands.ShouldPostSummary(result)
-
-		// then
-		assert.True(t, ok, "whitespace-only Summary is treated as non-empty and posted when Comments is empty")
-	})
-}
+// `shouldPostSummary` and the standalone summary-thread post in
+// `postComments` were removed once the completion annotation
+// (`postReviewCompleteAnnotation`, since PR #124) gained a paragraph
+// for `result.Summary`. Posting the summary in both places left a
+// duplicate PR-wide thread on every clean review. The
+// `TestExecuteLLMPathSubmitsNativeReviewWithEmptyBody` row below
+// pins the new contract: on a clean LLM review the only PR-wide
+// comments are the "reviewing" marker and the completion annotation,
+// and the summary appears exactly once (inside the annotation).
 
 // TestFilterStaleComments pins the staleness-filter contract that
 // keeps the bot from posting comments on files no longer present in
@@ -873,6 +815,18 @@ func (r *recordingReviewProvider) MergePullRequest(
 	return r.mergeErr
 }
 
+// GetPullRequestStatus reports the PR as `"active"` so the
+// closed-mid-flight short-circuit in `Execute` does not skip the
+// post-review path. Tests that need a different status can swap to a
+// custom recorder.
+func (r *recordingReviewProvider) GetPullRequestStatus(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	_ int,
+) (string, error) {
+	return "active", nil
+}
+
 func TestAnnotationThreadStatusContract(t *testing.T) {
 	t.Parallel()
 
@@ -1628,5 +1582,79 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, provider.merges,
 			"auto-merge fires only on the approve verdict — a trivial detector that rejects (e.g. an incomplete bump per `.autobump.yaml`) must never auto-merge")
+	})
+}
+
+func TestExecuteLLMPathSubmitsNativeReviewWithEmptyBody(t *testing.T) {
+	t.Parallel()
+
+	// Pins the no-duplicate-summary contract for the LLM path. The bot
+	// posts the rationale exactly once, inside the
+	// `postReviewCompleteAnnotation` body produced by
+	// `buildReviewCompleteBody`. The native review submission MUST carry
+	// an empty body so it does NOT echo the same summary as a second
+	// PR-wide comment on Azure DevOps. Surfaced live: the LLM path was
+	// posting two PR-wide comments per review, the first being just
+	// `result.Summary` (the native submission echo) and the second being
+	// the full annotation that ALSO contained `result.Summary` — the
+	// same content twice, on top of each other.
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	pr := forgeEntities.PullRequestDetail{
+		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "feat", URL: "https://example/pr/4242"},
+	}
+
+	t.Run("should submit native review with empty body and let the annotation carry the summary", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a stub AI reviewer returning a result with a non-empty
+		// `Summary`. The trivial registry is nil (so detection short-
+		// circuits and the LLM path runs); rules are stubbed empty.
+		rules := &doubles.StubRulesRepository{}
+		ai := &doubles.StubAIReviewerRepository{
+			NameValue: "stub",
+			Result: &entities.ReviewResult{
+				Verdict: "request_changes",
+				Summary: "Three blocking issues found in the diff.",
+			},
+		}
+		rc := commands.NewReviewCommand(ai, rules, nil)
+		provider := &recordingReviewProvider{
+			// Non-empty Patch keeps the executor on the per-file diff
+			// path and avoids the ADO `GetPullRequestDiff` fallback,
+			// which the recording provider does not stub.
+			files: []forgeEntities.PullRequestFile{
+				{Path: "internal/foo.go", Patch: "@@ -1 +1 @@\n-old\n+new\n"},
+			},
+		}
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			SubmitNativeReview: true,
+		})
+
+		// then
+		require.NoError(t, err)
+		require.Len(t, provider.submissions, 1, "native review submission still records the reviewer-panel vote")
+		assert.Empty(t, provider.submissions[0].Body,
+			"the native submission's body MUST be empty so gitforge does not post the LLM summary as a second PR-wide comment alongside the completion annotation. Without this contract, every LLM review left a duplicate summary on the PR.")
+
+		// also: the annotation body MUST still contain the summary so
+		// the rationale is visible exactly once.
+		var annotationBody string
+		summaryOccurrences := 0
+		for _, c := range provider.calls {
+			if strings.Contains(c.body, "Code Guru review complete") {
+				annotationBody = c.body
+			}
+			if strings.Contains(c.body, ai.Result.Summary) {
+				summaryOccurrences++
+			}
+		}
+		require.NotEmpty(t, annotationBody, "the completion annotation must still be posted")
+		assert.Contains(t, annotationBody, ai.Result.Summary,
+			"the annotation MUST carry the LLM summary so the rationale is visible — without this the empty-body native submission would erase the rationale entirely")
+		assert.Equal(t, 1, summaryOccurrences,
+			"the LLM summary text MUST appear in exactly ONE PR-wide comment (the annotation). The standalone summary post that `postComments` used to emit on no-inline-comments reviews is removed in favour of letting the annotation be the single source of truth — without this gate we'd drift back into the duplicate-summary failure mode the live PR surfaced.")
 	})
 }
