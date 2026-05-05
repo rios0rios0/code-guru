@@ -873,6 +873,18 @@ func (r *recordingReviewProvider) MergePullRequest(
 	return r.mergeErr
 }
 
+// GetPullRequestStatus reports the PR as `"active"` so the
+// closed-mid-flight short-circuit in `Execute` does not skip the
+// post-review path. Tests that need a different status can swap to a
+// custom recorder.
+func (r *recordingReviewProvider) GetPullRequestStatus(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	_ int,
+) (string, error) {
+	return "active", nil
+}
+
 func TestAnnotationThreadStatusContract(t *testing.T) {
 	t.Parallel()
 
@@ -1628,5 +1640,74 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, provider.merges,
 			"auto-merge fires only on the approve verdict — a trivial detector that rejects (e.g. an incomplete bump per `.autobump.yaml`) must never auto-merge")
+	})
+}
+
+func TestExecuteLLMPathSubmitsNativeReviewWithEmptyBody(t *testing.T) {
+	t.Parallel()
+
+	// Pins the no-duplicate-summary contract for the LLM path. The bot
+	// posts the rationale exactly once, inside the
+	// `postReviewCompleteAnnotation` body produced by
+	// `buildReviewCompleteBody`. The native review submission MUST carry
+	// an empty body so it does NOT echo the same summary as a second
+	// PR-wide comment on Azure DevOps. Surfaced live: the LLM path was
+	// posting two PR-wide comments per review, the first being just
+	// `result.Summary` (the native submission echo) and the second being
+	// the full annotation that ALSO contained `result.Summary` — the
+	// same content twice, on top of each other.
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	pr := forgeEntities.PullRequestDetail{
+		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "feat", URL: "https://example/pr/4242"},
+	}
+
+	t.Run("should submit native review with empty body and let the annotation carry the summary", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a stub AI reviewer returning a result with a non-empty
+		// `Summary`. The trivial registry is nil (so detection short-
+		// circuits and the LLM path runs); rules are stubbed empty.
+		rules := &doubles.StubRulesRepository{}
+		ai := &doubles.StubAIReviewerRepository{
+			NameValue: "stub",
+			Result: &entities.ReviewResult{
+				Verdict: "request_changes",
+				Summary: "Three blocking issues found in the diff.",
+			},
+		}
+		rc := commands.NewReviewCommand(ai, rules, nil)
+		provider := &recordingReviewProvider{
+			// Non-empty Patch keeps the executor on the per-file diff
+			// path and avoids the ADO `GetPullRequestDiff` fallback,
+			// which the recording provider does not stub.
+			files: []forgeEntities.PullRequestFile{
+				{Path: "internal/foo.go", Patch: "@@ -1 +1 @@\n-old\n+new\n"},
+			},
+		}
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			SubmitNativeReview: true,
+		})
+
+		// then
+		require.NoError(t, err)
+		require.Len(t, provider.submissions, 1, "native review submission still records the reviewer-panel vote")
+		assert.Empty(t, provider.submissions[0].Body,
+			"the native submission's body MUST be empty so gitforge does not post the LLM summary as a second PR-wide comment alongside the completion annotation. Without this contract, every LLM review left a duplicate summary on the PR.")
+
+		// also: the annotation body MUST still contain the summary so
+		// the rationale is visible exactly once.
+		var annotationBody string
+		for _, c := range provider.calls {
+			if strings.Contains(c.body, "Code Guru review complete") {
+				annotationBody = c.body
+				break
+			}
+		}
+		require.NotEmpty(t, annotationBody, "the completion annotation must still be posted")
+		assert.Contains(t, annotationBody, ai.Result.Summary,
+			"the annotation MUST carry the LLM summary so the rationale is visible — without this the empty-body native submission would erase the rationale entirely")
 	})
 }
