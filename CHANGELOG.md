@@ -33,6 +33,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - bumped `github.com/rios0rios0/gitforge` to `v1.0.1-0.20260504225531-2e5df4ac4fc2` (post-merge of [gitforge#96](https://github.com/rios0rios0/gitforge/pull/96)). The new revision supersedes the previous post-`#95` bump; both bumps land in this `[Unreleased]` section because no `code-guru` release was cut between them. The `#96` revision adds `entities.MergeOption` plus `entities.WithBypassPolicy(reason)` (consumed by the new `Trivial.BypassPolicy` flag above) on top of the `#95` `"rebaseMerge"` mapping. Without this bump, deployments setting `CODE_GURU_TRIVIAL_MERGE_STRATEGY=rebaseMerge` would still be silently downgraded to `squash`, and `CODE_GURU_TRIVIAL_BYPASS_POLICIES=true` would not compile against the older `MergePullRequest` signature. Pairs with the dev cluster Terraform change that adds `CODE_GURU_TRIVIAL_MERGE_STRATEGY=rebaseMerge` (and, in the matching toolbox PR, `CODE_GURU_TRIVIAL_BYPASS_POLICIES=true`) so the trivial fast path can complete PRs through Azure DevOps branch policies that require "Rebase with merge commit" as the only allowed strategy
 - changed the Go module dependencies to their latest versions
 - changed the Go module dependencies to their latest versions
+- changed the Go module dependencies to their latest versions
 
 ### Removed
 
