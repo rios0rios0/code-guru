@@ -18,10 +18,11 @@ The project follows **Clean Architecture** with strict layer separation:
   - `commands/` — Use-case implementations (`ReviewCommand`, `ReviewAllCommand`, `DiscoverCommand`, `AuthCommand`, `SelfUpdateCommand`, `VersionCommand`).
 - **`internal/infrastructure/`** — Concrete implementations of domain interfaces.
   - `repositories/` — AI backend implementations (`anthropic/`, `claude/`, `openai/`), rule loading (`rules/`), trivial PR detectors (`trivial/`), OAuth token storage (`auth/`), self-updater (`selfupdate/`). A `container.go` at this level provides `AIReviewerFactory` and `RulesRepositoryFactory` for settings-driven backend selection.
-  - `controllers/` — Cobra CLI controllers (review, review-all, discover, auth, serve, self-update, version) that bridge CLI input to domain commands.
-  - `controllers/webhooks/` — HTTP webhook dispatcher with auth (`auth.go`: HMAC-SHA256 + Basic Auth), per-vendor handlers (`github.go`, `azuredevops.go`), GitHub App installation token exchange (`installation_token_exchange.go`: RS256 JWT, `sync.Map` cache), and a bounded async worker pool (`worker.go`).
-- **`internal/support/`** — Shared utility functions (URL parsing, diff splitting, file classification, prompt building).
+  - `controllers/` — Cobra CLI controllers (review, review-all, discover, auth, serve, health, self-update, version) that bridge CLI input to domain commands.
+  - `controllers/webhooks/` — HTTP webhook dispatcher (`dispatcher.go`) with auth (`auth.go`: HMAC-SHA256 + Basic Auth), per-vendor handlers (`github.go`, `azuredevops.go`), webhook dedup (`dedup_cache.go`: per-pod TTL cache; `dedup_lease.go`: K8s Lease cross-pod dedup), CIDR allowlist (`source_ip.go`), ADO skinny-payload hydration (`azuredevops_hydrator.go`), GitHub App installation token exchange (`installation_token_exchange.go`: RS256 JWT, `sync.Map` cache), and a bounded async worker pool (`worker.go`).
+- **`internal/support/`** — Shared utility functions: URL parsing, diff splitting, file classification, prompt building, response parsing, conversation assembly (prior bot review threads for re-review context), review markers and mention detection, verdict-to-native-review mapping, byte-bounded text truncation.
 - **`test/domain/doubles/`** — Test doubles (stubs) for domain repository interfaces.
+- **`test/infrastructure/doubles/`** — Test doubles for infrastructure-only types (e.g., webhook `Submitter`, `GitHubTokenizer`, `WebhookDedup`).
 - **`configs/`** — Example YAML configuration files.
 
 ## Dependency Injection
@@ -57,7 +58,7 @@ Controllers are automatically registered as subcommands via the DI container.
 - **Package naming**: Test files use the `_test` suffix on the package name (e.g., `package support_test`).
 - **Framework**: Use `github.com/stretchr/testify/assert` and `github.com/stretchr/testify/require` for assertions.
 - **Structure**: Follow Given-When-Then with `// given`, `// when`, `// then` comments. Use table-driven tests with `t.Run()` subtests. Call `t.Parallel()` at the top of test functions.
-- **Test doubles**: Place stubs in `test/domain/doubles/repositories/`. Name them with the `Stub` prefix (e.g., `StubAIReviewerRepository`). Stubs store the last request and return canned responses.
+- **Test doubles**: Place stubs in `test/domain/doubles/repositories/` for domain-contract stubs and `test/infrastructure/doubles/repositories/` for stubs that double infrastructure-only types. Name them with the `Stub` prefix (e.g., `StubAIReviewerRepository`). Stubs store the last request and return canned responses. Keep the layer the stub references on the same side of the import boundary.
 
 ## Logging
 
