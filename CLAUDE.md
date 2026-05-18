@@ -36,8 +36,8 @@ Clean Architecture with domain/infrastructure separation, using Uber DIG for dep
 - `commands/` — Business logic: `ReviewCommand` (single PR with trivial detection), `ReviewAllCommand` (batch), `DiscoverCommand` (list PRs), `AuthCommand` (OAuth login/logout/status), `SelfUpdateCommand`, `VersionCommand`
 
 ### Infrastructure Layer (`internal/infrastructure/`)
-- `controllers/` — Cobra CLI controllers implementing `entities.Controller`: review, review-all, discover, auth, serve, self-update, version
-- `controllers/webhooks/` — Functional HTTP webhook stack: `auth.go` (HMAC-SHA256 + HTTP Basic helpers), `github.go` and `azuredevops.go` (vendor handlers that parse payloads and enqueue jobs), `installation_token_exchange.go` (GitHub App JWT/installation-token exchanger with cache), `worker.go` (bounded async worker pool with graceful drain)
+- `controllers/` — Cobra CLI controllers implementing `entities.Controller`: review, review-all, discover, auth, serve, health, self-update, version
+- `controllers/webhooks/` — Functional HTTP webhook stack: `auth.go` (HMAC-SHA256 + HTTP Basic helpers), `github.go` and `azuredevops.go` (vendor handlers that parse payloads and enqueue jobs), `dispatcher.go` (webhook job dispatcher wiring handlers, dedup, and worker pool), `dedup_cache.go` + `dedup_lease.go` (per-pod TTL cache + K8s Lease cross-pod dedup), `source_ip.go` (CIDR allowlist enforcement), `azuredevops_hydrator.go` (REST hydration of skinny org-wide ADO webhook payloads), `installation_token_exchange.go` (GitHub App JWT/installation-token exchanger with cache), `worker.go` (bounded async worker pool with graceful drain)
 - `repositories/anthropic/` — Anthropic Messages API backend (direct `net/http` calls)
 - `repositories/claude/` — Claude Code CLI backend (invokes `claude --print`)
 - `repositories/openai/` — OpenAI Chat Completions API backend
@@ -49,7 +49,7 @@ Clean Architecture with domain/infrastructure separation, using Uber DIG for dep
 - `repositories/container.go` — `AIReviewerFactory` and `RulesRepositoryFactory` for settings-driven backend selection
 
 ### Support Package (`internal/support/`)
-Shared utilities: `diff_splitter.go` (parse unified diffs), `file_classifier.go` (detect language via langforge), `url_parser.go` (parse PR URLs via gitforge), `prompt_builder.go` (build AI system/user prompts), `response_parser.go` (shared JSON response parsing for all AI backends)
+Shared utilities: `diff_splitter.go` (parse unified diffs), `file_classifier.go` (detect language via langforge), `url_parser.go` (parse PR URLs via gitforge), `prompt_builder.go` (build AI system/user prompts), `response_parser.go` (shared JSON response parsing for all AI backends), `conversation.go` (assemble prior bot review threads for re-review context), `review_marker.go` (review completion markers and `@code-guru` mention detection), `verdict_mapper.go` (map AI/trivial verdicts to native review submissions), `truncate.go` (byte-bounded text truncation for log lines and PR comments)
 
 ### Dependency Injection
 Each layer has a `container.go` with `RegisterProviders(*dig.Container) error`. Registration order: repositories → entities → commands → controllers → app. Entry point: `cmd/code-guru/dig.go`.
