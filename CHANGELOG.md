@@ -19,6 +19,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 ### Changed
 
 - changed the Go module dependencies to their latest versions
+- refreshed `CLAUDE.md` and `.github/copilot-instructions.md` to document the webhook dispatcher, dedup cache/lease, source IP allowlist, ADO hydrator, health controller, and the four support utilities (`conversation.go`, `review_marker.go`, `verdict_mapper.go`, `truncate.go`) added since 1.5.0
 
 ## [1.7.0] - 2026-05-08
 
