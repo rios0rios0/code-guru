@@ -1,6 +1,10 @@
 package support
 
-import "strings"
+import (
+	"strings"
+
+	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
+)
 
 // botReviewCompleteMarker is the unique substring the bot writes into
 // every "review complete" / "review failed" PR-wide annotation. The
@@ -35,6 +39,58 @@ func HasCompletedReviewMarker(bodies []string) bool {
 		}
 	}
 	return false
+}
+
+// botAnnotationMarker is the substring shared by ALL of the bot's
+// PR-wide status annotations: the "is reviewing"
+// (`buildReviewingMarkerBody`), "review complete"
+// (`buildReviewCompleteBody`), and "review failed"
+// (`buildReviewFailedBody`) bodies all render `**Code Guru <...>`.
+// Broader than `botReviewCompleteMarker` (which deliberately matches
+// only the completed/failed shapes for the review-once gate): here we
+// want to recognise the bot from ANY status annotation it has posted,
+// including the "reviewing" marker that exists when a review crashed
+// before completing.
+const botAnnotationMarker = "**Code Guru "
+
+// DetectBotAuthors returns the distinct set of comment authors that
+// posted one of the bot's PR-wide status annotations on this PR (the
+// "reviewing" / "review complete" / "review failed" notices, all of
+// which carry the botAnnotationMarker substring).
+//
+// It exists so the re-review conversation walk can recognise the bot's
+// own prior comments REGARDLESS of the account name the deployment
+// posts under. On GitHub the bot is `code-guru[bot]` and the built-in
+// matcher in `IsBotAuthor` recognises it, but a self-hosted Azure
+// DevOps deployment commonly posts under an organisation service
+// account (e.g. an `automation` / `svc-*` identity) whose name does
+// not start with `code-guru`. Without self-detection,
+// `BuildReviewConversation` finds zero prior bot threads, the LLM
+// re-reviews from scratch on every re-review, and the bot re-posts
+// findings the PR author has already addressed or rebutted.
+//
+// Only PR-wide comments (`Line <= 0`) carrying the annotation marker
+// are considered, so a human who merely quotes the bot inline is not
+// mis-identified. The returned identities are suitable to pass straight
+// to `IsBotAuthor` as additional bot identities. Order is the
+// first-seen order of the input; duplicates are collapsed.
+func DetectBotAuthors(comments []forgeEntities.PullRequestComment) []string {
+	seen := make(map[string]struct{})
+	var authors []string
+	for _, comment := range comments {
+		if comment.Line > 0 || comment.Author == "" {
+			continue
+		}
+		if !strings.Contains(comment.Body, botAnnotationMarker) {
+			continue
+		}
+		if _, ok := seen[comment.Author]; ok {
+			continue
+		}
+		seen[comment.Author] = struct{}{}
+		authors = append(authors, comment.Author)
+	}
+	return authors
 }
 
 // MentionToken is the literal the bot looks for in a user's PR comment
