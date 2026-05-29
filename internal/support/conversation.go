@@ -203,31 +203,58 @@ func walkToRoot(
 const maxReplyChainDepth = 32
 
 // IsBotAuthor returns a predicate the conversation walker uses to
-// identify the bot's own comments. The match is **strict** so user
-// names that happen to contain `code-guru` as a substring (e.g.
-// `code-guru-fan`, `alice+code-guru@example.com`) are NOT pulled into
-// the conversation context as if they were prior bot findings.
+// identify the bot's own comments. An author is the bot when EITHER:
 //
-// The author matches when, after a case-insensitive comparison, the
-// string starts with the literal `code-guru` AND the next character
-// is one of:
+//  1. it exactly (case-insensitively) equals one of the `identities`
+//     the caller supplies — the account the deployment posts under
+//     (a service-account login / email), wired from
+//     `Settings.BotIdentities` and/or self-detected from the bot's own
+//     PR-wide status annotations (see `DetectBotAuthors`); OR
+//  2. it matches the built-in `code-guru` name shape (the default,
+//     always recognised so GitHub App deployments need no config).
+//
+// The built-in shape match is **strict** so user names that merely
+// contain `code-guru` as a substring (e.g. `code-guru-fan`,
+// `alice+code-guru@example.com`) are NOT pulled into the conversation
+// context as if they were prior bot findings. It matches when, after a
+// case-insensitive comparison, the string starts with the literal
+// `code-guru` AND the next character is one of:
 //
 //   - end of string (the bot identity is exactly `code-guru`)
 //   - `[` — the GitHub App login shape (`code-guru[bot]`)
 //   - `@` — the Azure DevOps PAT-identity shape (`code-guru@<tenant>`)
 //
-// Anything else is rejected: a continuation alphanumeric / `-` / `+`
-// would mean the `code-guru` is part of a longer identifier (a real
-// user with a coincidentally matching prefix), and a leading `+` or
-// `.` (as in `alice+code-guru@…`) means `code-guru` is in the local
-// part of someone else's email.
+// Configured identities are matched by EXACT (case-insensitive) full
+// equality rather than the prefix rule: they are complete account
+// identities, so a substring/prefix match would risk pulling an
+// unrelated user with a coincidentally overlapping name into the bot's
+// conversation context.
 //
-// Returned as a closure (rather than a free function) so a future
-// configuration can override the matcher per deployment without
-// touching the assembler.
-func IsBotAuthor() func(string) bool {
+// Returned as a closure (rather than a free function) so the caller
+// can combine configured + self-detected identities per re-review
+// without touching the assembler. Passing no identities preserves the
+// pre-configuration behaviour byte-for-byte.
+func IsBotAuthor(identities ...string) func(string) bool {
 	const botMarker = "code-guru"
+	// Copy the non-empty configured identities once so the returned
+	// matcher does no allocation per call. `equalFold` already short-
+	// circuits on a length mismatch, so the per-author scan is cheap
+	// for the realistic 1-3 identity case.
+	configured := make([]string, 0, len(identities))
+	for _, id := range identities {
+		if id != "" {
+			configured = append(configured, id)
+		}
+	}
 	return func(author string) bool {
+		if author == "" {
+			return false
+		}
+		for _, id := range configured {
+			if equalFold(author, id) {
+				return true
+			}
+		}
 		if len(author) < len(botMarker) {
 			return false
 		}

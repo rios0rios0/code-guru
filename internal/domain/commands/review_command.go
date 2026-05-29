@@ -88,6 +88,19 @@ type ReviewOptions struct {
 	// auto-merges into hard 403s. Wired from
 	// `Settings.Trivial.BypassPolicy`.
 	TrivialBypassPolicy bool
+
+	// BotIdentities lists the account identities code-guru posts under
+	// (e.g. a service-account login / email on a self-hosted Azure
+	// DevOps deployment). Used on the re-review path so the conversation
+	// walk can recognise the bot's OWN prior comments and the LLM can
+	// resolve them instead of re-posting the same findings. The built-in
+	// `code-guru[bot]` / `code-guru@...` shapes are always recognised;
+	// these are ADDITIONAL identities for deployments that post under a
+	// different account. Optional — when empty, the re-review path still
+	// self-detects the bot from the author of its own PR-wide status
+	// annotations on the PR (see `support.DetectBotAuthors`). Wired from
+	// `Settings.BotIdentities` at each call site.
+	BotIdentities []string
 }
 
 // ReviewCommand orchestrates a single PR review.
@@ -917,6 +930,20 @@ func (c *ReviewCommand) buildConversation(
 		)
 		return nil
 	}
+	// Identify which account the bot posts under on THIS PR. Two
+	// signals, combined: (1) the identities the operator configured via
+	// `bot_identities` / CODE_GURU_BOT_IDENTITIES, and (2) the author of
+	// the bot's own PR-wide status annotations on this PR
+	// (`DetectBotAuthors`, self-detection). The second is what makes the
+	// walk work out of the box on deployments that post under a service
+	// account whose name does not start with `code-guru`: without it the
+	// matcher only recognises the GitHub `code-guru[bot]` shape, the
+	// conversation comes back empty, and the LLM re-reviews from scratch
+	// — re-posting findings the author has already fixed or rebutted
+	// (the exact failure this guard closes).
+	identities := append([]string(nil), opts.BotIdentities...)
+	identities = append(identities, support.DetectBotAuthors(comments)...)
+
 	// Pass `nil` for liveFiles so EVERY prior bot thread reaches the
 	// LLM, including those anchored to files the latest diff no longer
 	// touches. Those are precisely the threads that should come back as
@@ -928,12 +955,28 @@ func (c *ReviewCommand) buildConversation(
 	// in the prompt is a fair price to pay for the bot being able to
 	// auto-close them, vs. the alternative where the user is left
 	// dismissing them by hand for the rest of the PR's life.
-	threads := support.BuildReviewConversation(comments, support.IsBotAuthor(), nil)
+	threads := support.BuildReviewConversation(comments, support.IsBotAuthor(identities...), nil)
 	if len(threads) > 0 {
 		logger.Infof(
 			"PR #%d: re-review will include %d prior bot thread(s) as LLM conversation context",
 			prID,
 			len(threads),
+		)
+	} else if len(comments) > 0 {
+		// The PR has comments but none were recognised as the bot's.
+		// On a re-review this almost always means the bot posts under
+		// an account neither the built-in `code-guru` matcher nor the
+		// self-detection recognised — the failure mode that makes the
+		// bot re-post the same findings every pass. Surface a hint so
+		// the operator can pin the identity rather than silently
+		// degrading to a context-free re-review.
+		logger.Warnf(
+			"PR #%d: re-review found %d existing comment(s) but recognised none as prior bot threads; "+
+				"the LLM will not see its earlier findings or the author's replies and may repeat itself. "+
+				"If code-guru posts under a custom service account, set its identity via "+
+				"`bot_identities` / CODE_GURU_BOT_IDENTITIES so re-reviews can read and resolve prior threads",
+			prID,
+			len(comments),
 		)
 	}
 	return threads
