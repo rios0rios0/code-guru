@@ -346,14 +346,15 @@ func (d *Dispatcher) HandlePR(
 	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, d.detectorRegistry)
 
 	result, err := reviewCmd.Execute(ctx, provider, repo, pr, commands.ReviewOptions{
-		CIPassed:             ciPassed,
-		SubmitNativeReview:   d.settings.AI.NativeReviewSubmissionEnabled(),
-		ReviewDrafts:         d.settings.AI.ReviewDrafts,
-		UserMentioned:        userMentioned,
-		TrivialAutoMerge:     d.settings.Trivial.AutoMerge,
-		TrivialMergeStrategy: d.settings.Trivial.MergeStrategy,
-		TrivialBypassPolicy:  d.settings.Trivial.BypassPolicy,
-		BotIdentities:        d.settings.BotIdentities,
+		CIPassed:                ciPassed,
+		SubmitNativeReview:      d.settings.AI.NativeReviewSubmissionEnabled(),
+		ReviewDrafts:            d.settings.AI.ReviewDrafts,
+		UserMentioned:           userMentioned,
+		TrivialAutoMerge:        d.settings.Trivial.AutoMerge,
+		TrivialMergeStrategy:    d.settings.Trivial.MergeStrategy,
+		TrivialBypassPolicy:     d.settings.Trivial.BypassPolicy,
+		TrivialAutoMergeAuthors: d.settings.Trivial.AutoMergeAllowedAuthors,
+		BotIdentities:           d.settings.BotIdentities,
 	})
 	if err != nil {
 		return fmt.Errorf("review failed for PR #%d: %w", pr.ID, err)
