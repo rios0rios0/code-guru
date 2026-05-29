@@ -24,7 +24,7 @@ A CLI tool that leverages AI (Claude Code CLI or OpenAI API) to automatically re
 - YAML `frontmatter` in rules for file-glob-based filtering (e.g., `paths: ["**/*.go"]`)
 - Inline and general PR comments posted back via gitforge
 - Three modes: single PR review, batch review-all, and discover (list open PRs)
-- Reviews each PR exactly once — subsequent pushes are no-ops. To request a re-review, post a PR comment that mentions `@code-guru` (case-insensitive). On a re-review the bot acts as a reviewer who reads the existing conversation: it loads every prior bot inline thread plus every reply, classifies each as `resolved` / `outstanding` / `outdated`, posts one short reply per prior thread, and auto-closes the threads it considers resolved (Azure DevOps thread state `fixed`). Net-new findings only land if the diff genuinely warrants one and it does NOT overlap a thread the bot already addressed — replacing the pre-existing failure mode where every re-review flooded the PR with reworded duplicates of every prior comment
+- Reviews each PR exactly once — subsequent pushes are no-ops. To request a re-review, post a PR comment that mentions `@code-guru` (case-insensitive). On a re-review the bot acts as a reviewer who reads the existing conversation: it loads every prior bot inline thread plus every reply, classifies each as `resolved` / `outstanding` / `outdated`, posts one short reply per prior thread, and auto-closes the threads it considers resolved (Azure DevOps thread state `fixed`). Net-new findings only land if the diff genuinely warrants one and it does NOT overlap a thread the bot already addressed — replacing the pre-existing failure mode where every re-review flooded the PR with reworded duplicates of every prior comment. The bot recognises its own prior comments by the built-in `code-guru` login shape, by self-detecting the account that posted its PR-wide review annotations on the PR, and by any identity listed in `bot_identities` (env `CODE_GURU_BOT_IDENTITIES`) — so re-reviews still read and resolve prior threads when the deployment posts under a service account
 
 ## Installation
 
@@ -75,6 +75,15 @@ ai:
 rules:
   path: '${HOME}/Development/github.com/rios0rios0/guide/.ai/claude/rules'
   categories: []
+
+# Account identities the bot posts review comments under. Only needed when the
+# deployment posts under a service account whose login does not start with
+# `code-guru` (common on self-hosted Azure DevOps) — on a re-review the bot uses
+# these to recognise its own prior threads and resolve them instead of
+# re-posting. The bot also self-detects this from its own PR-wide review
+# annotations, so this is optional. Override via CODE_GURU_BOT_IDENTITIES.
+bot_identities:
+  - 'svc-codeguru@example.com'
 ```
 
 ### Token Resolution
@@ -377,6 +386,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_TRIVIAL_MERGE_STRATEGY`    | gitforge merge strategy (`merge` / `squash` / `rebase`); empty = default |                      |
 | `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW`   | Records a native review (Approved / Changes Requested) on the platform's reviewer panel; set to `false` to opt out | `true`               |
 | `CODE_GURU_AI_REVIEW_DRAFTS`          | When `true`, the bot reviews draft PRs as well — by default drafts are skipped | `false`              |
+| `CODE_GURU_BOT_IDENTITIES`            | Comma-separated account identities the bot posts under (so re-reviews recognise its own prior threads); the built-in `code-guru` shape and self-detection apply when unset |                      |
 
 ## Rules
 

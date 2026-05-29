@@ -21,6 +21,18 @@ type Settings struct {
 	Trivial   TrivialConfig    `yaml:"trivial"`
 	Server    ServerConfig     `yaml:"server"`
 	GitHubApp GitHubAppConfig  `yaml:"github_app"`
+
+	// BotIdentities lists the account identities code-guru posts review
+	// comments under (a service-account login / email). On the re-review
+	// path the bot uses these to recognise its OWN prior comments so it
+	// can read the dialogue (its earlier findings plus the author's
+	// replies) and resolve each thread instead of re-posting the same
+	// findings. The built-in GitHub App shape (`code-guru[bot]`) is
+	// always recognised, and the bot also self-detects its identity from
+	// the author of its own PR-wide status annotations — so this is only
+	// required when neither of those covers the deployment. Honours
+	// `CODE_GURU_BOT_IDENTITIES` (comma-separated).
+	BotIdentities []string `yaml:"bot_identities"`
 }
 
 // ProviderConfig is an alias for gitforge's ProviderConfig to maintain backward compatibility.
@@ -185,6 +197,9 @@ func NewSettings(path string) (*Settings, error) {
 			settings.Trivial.BypassPolicy = v
 		}
 	}
+	if ids := splitCSV(os.Getenv("CODE_GURU_BOT_IDENTITIES")); len(ids) > 0 {
+		settings.BotIdentities = ids
+	}
 
 	if validateErr := validateSettings(&settings); validateErr != nil {
 		return nil, validateErr
@@ -265,6 +280,7 @@ func NewSettingsFromEnv() (*Settings, error) {
 			AppID:      appID,
 			PrivateKey: os.Getenv("CODE_GURU_GITHUB_PRIVATE_KEY"),
 		},
+		BotIdentities: splitCSV(os.Getenv("CODE_GURU_BOT_IDENTITIES")),
 	}
 
 	if token := os.Getenv("CODE_GURU_PROVIDER_TOKEN"); token != "" {
