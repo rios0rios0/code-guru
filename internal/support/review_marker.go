@@ -81,7 +81,7 @@ func DetectBotAuthors(comments []forgeEntities.PullRequestComment) []string {
 		if comment.Line > 0 || comment.Author == "" {
 			continue
 		}
-		if !strings.Contains(comment.Body, botAnnotationMarker) {
+		if !looksLikeBotAnnotation(comment.Body) {
 			continue
 		}
 		if _, ok := seen[comment.Author]; ok {
@@ -91,6 +91,38 @@ func DetectBotAuthors(comments []forgeEntities.PullRequestComment) []string {
 		authors = append(authors, comment.Author)
 	}
 	return authors
+}
+
+// looksLikeBotAnnotation reports whether body is one of the bot's own
+// PR-wide status annotations rather than a human comment that merely
+// quotes or discusses the marker. All three annotation bodies open with
+// a single status emoji, a space, then the bold marker
+// (`🤖/✅/⚠️ **Code Guru …`), so the marker sits at the very START of the
+// body modulo that leading emoji/whitespace decoration.
+//
+// The detector therefore requires `botAnnotationMarker` to appear with
+// nothing but decoration before it — specifically no ASCII letter and no
+// backtick. A human PR-wide comment that discusses the annotation
+// (e.g. "should we reword `✅ **Code Guru review complete.**`?") always
+// has letters and/or a backtick before the marker, so it no longer trips
+// the detector; without this anchor, that human would be mis-identified
+// as the bot and their inline threads pulled in as prior bot threads —
+// which a re-review could then auto-reply to and resolve. Anchoring on
+// the marker (rather than hard-coding each annotation's exact emoji +
+// wording) keeps the check resilient to future tweaks of the annotation
+// bodies, the same rationale `botReviewCompleteMarker` documents. Pinned
+// per Copilot review on PR #163.
+func looksLikeBotAnnotation(body string) bool {
+	before, _, ok := strings.Cut(body, botAnnotationMarker)
+	if !ok {
+		return false
+	}
+	for _, r := range before {
+		if r == '`' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			return false
+		}
+	}
+	return true
 }
 
 // MentionToken is the literal the bot looks for in a user's PR comment
