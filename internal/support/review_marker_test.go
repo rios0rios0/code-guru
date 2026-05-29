@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
+
 	"github.com/rios0rios0/codeguru/internal/support"
 )
 
@@ -148,4 +150,103 @@ func TestHasMention(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestDetectBotAuthors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should detect the bot from the author of a PR-wide review-complete annotation", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a self-hosted deployment posts under a service account
+		// whose name does not start with `code-guru`. Its PR-wide status
+		// annotation carries the bot marker.
+		comments := []forgeEntities.PullRequestComment{
+			{ID: 1, Line: 0, Author: "automation@example.com", Body: "✅ **Code Guru review complete.**\n\nVerdict: `approve`."},
+			{ID: 2, Line: 10, FilePath: "internal/foo.go", Author: "automation@example.com", Body: "[high] nil-check this"},
+			{ID: 3, Line: 10, FilePath: "internal/foo.go", Author: "alice", Body: "already handled", InReplyToID: 2},
+		}
+
+		// when
+		got := support.DetectBotAuthors(comments)
+
+		// then
+		assert.Equal(t, []string{"automation@example.com"}, got)
+	})
+
+	t.Run("should detect the bot from the reviewing / failed annotations too", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		comments := []forgeEntities.PullRequestComment{
+			{ID: 1, Line: 0, Author: "svc-bot", Body: "\U0001f916 **Code Guru is reviewing this PR.**"},
+			{ID: 2, Line: 0, Author: "svc-bot", Body: "⚠️ **Code Guru review failed.**"},
+		}
+
+		// when
+		got := support.DetectBotAuthors(comments)
+
+		// then: both annotations are by the same account; collapsed once.
+		assert.Equal(t, []string{"svc-bot"}, got)
+	})
+
+	t.Run("should ignore inline comments that merely quote the marker", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a human pastes the bot's annotation text into an inline
+		// comment. Only PR-wide (Line <= 0) annotations identify the bot.
+		comments := []forgeEntities.PullRequestComment{
+			{ID: 1, Line: 42, FilePath: "main.go", Author: "mallory", Body: "look: **Code Guru review complete.**"},
+		}
+
+		// when
+		got := support.DetectBotAuthors(comments)
+
+		// then
+		assert.Empty(t, got)
+	})
+
+	t.Run("should ignore a PR-wide human comment that merely quotes the marker", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a human discusses the annotation in a PR-wide comment.
+		// The marker substring is present but preceded by ordinary text
+		// (and a backtick), so the author must NOT be mistaken for the
+		// bot — otherwise their inline threads would be pulled in as
+		// prior bot threads and a re-review could auto-resolve them.
+		comments := []forgeEntities.PullRequestComment{
+			{ID: 1, Line: 0, Author: "alice", Body: "should we reword `✅ **Code Guru review complete.**` to be shorter?"},
+		}
+
+		// when
+		got := support.DetectBotAuthors(comments)
+
+		// then
+		assert.Empty(t, got)
+	})
+
+	t.Run("should ignore ordinary human PR-wide comments without the marker", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		comments := []forgeEntities.PullRequestComment{
+			{ID: 1, Line: 0, Author: "alice", Body: "@code-guru review it again"},
+		}
+
+		// when
+		got := support.DetectBotAuthors(comments)
+
+		// then
+		assert.Empty(t, got)
+	})
+
+	t.Run("should return nil for no comments", func(t *testing.T) {
+		t.Parallel()
+
+		// given / when
+		got := support.DetectBotAuthors(nil)
+
+		// then
+		assert.Nil(t, got)
+	})
 }

@@ -301,6 +301,89 @@ trivial:
 	})
 }
 
+func TestNewSettingsBotIdentities(t *testing.T) {
+	// Pins that the bot's posting identity is configurable. On a
+	// self-hosted Azure DevOps deployment the bot posts under a service
+	// account whose name does not start with `code-guru`; without a
+	// configured identity (and absent self-detection), the re-review
+	// conversation walk recognised no prior bot threads and the LLM
+	// re-posted the same findings on every pass.
+
+	t.Run("should parse CODE_GURU_BOT_IDENTITIES from the env-only path", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+		t.Setenv("CODE_GURU_BOT_IDENTITIES", "automation@example.com, svc-codeguru@example.com")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, []string{"automation@example.com", "svc-codeguru@example.com"}, settings.BotIdentities,
+			"comma-separated identities must be split and trimmed so the re-review walk can recognise the bot's own comments")
+	})
+
+	t.Run("should default to no configured identities when the env var is unset", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Empty(t, settings.BotIdentities,
+			"no configured identities is valid — the built-in `code-guru` shape and self-detection still apply")
+	})
+
+	t.Run("should override the YAML bot_identities when CODE_GURU_BOT_IDENTITIES is set", func(t *testing.T) {
+		// given: a YAML baseline that pins one identity, plus an env var
+		// that asks for a different one.
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+bot_identities:
+  - yaml-bot@example.com
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		t.Setenv("CODE_GURU_BOT_IDENTITIES", "automation@example.com")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, []string{"automation@example.com"}, settings.BotIdentities,
+			"env var must override YAML so deployments can pin the bot identity per-environment")
+	})
+
+	t.Run("should preserve YAML bot_identities when CODE_GURU_BOT_IDENTITIES is unset", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+bot_identities:
+  - yaml-bot@example.com
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		t.Setenv("CODE_GURU_BOT_IDENTITIES", "")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, []string{"yaml-bot@example.com"}, settings.BotIdentities,
+			"unset env var must leave the YAML-loaded identity in place")
+	})
+}
+
 func TestNewSettingsFromEnvTrivialAutoMerge(t *testing.T) {
 	t.Run("should default AutoMerge=false when the env var is unset", func(t *testing.T) {
 		// given

@@ -211,10 +211,13 @@ func TestIsBotAuthor(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		author string
-		want   bool
+		name       string
+		author     string
+		identities []string
+		want       bool
 	}{
+		// Built-in `code-guru` shape — recognised with no configuration
+		// so GitHub App deployments keep working unchanged.
 		{name: "should match GitHub-shaped bot login", author: "code-guru[bot]", want: true},
 		{name: "should match Azure DevOps-shaped bot identity", author: "code-guru@example.com", want: true},
 		{name: "should be case-insensitive", author: "Code-Guru[bot]", want: true},
@@ -225,14 +228,55 @@ func TestIsBotAuthor(t *testing.T) {
 		{name: "should reject when the prefix is in the middle of the name", author: "alice+code-guru@example.com", want: false},
 		{name: "should reject when the prefix is followed by a dot", author: "code-guru.dev", want: false},
 		{name: "should reject the empty author", author: "", want: false},
+		// Configured identities — a deployment that posts review comments
+		// under a service account whose name does not start with
+		// `code-guru` (the failure mode that left re-reviews context-free).
+		{
+			name:       "should match a configured service-account identity exactly",
+			author:     "automation@example.com",
+			identities: []string{"automation@example.com"},
+			want:       true,
+		},
+		{
+			name:       "should match a configured identity case-insensitively",
+			author:     "Automation@Example.com",
+			identities: []string{"automation@example.com"},
+			want:       true,
+		},
+		{
+			name:       "should still match the built-in code-guru shape when identities are configured",
+			author:     "code-guru[bot]",
+			identities: []string{"automation@example.com"},
+			want:       true,
+		},
+		{
+			name:       "should reject an author matching neither the built-in shape nor a configured identity",
+			author:     "mallory@example.com",
+			identities: []string{"automation@example.com"},
+			want:       false,
+		},
+		{
+			name:       "should reject a configured identity matched only as a prefix (exact-match, not prefix)",
+			author:     "automation@example.com.evil.test",
+			identities: []string{"automation@example.com"},
+			want:       false,
+		},
+		{
+			name:       "should ignore empty configured identities",
+			author:     "code-guru",
+			identities: []string{""},
+			want:       true,
+		},
 	}
 
-	matcher := support.IsBotAuthor()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			// given / when / then
+			// given
+			matcher := support.IsBotAuthor(tt.identities...)
+
+			// when / then
 			assert.Equal(t, tt.want, matcher(tt.author))
 		})
 	}

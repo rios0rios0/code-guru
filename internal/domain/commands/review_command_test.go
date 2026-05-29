@@ -1409,6 +1409,63 @@ func TestBuildConversation(t *testing.T) {
 		assert.Contains(t, paths, "internal/old.go",
 			"the stale-file thread must reach the prompt so the LLM can classify it as `outdated`; if it never appears in the conversation, the bot can never auto-close it")
 	})
+
+	t.Run("should recognise the bot under a custom service account via self-detection", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a deployment that posts under a service account whose
+		// name does NOT start with `code-guru` (so the built-in matcher
+		// alone would miss it). The bot's PR-wide status annotation
+		// carries the marker, an inline finding + the author's reply sit
+		// on the same anchor, and NO identity is configured. Without
+		// self-detection this returned nil and the LLM re-reviewed from
+		// scratch, re-posting findings the author already answered.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			existingComments: []forgeEntities.PullRequestComment{
+				{ID: 1, Line: 0, Author: "automation@example.com", Body: "✅ **Code Guru review complete.**\n\nVerdict: `request_changes`."},
+				{ID: 2, Line: 10, FilePath: "internal/foo.go", Author: "automation@example.com", Body: "[high] this YAML value must be quoted"},
+				{ID: 3, Line: 10, FilePath: "internal/foo.go", Author: "alice", Body: "this file is auto-generated; the quoting cannot be configured", InReplyToID: 2},
+			},
+		}
+
+		// when: no BotIdentities supplied — pure self-detection.
+		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID,
+			commands.ReviewOptions{UserMentioned: true})
+
+		// then
+		require.Len(t, got, 1, "the bot's own thread must be recognised even when it posts under a non-`code-guru` account")
+		assert.Equal(t, "internal/foo.go", got[0].FilePath)
+		require.Len(t, got[0].Comments, 2, "the author's reply must be carried so the LLM can judge the correction instead of re-posting")
+		assert.Equal(t, "automation@example.com", got[0].Comments[0].Author)
+		assert.Equal(t, "alice", got[0].Comments[1].Author)
+	})
+
+	t.Run("should recognise the bot via an explicitly configured BotIdentity", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the bot's inline thread exists but there is NO PR-wide
+		// marker annotation to self-detect from (e.g. the completion
+		// notice was deleted). An explicitly configured identity must
+		// still let the walk recognise the bot's thread.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{
+			existingComments: []forgeEntities.PullRequestComment{
+				{ID: 1, Line: 10, FilePath: "internal/foo.go", Author: "automation@example.com", Body: "[high] nil-check"},
+				{ID: 2, Line: 10, FilePath: "internal/foo.go", Author: "alice", Body: "fixed in latest push", InReplyToID: 1},
+			},
+		}
+
+		// when
+		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID,
+			commands.ReviewOptions{UserMentioned: true, BotIdentities: []string{"automation@example.com"}})
+
+		// then
+		require.Len(t, got, 1)
+		require.Len(t, got[0].Comments, 2)
+		assert.Equal(t, "automation@example.com", got[0].Comments[0].Author)
+		assert.Equal(t, "alice", got[0].Comments[1].Author)
+	})
 }
 
 // recordingRegistry is a TrivialDetectorRegistry that always returns

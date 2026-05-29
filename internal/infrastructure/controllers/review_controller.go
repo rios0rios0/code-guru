@@ -140,6 +140,7 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 		TrivialAutoMerge:     settings.Trivial.AutoMerge,
 		TrivialMergeStrategy: settings.Trivial.MergeStrategy,
 		TrivialBypassPolicy:  settings.Trivial.BypassPolicy,
+		BotIdentities:        settings.BotIdentities,
 	})
 	if err != nil {
 		logger.Errorf("review failed: %v", err)

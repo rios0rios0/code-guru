@@ -16,6 +16,20 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added `bot_identities` configuration (env `CODE_GURU_BOT_IDENTITIES`, comma-separated) listing the account identities code-guru posts review comments under, so the `@code-guru` re-review conversation walk recognises its own prior threads even when a deployment posts under a service account whose name does not start with `code-guru`
+- added self-detection of the bot's posting account from its own PR-wide review annotations (anchored to the start of the comment so a human who merely quotes the marker is not mistaken for the bot), so re-reviews recognise prior bot threads (and the author's replies) with no `bot_identities` configured
+- added a re-review diagnostic that warns when a PR has existing comments but none are recognised as prior bot threads, pointing the operator at `CODE_GURU_BOT_IDENTITIES`
+
+### Changed
+
+- changed the re-review prompt so a finding the author rebutted as intentional or not actionable (for example generated code or an established convention) is classified `resolved` and not raised again
+
+### Fixed
+
+- fixed `@code-guru` re-reviews repeating findings the author had already addressed or rebutted: the conversation walk recognised the bot's own comments only by the built-in `code-guru` name shape, so a deployment posting under a different account loaded an empty prior-conversation context and the AI re-reviewed from scratch on every pass
+
 ## [1.7.4] - 2026-05-25
 
 ### Changed

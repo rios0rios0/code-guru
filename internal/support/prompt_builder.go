@@ -144,8 +144,12 @@ Thread resolution rules (only when "Prior review conversation" is present):
 - "file" + "line" SHOULD also match the header (kept as a human-readable hint and as a fallback when "id" is dropped)
 - "status" is one of:
     "resolved"    — the diff fixed the original concern, OR the user's reply
-                    explained why the concern was a false positive / accepted
-    "outstanding" — the original concern is still valid in the latest diff;
+                    explained why it is a false positive, already handled, or
+                    intentional / not actionable (e.g. generated code, an
+                    established team convention, an accepted trade-off). Once
+                    the author has answered a concern, do NOT keep re-raising it
+    "outstanding" — the original concern is still valid in the latest diff AND
+                    the author has not already addressed or rebutted it;
                     "explanation" should restate the issue briefly
     "outdated"    — the original concern no longer applies because the code
                     was removed, refactored away, or the conversation
@@ -330,10 +334,12 @@ func BuildUserPromptWithConversation(
 			"Each entry's `id` MUST match the `T<n>` identifier from the thread header so the bot can route the resolution to the correct prior thread.\n",
 		)
 		prompt.WriteString(
-			"   - A concern is `resolved` if the new diff actually fixes it, OR if the user's reply pointed out a false positive / explained existing handling.\n",
+			"   - A concern is `resolved` if the new diff actually fixes it, OR if the user's reply pointed out a false positive, explained existing handling, " +
+				"or justified it as intentional / not actionable (e.g. generated code, an established convention, an accepted trade-off). " +
+				"Once the author has answered a concern, do NOT raise it again.\n",
 		)
 		prompt.WriteString(
-			"   - A concern is `outstanding` only if you have re-read the latest diff AND it is still genuinely present.\n",
+			"   - A concern is `outstanding` only if you have re-read the latest diff AND it is still genuinely present AND the author has not already addressed or rebutted it.\n",
 		)
 		prompt.WriteString("   - A concern is `outdated` if the relevant code was removed or refactored away.\n")
 		prompt.WriteString(
