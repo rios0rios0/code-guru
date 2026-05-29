@@ -206,6 +206,25 @@ func TestDetectBotAuthors(t *testing.T) {
 		assert.Empty(t, got)
 	})
 
+	t.Run("should ignore a PR-wide human comment that merely quotes the marker", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a human discusses the annotation in a PR-wide comment.
+		// The marker substring is present but preceded by ordinary text
+		// (and a backtick), so the author must NOT be mistaken for the
+		// bot — otherwise their inline threads would be pulled in as
+		// prior bot threads and a re-review could auto-resolve them.
+		comments := []forgeEntities.PullRequestComment{
+			{ID: 1, Line: 0, Author: "alice", Body: "should we reword `✅ **Code Guru review complete.**` to be shorter?"},
+		}
+
+		// when
+		got := support.DetectBotAuthors(comments)
+
+		// then
+		assert.Empty(t, got)
+	})
+
 	t.Run("should ignore ordinary human PR-wide comments without the marker", func(t *testing.T) {
 		t.Parallel()
 
