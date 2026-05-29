@@ -1717,6 +1717,81 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 		assert.Empty(t, provider.merges,
 			"auto-merge fires only on the approve verdict — a trivial detector that rejects (e.g. an incomplete bump per `.autobump.yaml`) must never auto-merge")
 	})
+
+	t.Run("should auto-merge when the PR author is in the allowlist", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a trivial-approve PR opened by a trusted automation
+		// account that the operator allow-listed.
+		rc, provider := newCmd("approve")
+		botPR := forgeEntities.PullRequestDetail{
+			PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "deps", URL: "https://example/pr/4242"},
+			Author:      "automation@example.com",
+		}
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, botPR, commands.ReviewOptions{
+			TrivialAutoMerge:        true,
+			TrivialAutoMergeAuthors: []string{"automation@example.com"},
+		})
+
+		// then
+		require.NoError(t, err)
+		require.Len(t, provider.merges, 1,
+			"a trivial-approve PR from an allow-listed automation author must auto-merge")
+	})
+
+	t.Run("should NOT auto-merge when the PR author is not in the allowlist (e.g. a human docs PR)", func(t *testing.T) {
+		t.Parallel()
+
+		// given: same trivial-approve verdict, but the PR was opened by a
+		// human whose account is NOT in the allowlist. Triviality makes it
+		// eligible; the allowlist withholds the unattended merge so a human
+		// still merges it — the whole point of this gate.
+		rc, provider := newCmd("approve")
+		humanPR := forgeEntities.PullRequestDetail{
+			PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "docs", URL: "https://example/pr/4242"},
+			Author:      "alice@example.com",
+		}
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, humanPR, commands.ReviewOptions{
+			SubmitNativeReview:      true,
+			TrivialAutoMerge:        true,
+			TrivialBypassPolicy:     true,
+			TrivialAutoMergeAuthors: []string{"automation@example.com"},
+		})
+
+		// then
+		require.NoError(t, err)
+		assert.Empty(t, provider.merges,
+			"a trivial PR from a non-allow-listed (human) author MUST NOT be auto-merged even with bypass on — it is approved and left for a human to merge")
+		require.Len(t, provider.submissions, 1,
+			"the PR is still reviewed and voted on; only the merge is withheld")
+	})
+
+	t.Run("should match the author allowlist case-insensitively", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the allowlist entry differs only in case from the PR's
+		// author (account identities are not case-sensitive).
+		rc, provider := newCmd("approve")
+		botPR := forgeEntities.PullRequestDetail{
+			PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "deps", URL: "https://example/pr/4242"},
+			Author:      "Automation@Example.com",
+		}
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, botPR, commands.ReviewOptions{
+			TrivialAutoMerge:        true,
+			TrivialAutoMergeAuthors: []string{"automation@example.com"},
+		})
+
+		// then
+		require.NoError(t, err)
+		require.Len(t, provider.merges, 1,
+			"author matching must be case-insensitive so a casing difference between config and the provider's author string does not silently disable auto-merge")
+	})
 }
 
 func TestExecuteLLMPathSubmitsNativeReviewWithEmptyBody(t *testing.T) {
