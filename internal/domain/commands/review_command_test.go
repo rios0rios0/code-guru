@@ -5,6 +5,7 @@ package commands_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
+	"github.com/rios0rios0/codeguru/internal/support"
 	doubles "github.com/rios0rios0/codeguru/test/domain/doubles/repositories"
 )
 
@@ -365,15 +367,17 @@ func TestBuildReviewingMarkerBody(t *testing.T) {
 func TestBuildReviewFailedBody(t *testing.T) {
 	t.Parallel()
 
-	t.Run("should render the failure notice with the timestamp and the underlying error", func(t *testing.T) {
-		// given: a fixed timestamp + a representative claude failure
-		// (the canonical signature observed across PRs #NNNN /
-		// #NNNN / #NNNN / #NNNN / #NNNN on `2026-05-01`). The
-		// body must surface BOTH the timestamp (so the operator can
-		// correlate with the pod log line) AND the error text (so
-		// the PR author knows whether to retry or look at logs).
+	// The failure annotation is posted ONLY after every retry attempt has
+	// failed (the RetryingAIReviewer decorator). Its defining contract is
+	// that it carries a short, classified reason and NEVER the raw error —
+	// a transient backend failure embeds the model's raw output (e.g. the
+	// claude CLI's "API Error: socket connection closed" JSON envelope),
+	// and posting that to the PR is the leak this body must not produce.
+
+	t.Run("should render the headline, the next-step hint and the UTC timestamp", func(t *testing.T) {
+		// given
 		ts := time.Date(2026, 5, 1, 2, 51, 21, 0, time.UTC)
-		err := errors.New("AI review failed: claude CLI failed: exit status 1 (stderr: ; stdout: )")
+		err := errors.New("boom")
 
 		// when
 		body := commands.BuildReviewFailedBody(ts, err)
@@ -383,28 +387,51 @@ func TestBuildReviewFailedBody(t *testing.T) {
 			"the headline must be unambiguous so the author does not confuse it with the marker")
 		assert.Contains(t, body, "Failed at 2026-05-01T02:51:21Z.",
 			"the timestamp must match the operator-log RFC 3339 UTC shape")
-		assert.Contains(t, body, "claude CLI failed",
-			"the error text must surface so the author knows whether this is transient or systemic")
-		assert.Contains(t, body, "review this PR manually",
-			"the body must tell the author what to do next")
+		assert.Contains(t, body, "@code-guru",
+			"the body must tell the author how to retry the review")
 	})
 
-	t.Run("should normalise a non-UTC input to UTC so the printed timestamp ends in Z", func(t *testing.T) {
-		// given: defensive — same contract as `buildReviewingMarkerBody`
-		// (Copilot review on PR #102 thread `PRRT_kwDOJKAEo85-56Sq`).
-		// A future caller passing a non-UTC time must still produce
-		// a UTC-formatted body. Use `time.FixedZone` rather than
-		// `time.LoadLocation`: the latter reads `tzdata` at runtime
-		// and silently fails with `nil` on hermetic systems
-		// (Alpine, distroless, scratch), which would then panic in
-		// `time.Date` — pinned per Copilot review on PR #103 thread
-		// `PRRT_kwDOJKAEo85-6Cu4`.
-		spLoc := time.FixedZone("America/Sao_Paulo", -3*60*60)
-		ts := time.Date(2026, 4, 30, 23, 51, 21, 0, spLoc) // == 2026-05-01T02:51:21Z
-		err := errors.New("transient")
+	t.Run("should NEVER echo the raw error text into the PR body", func(t *testing.T) {
+		// given: a generic backend error carrying a distinctive raw token
+		// that stands in for the claude CLI's leaked socket-error envelope.
+		ts := time.Date(2026, 5, 1, 2, 51, 21, 0, time.UTC)
+		err := errors.New("claude CLI failed: API Error: socket connection closed RAW_ENVELOPE_TOKEN")
 
 		// when
 		body := commands.BuildReviewFailedBody(ts, err)
+
+		// then
+		assert.NotContains(t, body, "RAW_ENVELOPE_TOKEN",
+			"the raw model/backend output must never reach the PR — that is the leak this rewrite removes")
+		assert.NotContains(t, body, "socket connection closed")
+		assert.Contains(t, body, "The AI backend errored",
+			"a non-parse error must surface the generic 'backend errored' category")
+	})
+
+	t.Run("should classify an unparseable-response error as a JSON-format failure", func(t *testing.T) {
+		// given: the sentinel wrapped the way the retry decorator wraps it
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		err := fmt.Errorf("AI review failed after 3 attempt(s): %w", support.ErrUnparseableResponse)
+
+		// when
+		body := commands.BuildReviewFailedBody(ts, err)
+
+		// then
+		assert.Contains(t, body, "expected JSON format",
+			"an ErrUnparseableResponse (even wrapped by the retry envelope) must classify as a JSON-format failure")
+		assert.NotContains(t, body, "not valid JSON, even after repair",
+			"the raw sentinel text must not be echoed — only the friendly classification")
+	})
+
+	t.Run("should normalise a non-UTC input to UTC so the printed timestamp ends in Z", func(t *testing.T) {
+		// given: defensive — same contract as `buildReviewingMarkerBody`.
+		// Use `time.FixedZone` rather than `time.LoadLocation` (which reads
+		// `tzdata` at runtime and returns nil on hermetic images).
+		spLoc := time.FixedZone("America/Sao_Paulo", -3*60*60)
+		ts := time.Date(2026, 4, 30, 23, 51, 21, 0, spLoc) // == 2026-05-01T02:51:21Z
+
+		// when
+		body := commands.BuildReviewFailedBody(ts, errors.New("transient"))
 
 		// then
 		assert.Contains(t, body, "Failed at 2026-05-01T02:51:21Z.",
@@ -412,27 +439,23 @@ func TestBuildReviewFailedBody(t *testing.T) {
 		assert.NotContains(t, body, "-03:00", "no timezone offset should leak into the body")
 	})
 
-	t.Run("should fall back to a placeholder when the error is nil (defensive)", func(t *testing.T) {
-		// given: callers should always pass a non-nil error, but
-		// belt-and-suspenders — a future caller mistakenly passing
-		// nil must not produce a body containing the literal `<nil>`.
+	t.Run("should produce a readable body when the error is nil (defensive)", func(t *testing.T) {
+		// given: callers always pass a non-nil error, but belt-and-
+		// suspenders — a nil must not render the literal `<nil>`.
 		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 
 		// when
 		body := commands.BuildReviewFailedBody(ts, nil)
 
 		// then
-		assert.Contains(t, body, "(no error details)",
-			"a nil error must surface a readable placeholder, never `<nil>`")
+		assert.Contains(t, body, "could not be completed")
 		assert.NotContains(t, body, "<nil>")
 	})
 
-	t.Run("should truncate an oversized error so the PR thread stays bounded", func(t *testing.T) {
-		// given: a runaway claude that emits a 10 KB error envelope
-		// (e.g. multi-megabyte stdout truncated by PR #98's
-		// `support.TruncateBytesForLog` to its own cap, then echoed
-		// here a second time). The 2 KB cap on this side keeps the
-		// PR thread from turning into a wall of text.
+	t.Run("should stay bounded even when the error is huge (no raw echo)", func(t *testing.T) {
+		// given: a runaway backend that emits a 10 KB error. Because the
+		// body never echoes the raw error, the rendered body stays small
+		// regardless of the error size — the strongest form of the bound.
 		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 		oversized := errors.New(strings.Repeat("X", 10*1024))
 
@@ -440,12 +463,10 @@ func TestBuildReviewFailedBody(t *testing.T) {
 		body := commands.BuildReviewFailedBody(ts, oversized)
 
 		// then
-		// 2 KB error + ~500 bytes envelope/markdown + sentinel
-		// fits comfortably below 4 KB.
-		assert.Less(t, len(body), 4*1024,
-			"the rendered body must respect the 2 KB error cap so a runaway claude cannot flood the PR thread")
-		assert.Contains(t, body, "...[truncated]",
-			"the truncation sentinel from support.TruncateForLog must be present so a reader knows the error was clipped")
+		assert.Less(t, len(body), 1024,
+			"the body must not grow with the error size — the raw error is never echoed, so a runaway backend cannot flood the PR")
+		assert.NotContains(t, body, strings.Repeat("X", 100),
+			"none of the raw error content may appear in the body")
 	})
 }
 

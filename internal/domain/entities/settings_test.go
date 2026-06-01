@@ -477,3 +477,84 @@ func TestNewSettingsFromEnvTrivialAutoMerge(t *testing.T) {
 		assert.Equal(t, "rebase", settings.Trivial.MergeStrategy)
 	})
 }
+
+func TestReviewAttempts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		maxAttempts int
+		want        int
+	}{
+		{name: "should default to 3 when unset (zero)", maxAttempts: 0, want: 3},
+		{name: "should default to 3 when negative", maxAttempts: -2, want: 3},
+		{name: "should honour an explicit higher value", maxAttempts: 5, want: 5},
+		{name: "should allow 1 to disable retries", maxAttempts: 1, want: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			cfg := entities.AIConfig{MaxAttempts: tt.maxAttempts}
+
+			// when / then
+			assert.Equal(t, tt.want, cfg.ReviewAttempts())
+		})
+	}
+}
+
+func TestNewSettingsMaxAttempts(t *testing.T) {
+	// Pins that the per-review AI retry budget is configurable so a flaky
+	// backend (non-JSON responses, dropped sockets) re-samples instead of
+	// failing the review on the first blip.
+
+	t.Run("should parse CODE_GURU_AI_MAX_ATTEMPTS from the env-only path", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+		t.Setenv("CODE_GURU_AI_MAX_ATTEMPTS", "5")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, 5, settings.AI.MaxAttempts)
+		assert.Equal(t, 5, settings.AI.ReviewAttempts())
+	})
+
+	t.Run("should default to the resolver's 3 when the env var is unset", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, 0, settings.AI.MaxAttempts, "unset env leaves the raw field zero")
+		assert.Equal(t, 3, settings.AI.ReviewAttempts(), "the resolver then defaults to 3 so retries apply automatically")
+	})
+
+	t.Run("should override YAML max_attempts when the env var is set", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+  max_attempts: 2
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		t.Setenv("CODE_GURU_AI_MAX_ATTEMPTS", "4")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, 4, settings.AI.MaxAttempts,
+			"env var must override YAML so deployments can tune the retry budget per-environment")
+	})
+}
