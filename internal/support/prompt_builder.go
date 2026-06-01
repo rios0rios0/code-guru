@@ -205,6 +205,15 @@ func BuildSystemPromptForReReview(rules []entities.Rule) string {
 	return buildSystemPrompt(rules, true)
 }
 
+// retryJSONReminder is appended to the system prompt on retry attempts
+// (`ReviewRequest.Attempt > 1`). The most common reason a first attempt
+// fails to parse is the model wrapping its answer in prose or markdown
+// fences instead of emitting a bare JSON object; restating the constraint
+// on the re-sample materially raises the odds the retry returns valid JSON.
+const retryJSONReminder = "\n\nIMPORTANT: a previous attempt did NOT return a valid JSON object and could not be parsed. " +
+	"Respond with ONLY the JSON object described in the schema above — no explanatory prose before or after it, " +
+	"no markdown code fences, nothing but the raw JSON."
+
 // BuildSystemPromptFor dispatches to the appropriate system prompt
 // builder based on whether the review request carries a conversation.
 // All AI backends share this helper so the "first-pass stays the
@@ -213,11 +222,22 @@ func BuildSystemPromptForReReview(rules []entities.Rule) string {
 // backend would have to repeat the conditional and a future backend
 // could silently regress to always emitting the resolution-aware
 // prompt.
+//
+// On a retry attempt (`request.Attempt > 1`) the `retryJSONReminder` is
+// appended so the re-sample is nudged back to bare-JSON output. The first
+// attempt (`Attempt` 0 or 1) is byte-for-byte identical to the pre-retry
+// prompt, so the no-drift guarantee for normal reviews still holds.
 func BuildSystemPromptFor(request entities.ReviewRequest) string {
+	var prompt string
 	if len(request.Conversation) > 0 {
-		return BuildSystemPromptForReReview(request.Rules)
+		prompt = BuildSystemPromptForReReview(request.Rules)
+	} else {
+		prompt = BuildSystemPrompt(request.Rules)
 	}
-	return BuildSystemPrompt(request.Rules)
+	if request.Attempt > 1 {
+		prompt += retryJSONReminder
+	}
+	return prompt
 }
 
 func buildSystemPrompt(rules []entities.Rule, withThreadResolutions bool) string {

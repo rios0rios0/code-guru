@@ -77,8 +77,18 @@ func NewAIReviewerFactory() *AIReviewerFactory {
 	return &AIReviewerFactory{}
 }
 
-// Create returns the appropriate AI reviewer based on the backend setting.
+// Create returns the appropriate AI reviewer based on the backend setting,
+// wrapped in WithRetry so a non-JSON or transient-error response is
+// re-sampled instead of immediately failing the review and posting the raw
+// output to the PR. The attempt budget comes from `settings.AI.ReviewAttempts()`.
 func (f *AIReviewerFactory) Create(settings *entities.Settings) repositories.AIReviewerRepository {
+	return WithRetry(f.createBackend(settings), settings.AI.ReviewAttempts())
+}
+
+// createBackend builds the bare backend selected by `settings.AI.Backend`,
+// before the retry decorator is applied. An unrecognised backend falls back
+// to the Claude CLI with defaults (the same behaviour as before retries).
+func (f *AIReviewerFactory) createBackend(settings *entities.Settings) repositories.AIReviewerRepository {
 	switch settings.AI.Backend {
 	case "openai":
 		return openaiRepo.NewAIReviewerRepository(settings.AI.OpenAI.APIKey, settings.AI.OpenAI.Model)

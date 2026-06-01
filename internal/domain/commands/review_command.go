@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -584,47 +585,47 @@ func (c *ReviewCommand) postReviewFailedAnnotation(
 	}
 }
 
-// buildReviewFailedBody renders the PR-wide failure notice. Pure
-// function — exposed via `export_test.go` so the formatting
-// contract is unit-testable without standing up a stub provider.
-// Forces UTC inside the helper for the same reason
+// buildReviewFailedBody renders the PR-wide failure notice, posted only
+// after the AI backend has failed every retry attempt (see the
+// `RetryingAIReviewer` decorator). Pure function — exposed via
+// `export_test.go` so the formatting contract is unit-testable without a
+// stub provider. Forces UTC inside the helper for the same reason
 // `buildReviewingMarkerBody` does (per Copilot review on PR #102).
-// Truncates the error to keep the rendered body bounded under a
-// runaway-claude failure mode that can produce megabytes of
-// unstructured text.
+//
+// The body carries only a SHORT, classified reason — never the raw error.
+// A transient backend failure embeds the model's raw output (e.g. the
+// claude CLI's multi-kilobyte JSON error envelope with its "API Error:
+// socket connection closed" message), and echoing that into the PR thread
+// is exactly the leak this rewrite removes. The full error is logged by
+// the worker for operator diagnosis instead.
 func buildReviewFailedBody(now time.Time, reviewErr error) string {
-	errText := "(no error details)"
-	if reviewErr != nil {
-		errText = support.TruncateForLog(reviewErr.Error(), reviewFailedBodyErrorLimit)
-	}
-	// Footer formatting note: the timestamp goes inside `_..._`
-	// (italic), but the error text goes inside a fenced code block
-	// instead of italic — error strings can contain `_`, `*`,
-	// backticks, or full file paths that would break Markdown
-	// emphasis if interpolated into a single italic span. Pinned
-	// per Copilot review on PR #103 thread `PRRT_kwDOJKAEo85-6CvE`.
-	// `support.TruncateForLog` already wraps the value in
-	// `strconv.Quote`, so a stray triple-backtick inside `errText`
-	// would arrive escaped (`\`\`\``) and not close the fence.
 	return fmt.Sprintf(
 		"\xe2\x9a\xa0\xef\xb8\x8f **Code Guru review failed.**\n\n"+
-			"The AI review step crashed before any inline comments could be produced. Please review "+
-			"this PR manually — the bot will retry on the next push, but the silence after the "+
-			"\"reviewing\" marker is a failure, not progress.\n\n"+
-			"_Failed at %s._\n\n"+
-			"```\n%s\n```",
+			"%s, so no review could be posted. This is usually transient — push a new commit or "+
+			"mention `@code-guru` in a comment to try again. Diagnostic details are in the bot logs "+
+			"(the raw model output is intentionally not posted here).\n\n"+
+			"_Failed at %s._",
+		classifyReviewFailure(reviewErr),
 		now.UTC().Format(time.RFC3339),
-		errText,
 	)
 }
 
-// reviewFailedBodyErrorLimit caps the raw error text echoed into
-// the PR thread. 2 KB is enough to surface the typical
-// `claude CLI failed: exit status 1 (stderr: ...; stdout: ...)`
-// envelope that PR #98 introduced — long enough to be useful for
-// the author/operator, short enough that the PR thread does not
-// turn into a wall of text under a runaway-claude crash.
-const reviewFailedBodyErrorLimit = 2048
+// classifyReviewFailure maps a review error to a short, human-readable,
+// content-free reason for the failure annotation. It does NOT echo the raw
+// error: a transient backend failure embeds the AI's raw output, and posting
+// that to the PR is the leak `buildReviewFailedBody` exists to avoid. The
+// `RetryingAIReviewer` wraps the backend error with `%w`, so `errors.Is`
+// still sees `support.ErrUnparseableResponse` through the retry envelope.
+func classifyReviewFailure(reviewErr error) string {
+	switch {
+	case reviewErr == nil:
+		return "The AI review could not be completed"
+	case errors.Is(reviewErr, support.ErrUnparseableResponse):
+		return "The AI did not return a review in the expected JSON format"
+	default:
+		return "The AI backend errored"
+	}
+}
 
 // postReviewCompleteAnnotation drops a single PR-wide notice after
 // the AI review's inline + summary comments have been posted, so
