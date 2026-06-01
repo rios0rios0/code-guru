@@ -384,6 +384,68 @@ bot_identities:
 	})
 }
 
+func TestNewSettingsTrivialAutoMergeAuthors(t *testing.T) {
+	// Pins that the auto-merge author allowlist is configurable, so a
+	// deployment can restrict unattended merges to trusted automation
+	// accounts (autobump / autoupdate / config refresh) instead of
+	// force-merging every trivial PR — including a human's docs PR —
+	// past `Required reviewers`.
+
+	t.Run("should parse CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS from the env-only path", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+		t.Setenv("CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS", "automation@example.com, svc-bump@example.com")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, []string{"automation@example.com", "svc-bump@example.com"}, settings.Trivial.AutoMergeAllowedAuthors,
+			"comma-separated authors must be split and trimmed so only those accounts auto-merge")
+	})
+
+	t.Run("should default to an empty allowlist when the env var is unset", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Empty(t, settings.Trivial.AutoMergeAllowedAuthors,
+			"an empty allowlist preserves the historical any-author behaviour for backward compatibility")
+	})
+
+	t.Run("should override YAML auto_merge_allowed_authors when the env var is set", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+trivial:
+  enabled: true
+  adapters:
+    - docs-only
+  auto_merge_allowed_authors:
+    - yaml-bot@example.com
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		t.Setenv("CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS", "automation@example.com")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, []string{"automation@example.com"}, settings.Trivial.AutoMergeAllowedAuthors,
+			"env var must override YAML so deployments can pin the allowlist per-environment")
+	})
+}
+
 func TestNewSettingsFromEnvTrivialAutoMerge(t *testing.T) {
 	t.Run("should default AutoMerge=false when the env var is unset", func(t *testing.T) {
 		// given

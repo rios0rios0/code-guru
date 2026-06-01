@@ -131,6 +131,17 @@ type TrivialConfig struct {
 	// this off and let `Required reviewers` policies remain
 	// authoritative. Honours `CODE_GURU_TRIVIAL_BYPASS_POLICIES`.
 	BypassPolicy bool `yaml:"bypass_policy"`
+	// AutoMergeAllowedAuthors restricts auto-merge to PRs opened by one of
+	// the listed account identities (e.g. the autobump / autoupdate /
+	// config-automation service account). Triviality decides whether a PR
+	// is eligible to auto-merge; this allowlist decides whether its author
+	// is trusted to merge unattended. When non-empty, only matching authors
+	// auto-merge — a human's docs PR is approved but left for a human to
+	// merge. When empty, auto-merge falls back to "any author" for
+	// backward compatibility (not recommended with BypassPolicy, which then
+	// force-merges every trivial PR past `Required reviewers`). Honours
+	// `CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS` (comma-separated).
+	AutoMergeAllowedAuthors []string `yaml:"auto_merge_allowed_authors"`
 }
 
 // ServerConfig holds settings for the webhook server.
@@ -197,6 +208,9 @@ func NewSettings(path string) (*Settings, error) {
 			settings.Trivial.BypassPolicy = v
 		}
 	}
+	if authors := splitCSV(os.Getenv("CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS")); len(authors) > 0 {
+		settings.Trivial.AutoMergeAllowedAuthors = authors
+	}
 	if ids := splitCSV(os.Getenv("CODE_GURU_BOT_IDENTITIES")); len(ids) > 0 {
 		settings.BotIdentities = ids
 	}
@@ -260,11 +274,12 @@ func NewSettingsFromEnv() (*Settings, error) {
 			Path: os.Getenv("CODE_GURU_RULES_PATH"),
 		},
 		Trivial: TrivialConfig{
-			Enabled:       len(adapters) > 0,
-			Adapters:      adapters,
-			AutoMerge:     parseBoolEnv("CODE_GURU_TRIVIAL_AUTO_MERGE", false),
-			MergeStrategy: strings.TrimSpace(os.Getenv("CODE_GURU_TRIVIAL_MERGE_STRATEGY")),
-			BypassPolicy:  parseBoolEnv("CODE_GURU_TRIVIAL_BYPASS_POLICIES", false),
+			Enabled:                 len(adapters) > 0,
+			Adapters:                adapters,
+			AutoMerge:               parseBoolEnv("CODE_GURU_TRIVIAL_AUTO_MERGE", false),
+			MergeStrategy:           strings.TrimSpace(os.Getenv("CODE_GURU_TRIVIAL_MERGE_STRATEGY")),
+			BypassPolicy:            parseBoolEnv("CODE_GURU_TRIVIAL_BYPASS_POLICIES", false),
+			AutoMergeAllowedAuthors: splitCSV(os.Getenv("CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS")),
 		},
 		Server: ServerConfig{
 			Port:                 port,
