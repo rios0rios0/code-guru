@@ -66,6 +66,34 @@ type AIConfig struct {
 	// work-in-progress that should not consume review budget. Override via
 	// CODE_GURU_AI_REVIEW_DRAFTS=true.
 	ReviewDrafts bool `yaml:"review_drafts"`
+
+	// MaxAttempts is the total number of times the AI backend is invoked
+	// per review before giving up (1 = no retry). LLM output is non-
+	// deterministic, so a re-sample usually turns a non-JSON or transient-
+	// error response (e.g. the claude CLI's dropped-socket error) into a
+	// clean review — retrying avoids a "review failed" annotation on the PR
+	// for what is almost always a recoverable blip. Resolve via
+	// ReviewAttempts() (defaults to 3 when unset). Honours
+	// CODE_GURU_AI_MAX_ATTEMPTS.
+	MaxAttempts int `yaml:"max_attempts"`
+}
+
+// defaultReviewAttempts is the attempt budget applied when AI.MaxAttempts is
+// unset or non-positive. 3 (one initial call plus two retries) clears the
+// overwhelming majority of the transient / non-JSON failures observed in
+// production while bounding worst-case latency to roughly 3x a single review.
+const defaultReviewAttempts = 3
+
+// ReviewAttempts resolves the per-review AI attempt budget. An unset or
+// non-positive MaxAttempts falls back to defaultReviewAttempts so existing
+// deployments pick up retries automatically; an explicit value (e.g.
+// `max_attempts: 1` to disable retries, or a higher value for a flaky
+// backend) wins.
+func (a AIConfig) ReviewAttempts() int {
+	if a.MaxAttempts <= 0 {
+		return defaultReviewAttempts
+	}
+	return a.MaxAttempts
 }
 
 // NativeReviewSubmissionEnabled resolves the tri-state SubmitNativeReview
@@ -214,6 +242,11 @@ func NewSettings(path string) (*Settings, error) {
 	if ids := splitCSV(os.Getenv("CODE_GURU_BOT_IDENTITIES")); len(ids) > 0 {
 		settings.BotIdentities = ids
 	}
+	if raw := strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_ATTEMPTS")); raw != "" {
+		if v, parseErr := strconv.Atoi(raw); parseErr == nil && v > 0 {
+			settings.AI.MaxAttempts = v
+		}
+	}
 
 	if validateErr := validateSettings(&settings); validateErr != nil {
 		return nil, validateErr
@@ -243,6 +276,7 @@ func parseTrivialAdaptersEnv() []string {
 // NewSettingsFromEnv builds settings entirely from environment variables.
 func NewSettingsFromEnv() (*Settings, error) {
 	maxTurns, _ := strconv.Atoi(envOrDefault("CODE_GURU_CLAUDE_MAX_TURNS", "1"))
+	maxAttempts, _ := strconv.Atoi(os.Getenv("CODE_GURU_AI_MAX_ATTEMPTS"))
 	port, _ := strconv.Atoi(envOrDefault("CODE_GURU_PORT", "8080"))
 	appID, _ := strconv.ParseInt(os.Getenv("CODE_GURU_GITHUB_APP_ID"), 10, 64)
 	queueSize, _ := strconv.Atoi(envOrDefault("CODE_GURU_SERVER_QUEUE_SIZE", "100"))
@@ -269,6 +303,7 @@ func NewSettingsFromEnv() (*Settings, error) {
 			},
 			SubmitNativeReview: parseOptionalBoolEnv("CODE_GURU_AI_SUBMIT_NATIVE_REVIEW"),
 			ReviewDrafts:       parseBoolEnv("CODE_GURU_AI_REVIEW_DRAFTS", false),
+			MaxAttempts:        maxAttempts,
 		},
 		Rules: RulesConfig{
 			Path: os.Getenv("CODE_GURU_RULES_PATH"),

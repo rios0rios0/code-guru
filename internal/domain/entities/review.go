@@ -58,6 +58,15 @@ type ReviewRequest struct {
 	// only when `ReviewOptions.UserMentioned` is true. See
 	// `support.BuildReviewConversation` for the assembly contract.
 	Conversation []ReviewThread
+
+	// Attempt is the 1-based retry attempt number for this review. The
+	// retry decorator (`infrastructure/repositories.RetryingAIReviewer`)
+	// sets it before each call so the prompt builder can reinforce the
+	// "respond with ONLY valid JSON" instruction on attempts after the
+	// first — the common reason a re-sample succeeds where the first try
+	// returned prose. 0 or 1 means the first attempt (no reinforcement),
+	// keeping that prompt byte-for-byte identical to its pre-retry shape.
+	Attempt int
 }
 
 // ReviewThread is one inline review conversation: the bot's original
