@@ -621,9 +621,9 @@ func classifyReviewFailure(reviewErr error) string {
 	case reviewErr == nil:
 		return "The AI review could not be completed"
 	case errors.Is(reviewErr, support.ErrUnparseableResponse):
-		return "The AI did not return a review in the expected JSON format after several attempts"
+		return "The AI did not return a review in the expected JSON format"
 	default:
-		return "The AI backend errored after several attempts"
+		return "The AI backend errored"
 	}
 }
 
