@@ -276,7 +276,7 @@ func parseTrivialAdaptersEnv() []string {
 // NewSettingsFromEnv builds settings entirely from environment variables.
 func NewSettingsFromEnv() (*Settings, error) {
 	maxTurns, _ := strconv.Atoi(envOrDefault("CODE_GURU_CLAUDE_MAX_TURNS", "1"))
-	maxAttempts, _ := strconv.Atoi(os.Getenv("CODE_GURU_AI_MAX_ATTEMPTS"))
+	maxAttempts, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_ATTEMPTS")))
 	port, _ := strconv.Atoi(envOrDefault("CODE_GURU_PORT", "8080"))
 	appID, _ := strconv.ParseInt(os.Getenv("CODE_GURU_GITHUB_APP_ID"), 10, 64)
 	queueSize, _ := strconv.Atoi(envOrDefault("CODE_GURU_SERVER_QUEUE_SIZE", "100"))
