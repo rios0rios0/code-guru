@@ -31,6 +31,7 @@ type adoResource struct {
 	SourceRefName string        `json:"sourceRefName"`
 	TargetRefName string        `json:"targetRefName"`
 	Repository    adoRepository `json:"repository"`
+	CreatedBy     adoIdentity   `json:"createdBy"`
 }
 
 type adoRepository struct {
@@ -42,6 +43,29 @@ type adoRepository struct {
 
 type adoProject struct {
 	Name string `json:"name"`
+}
+
+// adoIdentity is the {displayName, uniqueName} shape Azure DevOps uses
+// for every person reference in a webhook payload (PR author, comment
+// author).
+type adoIdentity struct {
+	DisplayName string `json:"displayName"`
+	UniqueName  string `json:"uniqueName"`
+}
+
+// adoIdentityName returns the most stable identity string for an ADO
+// person reference: the uniqueName (UPN / email, e.g.
+// `someone@example.com`) when present, else the displayName. This is
+// what the webhook handlers store in `PullRequestDetail.Author` so the
+// trivial auto-merge author allowlist (`Settings.Trivial.AutoMergeAllowedAuthors`)
+// can match it — without it the ADO webhook path leaves Author empty and
+// every PR fails the allowlist check, silently disabling auto-merge even
+// for the allow-listed automation account.
+func adoIdentityName(id adoIdentity) string {
+	if id.UniqueName != "" {
+		return id.UniqueName
+	}
+	return id.DisplayName
 }
 
 // HandleAzureDevOps processes Azure DevOps Service Hook events.
@@ -181,6 +205,9 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 		SourceBranch: refToBranch(event.Resource.SourceRefName),
 		TargetBranch: refToBranch(event.Resource.TargetRefName),
 		IsDraft:      event.Resource.IsDraft,
+		// Author drives the trivial auto-merge allowlist; without it
+		// every ADO webhook PR has an empty author and fails the gate.
+		Author: adoIdentityName(event.Resource.CreatedBy),
 	}
 
 	dedupKey := fmt.Sprintf("ado:%s:%d", repo.ID, pr.ID)
@@ -368,17 +395,15 @@ type adoCommentEvent struct {
 	EventType string `json:"eventType"`
 	Resource  struct {
 		Comment struct {
-			Content string `json:"content"`
-			Author  struct {
-				DisplayName string `json:"displayName"`
-				UniqueName  string `json:"uniqueName"`
-			} `json:"author"`
+			Content string      `json:"content"`
+			Author  adoIdentity `json:"author"`
 		} `json:"comment"`
 		PullRequest struct {
 			PullRequestID int           `json:"pullRequestId"`
 			Title         string        `json:"title"`
 			URL           string        `json:"url"`
 			Repository    adoRepository `json:"repository"`
+			CreatedBy     adoIdentity   `json:"createdBy"`
 		} `json:"pullRequest"`
 	} `json:"resource"`
 }
@@ -451,6 +476,9 @@ func (d *Dispatcher) handleADOComment(w http.ResponseWriter, _ *http.Request, bo
 				Title: pr.Title,
 				URL:   pr.URL,
 			},
+			// Carry the PR author so a mention re-review that ends in a
+			// trivial-approve still honours the auto-merge allowlist.
+			Author: adoIdentityName(pr.CreatedBy),
 		},
 		UserMentioned: true,
 	}
@@ -460,10 +488,7 @@ func (d *Dispatcher) handleADOComment(w http.ResponseWriter, _ *http.Request, bo
 		writeError(w, http.StatusServiceUnavailable, "queue full")
 		return
 	}
-	commenter := event.Resource.Comment.Author.UniqueName
-	if commenter == "" {
-		commenter = event.Resource.Comment.Author.DisplayName
-	}
+	commenter := adoIdentityName(event.Resource.Comment.Author)
 	logger.Infof("ADO webhook: enqueued mention re-review for PR #%d in %s/%s (commenter=%s)",
 		pr.PullRequestID, repo.Project, repo.Name, commenter)
 	w.WriteHeader(http.StatusAccepted)

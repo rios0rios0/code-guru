@@ -89,6 +89,19 @@ type ReviewOptions struct {
 	// `Settings.Trivial.BypassPolicy`.
 	TrivialBypassPolicy bool
 
+	// TrivialAutoMergeAuthors restricts auto-merge to PRs opened by one
+	// of the listed account identities (e.g. the `autobump` / `autoupdate`
+	// / config-automation service account). Triviality decides whether a
+	// PR is ELIGIBLE to auto-merge; this allowlist decides whether its
+	// AUTHOR is trusted to merge unattended. When non-empty, a trivial-
+	// approve verdict only auto-merges if the PR author matches an entry
+	// (exact, case-insensitive). When empty, auto-merge falls back to the
+	// historical "any author" behaviour for backward compatibility — not
+	// recommended with `TrivialBypassPolicy`, since it force-merges every
+	// trivial PR (including a human's docs PR) past `Required reviewers`.
+	// Wired from `Settings.Trivial.AutoMergeAllowedAuthors`.
+	TrivialAutoMergeAuthors []string
+
 	// BotIdentities lists the account identities code-guru posts under
 	// (e.g. a service-account login / email on a self-hosted Azure
 	// DevOps deployment). Used on the re-review path so the conversation
@@ -348,15 +361,86 @@ func (c *ReviewCommand) handleTrivialDetection(
 		// vote alone is enough to surface the verdict in the panel.
 		c.submitNativeReview(ctx, provider, repo, pr.ID, detection.Verdict, "", opts)
 		// Auto-merge gated by `Settings.Trivial.AutoMerge` (env
-		// `CODE_GURU_TRIVIAL_AUTO_MERGE=true`). Best-effort: a merge
-		// failure logs at warn and the verdict still stands; the PR
-		// author can complete the merge manually from the platform UI.
+		// `CODE_GURU_TRIVIAL_AUTO_MERGE=true`) AND the author allowlist
+		// (`Settings.Trivial.AutoMergeAllowedAuthors`). Triviality makes a
+		// PR eligible; the allowlist decides whether its author is trusted
+		// to merge unattended — so a human's docs PR is approved but left
+		// for a human to merge, while a trusted automation account's PR
+		// (autobump / autoupdate / config refresh) merges on its own.
+		// Best-effort: a merge failure logs at warn and the verdict still
+		// stands; anyone can complete the merge manually from the UI.
 		if detection.Verdict == verdictApprove && opts.TrivialAutoMerge {
-			c.autoMergeTrivial(ctx, provider, repo, pr.ID, opts.TrivialMergeStrategy, opts.TrivialBypassPolicy)
+			c.maybeAutoMergeTrivial(ctx, provider, repo, pr, opts)
 		}
 	}
 
 	return result
+}
+
+// maybeAutoMergeTrivial applies the author-allowlist gate and then
+// either auto-merges the trivial-approved PR or declines and logs why.
+// Pulled out of handleTrivialDetection so the branches stay flat (the
+// `nestif` linter rejects the inline 3-level form) and so the
+// "approved-only, left for a human" decision has one obvious home.
+//
+// Caller guarantees the verdict is approve and TrivialAutoMerge is on;
+// this method only decides the AUTHOR-trust half of the gate.
+func (c *ReviewCommand) maybeAutoMergeTrivial(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	pr forgeEntities.PullRequestDetail,
+	opts ReviewOptions,
+) {
+	if !autoMergeAuthorAllowed(pr.Author, opts.TrivialAutoMergeAuthors) {
+		logger.Infof(
+			"PR #%d: trivial-approve by author %q is not in the auto-merge allowlist; approved only, leaving the merge to a human",
+			pr.ID,
+			pr.Author,
+		)
+		return
+	}
+	if len(opts.TrivialAutoMergeAuthors) == 0 && opts.TrivialBypassPolicy {
+		logger.Warnf(
+			"PR #%d: auto-merging with policy bypass but NO author allowlist is configured — every trivial PR from any author "+
+				"(including humans) will be force-merged past branch policies; set CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS to restrict to trusted automation accounts",
+			pr.ID,
+		)
+	}
+	c.autoMergeTrivial(ctx, provider, repo, pr.ID, opts.TrivialMergeStrategy, opts.TrivialBypassPolicy)
+}
+
+// autoMergeAuthorAllowed reports whether a trivial-approved PR may be
+// auto-merged given its author and the configured allowlist.
+//
+// An EMPTY allowlist preserves the historical behaviour — any author's
+// trivial PR is eligible — for backward compatibility. Operators are
+// nonetheless encouraged to set one, because auto-merging every trivial
+// PR regardless of who opened it (especially with policy bypass) force-
+// merges human PRs past `Required reviewers`. A docs-only diff is not
+// inherently safe: prose can carry a malicious install command, a
+// poisoned package name, a phishing link, or leaked secrets, and the
+// bypass means no human ever looks. The valuable, low-risk case is
+// trusted mechanical automation (autobump / autoupdate / config refresh),
+// so the allowlist names exactly those accounts.
+//
+// When the allowlist is non-empty the PR author must match one entry,
+// compared case-insensitively after trimming surrounding whitespace. The
+// entries are full account identities matched against the provider's
+// `PullRequestDetail.Author` (the login on GitHub, the createdBy display
+// name on Azure DevOps), so an operator pins the exact account each
+// automation tool opens its PRs under.
+func autoMergeAuthorAllowed(author string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	trimmedAuthor := strings.TrimSpace(author)
+	for _, a := range allowed {
+		if strings.EqualFold(trimmedAuthor, strings.TrimSpace(a)) {
+			return true
+		}
+	}
+	return false
 }
 
 // autoMergeTrivial completes the PR via the underlying provider after

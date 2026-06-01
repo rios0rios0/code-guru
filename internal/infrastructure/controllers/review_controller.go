@@ -132,15 +132,16 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 	ciPassed := false
 
 	result, err := reviewCmd.Execute(ctx, reviewProvider, repo, *targetPR, commands.ReviewOptions{
-		DryRun:               dryRun,
-		Verbose:              verbose,
-		CIPassed:             ciPassed,
-		SubmitNativeReview:   settings.AI.NativeReviewSubmissionEnabled(),
-		ReviewDrafts:         settings.AI.ReviewDrafts,
-		TrivialAutoMerge:     settings.Trivial.AutoMerge,
-		TrivialMergeStrategy: settings.Trivial.MergeStrategy,
-		TrivialBypassPolicy:  settings.Trivial.BypassPolicy,
-		BotIdentities:        settings.BotIdentities,
+		DryRun:                  dryRun,
+		Verbose:                 verbose,
+		CIPassed:                ciPassed,
+		SubmitNativeReview:      settings.AI.NativeReviewSubmissionEnabled(),
+		ReviewDrafts:            settings.AI.ReviewDrafts,
+		TrivialAutoMerge:        settings.Trivial.AutoMerge,
+		TrivialMergeStrategy:    settings.Trivial.MergeStrategy,
+		TrivialBypassPolicy:     settings.Trivial.BypassPolicy,
+		TrivialAutoMergeAuthors: settings.Trivial.AutoMergeAllowedAuthors,
+		BotIdentities:           settings.BotIdentities,
 	})
 	if err != nil {
 		logger.Errorf("review failed: %v", err)

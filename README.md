@@ -197,6 +197,9 @@ trivial:
     - 'docs-only'
   auto_merge: false      # opt-in; true completes the PR after a trivial-approve verdict
   merge_strategy: ''     # 'merge' / 'squash' / 'rebase' — empty falls back to platform default
+  auto_merge_allowed_authors:   # restrict auto-merge to these PR authors; empty = any author
+    - 'autobump@example.com'
+    - 'autoupdate@example.com'
 ```
 
 Or via environment variables:
@@ -205,9 +208,12 @@ Or via environment variables:
 CODE_GURU_TRIVIAL_ADAPTERS=update-go,bump-go,docs-only
 CODE_GURU_TRIVIAL_AUTO_MERGE=true
 CODE_GURU_TRIVIAL_MERGE_STRATEGY=squash
+CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS=autobump@example.com,autoupdate@example.com
 ```
 
 `auto_merge` is intentionally off by default — it bypasses human review and merges cross-system, so the gate is "operator must explicitly opt in". A merge failure logs at warn and the trivial-approve verdict still stands; the PR author can complete the merge manually from the platform UI.
+
+`auto_merge_allowed_authors` decides **who** is trusted to merge unattended, separately from triviality (which decides **what** is eligible). When non-empty, only PRs whose author matches an entry (case-insensitive) auto-merge — so a human's docs PR is approved but left for a human to merge, while a trusted automation account's PR (dependency bumps, version bumps, config refresh) merges on its own. Leaving it empty keeps the historical "any author" behaviour; that is **not recommended together with policy bypass**, because it force-merges every trivial PR — including a human's — past `Required reviewers` (the bot logs a warning in that case). A docs-only diff is not inherently safe: prose can carry a malicious install command, a poisoned package name, or a phishing link, and bypass means no human ever reviews it.
 
 ## Server / Webhook Mode
 
@@ -384,6 +390,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_TRIVIAL_ADAPTERS`          | Comma-separated adapter names                                            |                      |
 | `CODE_GURU_TRIVIAL_AUTO_MERGE`        | Opt-in flag that completes the PR after a trivial-approve verdict        | `false`              |
 | `CODE_GURU_TRIVIAL_MERGE_STRATEGY`    | gitforge merge strategy (`merge` / `squash` / `rebase`); empty = default |                      |
+| `CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS` | Comma-separated PR-author identities allowed to auto-merge; empty = any author (not recommended with bypass) |                      |
 | `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW`   | Records a native review (Approved / Changes Requested) on the platform's reviewer panel; set to `false` to opt out | `true`               |
 | `CODE_GURU_AI_REVIEW_DRAFTS`          | When `true`, the bot reviews draft PRs as well — by default drafts are skipped | `false`              |
 | `CODE_GURU_BOT_IDENTITIES`            | Comma-separated account identities the bot posts under (so re-reviews recognise its own prior threads); the built-in `code-guru` shape and self-detection apply when unset |                      |
