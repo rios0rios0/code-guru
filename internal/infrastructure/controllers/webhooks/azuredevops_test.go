@@ -197,7 +197,8 @@ func adoPRPayload(eventType, status string) string {
       "name": "demo-repo",
       "remoteUrl": "https://dev.azure.com/ExampleOrg/Platform/_git/demo-repo",
       "project": {"name": "Platform"}
-    }
+    },
+    "createdBy": {"displayName": "Automation", "uniqueName": "automation@example.com"}
   }
 }`, eventType, status, adoRepoUUID)
 }
@@ -787,6 +788,36 @@ func TestHandleAzureDevOpsPropagatesIsDraft(t *testing.T) {
 		jobs := sub.Jobs()
 		require.Len(t, jobs, 1)
 		assert.False(t, jobs[0].PR.IsDraft, "non-draft ADO payload must keep PR.IsDraft=false")
+	})
+}
+
+func TestHandleAzureDevOpsPopulatesAuthor(t *testing.T) {
+	t.Parallel()
+
+	// Pin the wiring contract surfaced by Copilot review on PR #164: the
+	// ADO webhook handler MUST populate `PR.Author` from
+	// `resource.createdBy`. Without it the trivial auto-merge author
+	// allowlist (`CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS`) sees an empty
+	// author on every ADO webhook PR and silently withholds the merge —
+	// even for the allow-listed automation account.
+	t.Run("should populate Job.PR.Author from resource.createdBy.uniqueName", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(adoActivePRPayload()))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		require.Equal(t, http.StatusAccepted, w.Code)
+		jobs := sub.Jobs()
+		require.Len(t, jobs, 1)
+		assert.Equal(t, "automation@example.com", jobs[0].PR.Author,
+			"ADO webhook must carry the PR author so the trivial auto-merge allowlist can match it")
 	})
 }
 
