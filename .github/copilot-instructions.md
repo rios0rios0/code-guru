@@ -83,6 +83,7 @@ Key config sections:
 - `server.webhook_secret` — HMAC secret for verifying webhook payloads.
 - `github_app.app_id` — GitHub App ID for webhook authentication.
 - `github_app.private_key` — GitHub App private key.
+- `bot_identities` — comma-separated account identities code-guru posts under (env `CODE_GURU_BOT_IDENTITIES`), so re-reviews recognise prior bot threads under a service account. The `code-guru[bot]` shape and self-detected identities are always recognised, so this is only needed when neither covers the deployment.
 
 Validate required fields in `validateSettings`.
 

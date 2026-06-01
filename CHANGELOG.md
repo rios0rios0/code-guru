@@ -25,6 +25,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 ### Changed
 
 - changed the re-review prompt so a finding the author rebutted as intentional or not actionable (for example generated code or an established convention) is classified `resolved` and not raised again
+- refreshed `CLAUDE.md` and `.github/copilot-instructions.md` to document the `bot_identities` configuration and the bot-identity recognition (`IsBotAuthor` / `DetectBotAuthors` self-detection) used by the `@code-guru` re-review conversation walk
 
 ### Fixed
 
