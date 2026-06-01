@@ -64,6 +64,10 @@ ai:
   # When false (the default), draft PRs are skipped entirely — set to true to
   # opt back in.
   review_drafts: false
+  # Times the AI backend is re-sampled per review when it returns a non-JSON or
+  # transient-error response before the review is marked failed. Defaults to 3;
+  # set to 1 to disable retries.
+  max_attempts: 3
   claude:
     binary_path: 'claude'
     model: 'sonnet'
@@ -393,6 +397,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS` | Comma-separated PR-author identities allowed to auto-merge; empty = any author (not recommended with bypass) |                      |
 | `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW`   | Records a native review (Approved / Changes Requested) on the platform's reviewer panel; set to `false` to opt out | `true`               |
 | `CODE_GURU_AI_REVIEW_DRAFTS`          | When `true`, the bot reviews draft PRs as well — by default drafts are skipped | `false`              |
+| `CODE_GURU_AI_MAX_ATTEMPTS`           | Times the AI backend is re-sampled per review when it returns a non-JSON or transient-error response before the review is marked failed (`1` disables retries) | `3`                  |
 | `CODE_GURU_BOT_IDENTITIES`            | Comma-separated account identities the bot posts under (so re-reviews recognise its own prior threads); the built-in `code-guru` shape and self-detection apply when unset |                      |
 
 ## Rules

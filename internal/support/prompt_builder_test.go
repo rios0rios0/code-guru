@@ -389,3 +389,43 @@ func TestBuildUserPromptWithConversation(t *testing.T) {
 			"hostile body must not be able to terminate the fence and inject instructions")
 	})
 }
+
+func TestBuildSystemPromptForRetryReminder(t *testing.T) {
+	t.Parallel()
+
+	// A distinctive substring of `retryJSONReminder` (which is unexported);
+	// asserting on it is enough to prove the reminder is / isn't appended.
+	const reminderMarker = "did NOT return a valid JSON object"
+
+	t.Run("should NOT append the retry reminder on the first attempt", func(t *testing.T) {
+		t.Parallel()
+
+		// given / when
+		got := support.BuildSystemPromptFor(entities.ReviewRequest{Attempt: 1})
+
+		// then
+		assert.NotContains(t, got, reminderMarker,
+			"the first attempt must stay byte-for-byte the normal prompt — no retry reminder")
+	})
+
+	t.Run("should NOT append the retry reminder when Attempt is unset (zero)", func(t *testing.T) {
+		t.Parallel()
+
+		// given / when
+		got := support.BuildSystemPromptFor(entities.ReviewRequest{Attempt: 0})
+
+		// then
+		assert.NotContains(t, got, reminderMarker)
+	})
+
+	t.Run("should append the retry reminder on attempts after the first", func(t *testing.T) {
+		t.Parallel()
+
+		// given / when
+		got := support.BuildSystemPromptFor(entities.ReviewRequest{Attempt: 2})
+
+		// then
+		assert.Contains(t, got, reminderMarker,
+			"a retry must reinforce the JSON-only instruction so the re-sample is nudged back to valid JSON")
+	})
+}
