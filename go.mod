@@ -1,6 +1,6 @@
 module github.com/rios0rios0/codeguru
 
-go 1.26.3
+go 1.26.4
 
 require github.com/rios0rios0/cliforge v0.3.8
 
