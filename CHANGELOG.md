@@ -31,6 +31,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - refreshed `CLAUDE.md` and `.github/copilot-instructions.md` to document the `bot_identities` configuration and the bot-identity recognition (`IsBotAuthor` / `DetectBotAuthors` self-detection) used by the `@code-guru` re-review conversation walk
 - changed the Go module dependencies to their latest versions
 - changed the Go version to `1.26.4` and updated all module dependencies
+- changed the Go module dependencies to their latest versions
 
 ### Fixed
 
