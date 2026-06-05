@@ -18,6 +18,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Changed
 
+- changed the `@code-guru` re-review to post its per-thread verdict as a reply **nested inside the existing thread** (via gitforge `ReplyToThread`) instead of a new comment on the same line, so the conversation reads continuously — like a human reviewer answering below the author's reply — rather than fragmenting into two parallel threads on one line. Falls back to a fresh inline comment when the provider gives no usable thread id. Pinned `gitforge` to the merged build carrying the new `ReplyToThread` method
 - changed the Go module dependencies to their latest versions
 
 ## [1.8.0] - 2026-06-03
