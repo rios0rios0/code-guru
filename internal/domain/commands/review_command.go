@@ -1458,9 +1458,7 @@ func (c *ReviewCommand) applyThreadResolutions(
 		}
 
 		body := buildResolutionReplyBody(res)
-		if _, err := provider.PostPullRequestThreadComment(
-			ctx, repo, prID, thread.FilePath, thread.Line, body,
-		); err != nil {
+		if err := c.postResolutionReply(ctx, provider, repo, prID, thread, body); err != nil {
 			logger.Warnf(
 				"PR #%d: failed to post resolution reply on %s:%d (status=%s): %v",
 				prID, thread.FilePath, thread.Line, res.Status, err,
@@ -1552,6 +1550,30 @@ func mapResolutionStatusToThreadState(status string) string {
 	default:
 		return "active"
 	}
+}
+
+// postResolutionReply posts the re-review verdict for a prior thread. It
+// REPLIES INSIDE the existing thread (ReplyToThread) when the thread carries a
+// usable provider thread id, so the verdict reads as a continuation of the
+// conversation — the bot answering below the author's reply, like a human
+// reviewer — instead of a confusing new comment on the same line. It falls
+// back to a fresh inline comment at the anchor only when no thread id is
+// available (e.g. a provider / edge case where ThreadID is 0), preserving the
+// prior behaviour rather than dropping the reply entirely.
+func (c *ReviewCommand) postResolutionReply(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+	thread entities.ReviewThread,
+	body string,
+) error {
+	if thread.ThreadID > 0 {
+		_, err := provider.ReplyToThread(ctx, repo, prID, int(thread.ThreadID), body)
+		return err
+	}
+	_, err := provider.PostPullRequestThreadComment(ctx, repo, prID, thread.FilePath, thread.Line, body)
+	return err
 }
 
 // buildResolutionReplyBody renders the inline reply the bot posts on
