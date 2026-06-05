@@ -785,12 +785,26 @@ type recordingReviewProvider struct {
 	// `UpdatePullRequestThreadStatus` so the resolution-soft-fail
 	// contract can be exercised end-to-end.
 	threadStatusErr error
+	// replies records every `ReplyToThread` call so tests can pin the
+	// in-thread-reply contract (the re-review verdict nests inside the
+	// existing thread rather than opening a new same-line comment).
+	replies []recordedThreadReply
+	// replyErr, when set, is returned by `ReplyToThread` so the
+	// resolution-soft-fail path can be exercised on the in-thread route.
+	replyErr error
 }
 
 // recordedThreadComment captures one inline thread-comment post.
 type recordedThreadComment struct {
 	filePath string
 	line     int
+	body     string
+}
+
+// recordedThreadReply captures one `ReplyToThread` call — the thread the
+// bot replied into and the body it posted.
+type recordedThreadReply struct {
+	threadID int
 	body     string
 }
 
@@ -902,6 +916,19 @@ func (r *recordingReviewProvider) PostPullRequestThreadComment(
 	})
 	if r.threadCommentErr != nil {
 		return 0, r.threadCommentErr
+	}
+	return r.threadCommentNextID, nil
+}
+
+func (r *recordingReviewProvider) ReplyToThread(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	_, threadID int,
+	body string,
+) (int, error) {
+	r.replies = append(r.replies, recordedThreadReply{threadID: threadID, body: body})
+	if r.replyErr != nil {
+		return 0, r.replyErr
 	}
 	return r.threadCommentNextID, nil
 }
@@ -1946,17 +1973,19 @@ func TestApplyThreadResolutions(t *testing.T) {
 		// then: one reply per resolution, each anchored on the original
 		// thread's file:line so the user sees the bot engaging with the
 		// existing thread instead of opening a parallel comment.
-		require.Len(t, provider.threadComments, 2,
+		require.Len(t, provider.replies, 2,
 			"there must be exactly one reply per ThreadResolution — duplicate replies would re-create the flooding the resolution path is designed to fix")
-		assert.Equal(t, "internal/foo.go", provider.threadComments[0].filePath)
-		assert.Equal(t, 10, provider.threadComments[0].line)
-		assert.Contains(t, provider.threadComments[0].body, "Resolved",
+		assert.Empty(t, provider.threadComments,
+			"a thread with a usable ThreadID must be replied to IN-THREAD (ReplyToThread), never as a new same-line comment — that fragmentation is what this feature removes")
+		assert.Equal(t, 111, provider.replies[0].threadID,
+			"the reply must nest in the resolved thread (#111), not a new thread on the same line")
+		assert.Contains(t, provider.replies[0].body, "Resolved",
 			"the resolved-reply body must carry the explicit Resolved headline so the PR author can tell at a glance the bot considers this addressed")
-		assert.Contains(t, provider.threadComments[0].body, "Diff adds the nil check.",
+		assert.Contains(t, provider.replies[0].body, "Diff adds the nil check.",
 			"the LLM's explanation must surface in the reply body — without it the user has the verdict but no rationale")
-		assert.Equal(t, "internal/bar.go", provider.threadComments[1].filePath)
-		assert.Equal(t, 20, provider.threadComments[1].line)
-		assert.Contains(t, provider.threadComments[1].body, "outstanding",
+		assert.Equal(t, 222, provider.replies[1].threadID,
+			"the outstanding reply must nest in thread #222")
+		assert.Contains(t, provider.replies[1].body, "outstanding",
 			"the outstanding-reply body must mention `outstanding` so the user knows the concern is still open")
 
 		// only the `resolved` thread should auto-close — `outstanding`
@@ -1996,8 +2025,8 @@ func TestApplyThreadResolutions(t *testing.T) {
 		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, fixedThreads, resolutions)
 
 		// then
-		require.Len(t, provider.threadComments, 1)
-		assert.Contains(t, provider.threadComments[0].body, "Outdated",
+		require.Len(t, provider.replies, 1)
+		assert.Contains(t, provider.replies[0].body, "Outdated",
 			"the outdated-reply body must mention `Outdated` so the user knows the concern no longer applies")
 		require.Len(t, provider.threadStatusUpdates, 1)
 		assert.Equal(t, "closed", provider.threadStatusUpdates[0].status,
@@ -2039,7 +2068,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 		// fixed) and ThreadID 222 (T2, outdated → closed). Without the
 		// id-based match the post-pipeline would silently drop one of
 		// these.
-		require.Len(t, provider.threadComments, 2,
+		require.Len(t, provider.replies, 2,
 			"each prior thread sharing the anchor must receive its own reply when the LLM disambiguates via id")
 		require.Len(t, provider.threadStatusUpdates, 2,
 			"both closing resolutions must trigger an UpdatePullRequestThreadStatus call — without the id-based match one would be silently dropped")
@@ -2079,7 +2108,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, threadsADO, resolutions)
 
 		// then
-		require.Len(t, provider.threadComments, 1, "ADO/AI path normalisation must let the resolution match the conversation thread")
+		require.Len(t, provider.replies, 1, "ADO/AI path normalisation must let the resolution match the conversation thread")
 		assert.Len(t, handled, 1)
 	})
 
@@ -2100,6 +2129,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, fixedThreads, resolutions)
 
 		// then
+		assert.Empty(t, provider.replies, "an unmatched resolution must not reply on any thread")
 		assert.Empty(t, provider.threadComments, "an unmatched resolution must not produce a stray inline comment somewhere on the PR")
 		assert.Empty(t, provider.threadStatusUpdates, "an unmatched resolution must not attempt a status update on a thread that does not exist")
 		assert.Empty(t, handled, "no anchor was handled, so the dedup gate must remain empty")
@@ -2129,7 +2159,10 @@ func TestApplyThreadResolutions(t *testing.T) {
 		commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, threadsNoID, resolutions)
 
 		// then
-		require.Len(t, provider.threadComments, 1, "the explanation reply still posts even when the auto-close is unsupported")
+		require.Len(t, provider.threadComments, 1,
+			"with no usable ThreadID the reply must FALL BACK to a fresh inline comment at the anchor (not be dropped)")
+		assert.Empty(t, provider.replies,
+			"ThreadID 0 has no thread to reply into, so the in-thread ReplyToThread path must NOT be used")
 		assert.Empty(t, provider.threadStatusUpdates,
 			"a ThreadID of 0 must NOT trigger an UpdatePullRequestThreadStatus call — the provider has no handle to act on")
 	})
@@ -2146,6 +2179,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 
 		// then
 		assert.Nil(t, handled)
+		assert.Empty(t, provider.replies)
 		assert.Empty(t, provider.threadComments)
 		assert.Empty(t, provider.threadStatusUpdates)
 	})
@@ -2159,7 +2193,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 		// post the comment that the resolution was supposed to replace.
 		rc := commands.NewReviewCommand(nil, nil, nil)
 		provider := &recordingReviewProvider{
-			threadCommentErr: errors.New("transient ADO 503"),
+			replyErr: errors.New("transient ADO 503"),
 		}
 		resolutions := []entities.ThreadResolution{
 			{FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "Done."},
@@ -2169,7 +2203,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, fixedThreads, resolutions)
 
 		// then
-		require.Len(t, provider.threadComments, 1, "the helper attempted the post once before the error path took over")
+		require.Len(t, provider.replies, 1, "the helper attempted the in-thread reply once before the error path took over")
 		assert.Empty(t, provider.threadStatusUpdates,
 			"a reply failure must short-circuit the auto-close so the bot does not advertise a `fixed` thread that has no visible reply")
 		assert.Len(t, handled, 1,
@@ -2248,11 +2282,11 @@ func TestExecuteMentionPathAppliesThreadResolutions(t *testing.T) {
 		// 1. exactly one inline reply on the prior thread's anchor —
 		//    the bot engaged with the existing thread instead of
 		//    flooding the PR with a parallel comment.
-		require.Len(t, provider.threadComments, 1,
+		require.Len(t, provider.replies, 1,
 			"the mention path must produce exactly one reply per prior thread; the new `comments[]` entry on the same anchor must NOT also produce an inline post — that is the duplicate-flood failure mode")
-		assert.Equal(t, "internal/foo.go", provider.threadComments[0].filePath)
-		assert.Equal(t, 10, provider.threadComments[0].line)
-		assert.Contains(t, provider.threadComments[0].body, "Resolved",
+		assert.Equal(t, 111, provider.replies[0].threadID,
+			"the verdict must nest IN the prior thread (#111), not as a new same-line comment that confuses the author")
+		assert.Contains(t, provider.replies[0].body, "Resolved",
 			"the resolved-status reply must surface the green-check headline so the user sees the bot considers the prior concern addressed")
 
 		// 2. the resolved thread must auto-close so the user does not
