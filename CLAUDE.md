@@ -42,7 +42,7 @@ Clean Architecture with domain/infrastructure separation, using Uber DIG for dep
 - `repositories/claude/` — Claude Code CLI backend (invokes `claude --print`)
 - `repositories/openai/` — OpenAI Chat Completions API backend
 - `repositories/rules/` — Loads Markdown rule files from filesystem with YAML frontmatter glob filtering
-- `repositories/trivial/` — Built-in trivial PR detectors: `update-go`, `update-node`, `update-python` (dependency updates), `bump-go`, `bump-node`, `bump-python` (version bumps with `.autobump.yaml` validation), `docs-only`
+- `repositories/trivial/` — Built-in trivial PR detectors: `update-go`, `update-node`, `update-python` (dependency updates), `bump-go`, `bump-node`, `bump-python` (version bumps with `.autobump.yaml` validation), `docs-only`. A `CHANGELOG.md`-only change is classified as a version bump and claimed **exclusively** by the `bump-*` detectors (shared `isChangelogOnly` guard in `registry.go`); `docs-only`/`update-*` decline it, so disabling the `bump-*` adapters reliably keeps version bumps out of trivial auto-merge instead of letting them fall through to `docs-only`/`update-*`
 - `repositories/trivial/autobump/` — Parser for `.autobump.yaml` config files used by bump detectors
 - `repositories/auth/` — Filesystem-based OAuth token storage
 - `repositories/selfupdate/` — CLI binary self-updater via cliforge

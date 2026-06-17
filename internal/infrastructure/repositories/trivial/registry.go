@@ -2,6 +2,8 @@ package trivial
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
@@ -16,6 +18,33 @@ const (
 	verdictReject  = "reject"
 	changelogFile  = "CHANGELOG.md"
 )
+
+// isChangelogOnly reports whether every changed file is the CHANGELOG.
+//
+// A change that touches ONLY the CHANGELOG is the signature of a version
+// bump / release ceremony — exactly what the bump-* detectors exist to
+// claim (e.g. bump-go = CHANGELOG.md only, since Go versions via git
+// tags). The docs-only and update-* detectors must therefore decline a
+// CHANGELOG-only change: it is neither documentation nor a dependency
+// update. Treating it as either would auto-approve a version bump even
+// when the bump-* adapters are intentionally disabled — the CHANGELOG
+// sits in every detector's allowed set, so without this guard a bump PR
+// is swallowed by whichever non-bump detector runs first. With the
+// guard, a CHANGELOG-only change is matched solely by the bump-*
+// detectors, so disabling those adapters reliably keeps version bumps
+// out of trivial auto-merge. The CHANGELOG may still ACCOMPANY a docs or
+// update PR; it just can never be the sole trigger.
+func isChangelogOnly(files []string) bool {
+	if len(files) == 0 {
+		return false
+	}
+	for _, f := range files {
+		if !strings.EqualFold(filepath.Base(f), changelogFile) {
+			return false
+		}
+	}
+	return true
+}
 
 // allDetectors contains all built-in trivial PR detectors keyed by name.
 //

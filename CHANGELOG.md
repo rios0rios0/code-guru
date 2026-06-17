@@ -20,6 +20,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 - changed the Go module dependencies to their latest versions
 
+### Fixed
+
+- fixed trivial-PR detection classifying a `CHANGELOG.md`-only change as `docs-only` (and as a dependency `update-*`), which let a version-bump PR be auto-approved even when the `bump-*` adapters were disabled — the changelog sits in every detector's allowed set, so the bump was claimed by whichever non-bump detector ran first. A change that touches only the changelog is now recognised as a version bump and is claimed **exclusively** by the `bump-*` detectors; `docs-only` and `update-*` still match when a genuine document or dependency manifest accompanies the changelog
+
 ## [1.8.1] - 2026-06-09
 
 ### Changed
