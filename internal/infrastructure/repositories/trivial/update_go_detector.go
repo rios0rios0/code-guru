@@ -33,6 +33,12 @@ func (d *UpdateGoDetector) Detect(_ context.Context, dctx repositories.Detection
 			return repositories.DetectionResult{}
 		}
 	}
+	// A CHANGELOG-only change is a version bump, not a dependency update —
+	// it must carry an actual manifest/lockfile change to count here. See
+	// isChangelogOnly.
+	if isChangelogOnly(dctx.Files) {
+		return repositories.DetectionResult{}
+	}
 	return repositories.DetectionResult{
 		Detected: true,
 		Verdict:  verdictApprove,
