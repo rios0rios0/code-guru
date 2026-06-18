@@ -186,7 +186,9 @@ These detect version bump (release ceremony) PRs. If the repo contains an `.auto
 
 | Adapter        | Matches When                                                    |
 |----------------|-----------------------------------------------------------------|
-| `docs-only`    | Only `*.md` files changed                                       |
+| `docs-only`    | Only `*.md` files changed (excluding a `CHANGELOG.md`-only change — see note) |
+
+> **Note — a changelog-only change is a version bump.** A PR that touches **only** `CHANGELOG.md` is the signature of a version bump / release ceremony, so it is matched **exclusively** by the `bump-*` adapters. The `docs-only` and `update-*` adapters decline it: the changelog may still *accompany* a documentation or dependency change, but it can never be the sole trigger. This means disabling the `bump-*` adapters reliably keeps version bumps out of trivial auto-merge, instead of having them silently fall through to `docs-only` or `update-*`.
 
 ### Configuration
 

@@ -73,17 +73,101 @@ func TestDetectorRegistry(t *testing.T) {
 		assert.Equal(t, "approve", result.Verdict)
 	})
 
-	t.Run("should return first matching detector", func(t *testing.T) {
-		// given
-		registry := trivial.NewDetectorRegistry([]string{"update-go", "docs-only"})
-		dctx := repositories.DetectionContext{Files: []string{"CHANGELOG.md"}} // matches both update-go and docs-only
+	t.Run("should return the first matching detector when several match", func(t *testing.T) {
+		// given -- a Node version bump (package.json + CHANGELOG.md) matches both
+		// bump-node and update-node; the first registered detector wins.
+		registry := trivial.NewDetectorRegistry([]string{"bump-node", "update-node"})
+		dctx := repositories.DetectionContext{Files: []string{"package.json", "CHANGELOG.md"}}
 
 		// when
 		detector, _, found := registry.Detect(ctx, dctx)
 
 		// then
 		assert.True(t, found)
-		assert.Equal(t, "update-go", detector.Name()) // update-go registered first
+		assert.Equal(t, "bump-node", detector.Name()) // bump-node registered first
+	})
+
+	t.Run("should not detect a CHANGELOG-only change via docs-only (it is a version bump)", func(t *testing.T) {
+		// given
+		registry := trivial.NewDetectorRegistry([]string{"docs-only"})
+		dctx := repositories.DetectionContext{Files: []string{"CHANGELOG.md"}}
+
+		// when
+		_, _, found := registry.Detect(ctx, dctx)
+
+		// then
+		assert.False(t, found)
+	})
+
+	t.Run("should not detect a CHANGELOG-only change via update-go (it is a version bump)", func(t *testing.T) {
+		// given
+		registry := trivial.NewDetectorRegistry([]string{"update-go"})
+		dctx := repositories.DetectionContext{Files: []string{"CHANGELOG.md"}}
+
+		// when
+		_, _, found := registry.Detect(ctx, dctx)
+
+		// then
+		assert.False(t, found)
+	})
+
+	t.Run("should not auto-approve a CHANGELOG-only bump when only docs/update adapters are enabled", func(t *testing.T) {
+		// given -- the bump-* adapters are intentionally disabled, leaving only
+		// docs-only and the update-* family; a CHANGELOG-only version bump must
+		// NOT slip through any of them.
+		registry := trivial.NewDetectorRegistry(
+			[]string{"docs-only", "update-go", "update-node", "update-python"},
+		)
+		dctx := repositories.DetectionContext{Files: []string{"CHANGELOG.md"}}
+
+		// when
+		_, _, found := registry.Detect(ctx, dctx)
+
+		// then
+		assert.False(t, found)
+	})
+
+	t.Run("should still claim a CHANGELOG-only change with bump-go when that adapter is enabled", func(t *testing.T) {
+		// given -- with a bump adapter enabled, the CHANGELOG-only bump is claimed
+		// by it (not by docs-only / update-go, which decline it).
+		registry := trivial.NewDetectorRegistry([]string{"docs-only", "update-go", "bump-go"})
+		dctx := repositories.DetectionContext{Files: []string{"CHANGELOG.md"}}
+
+		// when
+		detector, result, found := registry.Detect(ctx, dctx)
+
+		// then
+		assert.True(t, found)
+		assert.Equal(t, "bump-go", detector.Name())
+		assert.Equal(t, "approve", result.Verdict)
+	})
+
+	t.Run("should still detect docs-only when a real doc accompanies the CHANGELOG", func(t *testing.T) {
+		// given
+		registry := trivial.NewDetectorRegistry([]string{"docs-only"})
+		dctx := repositories.DetectionContext{Files: []string{"README.md", "CHANGELOG.md"}}
+
+		// when
+		detector, result, found := registry.Detect(ctx, dctx)
+
+		// then
+		assert.True(t, found)
+		assert.Equal(t, "docs-only", detector.Name())
+		assert.Equal(t, "approve", result.Verdict)
+	})
+
+	t.Run("should still detect update-go when a manifest accompanies the CHANGELOG", func(t *testing.T) {
+		// given
+		registry := trivial.NewDetectorRegistry([]string{"update-go"})
+		dctx := repositories.DetectionContext{Files: []string{"go.mod", "CHANGELOG.md"}}
+
+		// when
+		detector, result, found := registry.Detect(ctx, dctx)
+
+		// then
+		assert.True(t, found)
+		assert.Equal(t, "update-go", detector.Name())
+		assert.Equal(t, "approve", result.Verdict)
 	})
 
 	t.Run("should not detect anything with empty file list", func(t *testing.T) {
