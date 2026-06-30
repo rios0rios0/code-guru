@@ -442,6 +442,28 @@ func TestHandleGitHubIssueCommentMention(t *testing.T) {
 		assert.Equal(t, 12, jobs[0].PR.ID)
 	})
 
+	t.Run("should respond 204 and not enqueue when the comment is authored by the bot itself", func(t *testing.T) {
+		t.Parallel()
+
+		// given: re-reviewing the bot's own "@code-guru ... to try again"
+		// annotation would loop review->fail->annotate->webhook forever.
+		// "felipe" is the payload's comment author; pin it as a configured
+		// bot identity so the self-author guard recognises it.
+		settings := defaultGitHubSettings()
+		settings.BotIdentities = []string{"felipe"}
+		body := ghIssueCommentPayload("@code-guru re-review")
+		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
+		req := githubRequest(t, ghSecret, body, "issue_comment")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs(), "the bot must not re-review its own comment")
+	})
+
 	t.Run("should respond 204 when the comment has no @code-guru mention", func(t *testing.T) {
 		t.Parallel()
 
