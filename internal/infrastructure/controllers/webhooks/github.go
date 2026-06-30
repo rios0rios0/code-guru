@@ -253,6 +253,16 @@ func (d *Dispatcher) handleGitHubIssueComment(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Skip comments the bot itself authored: its own annotations carry an
+	// "@code-guru ... to try again" line, and re-reviewing on that would
+	// loop review->fail->annotate->webhook forever (see the ADO handler).
+	if commenter := event.Comment.User.Login; support.IsBotAuthor(d.settings.BotIdentities...)(commenter) {
+		logger.Debugf("GitHub webhook: issue_comment on PR #%d is authored by the bot itself (%s); skipping self-triggered re-review",
+			event.Issue.Number, commenter)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	owner, repoName, splitErr := splitFullName(event.Repository.FullName)
 	if splitErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid repository.full_name")

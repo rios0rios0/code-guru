@@ -22,6 +22,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - changed the Go module dependencies to their latest versions
 - changed the Go module dependencies to their latest versions
 
+### Fixed
+
+- fixed an infinite re-review loop where a comment webhook for the bot's own `@code-guru` annotation re-triggered a review; the GitHub and Azure DevOps mention handlers now skip comments authored by the bot itself — matched against the configured `bot_identities` / `CODE_GURU_BOT_IDENTITIES` or the built-in `code-guru` / `code-guru[bot]` / `code-guru@<tenant>` shapes via `support.IsBotAuthor` — so an oversized diff that can never pass review no longer floods the pull request with repeated "review failed" comments
+
 ## [1.8.3] - 2026-06-19
 
 ### Changed

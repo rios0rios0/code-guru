@@ -437,6 +437,21 @@ func (d *Dispatcher) handleADOComment(w http.ResponseWriter, _ *http.Request, bo
 		return
 	}
 
+	// A mention in a comment the bot itself authored (e.g. the
+	// "mention `@code-guru` ... to try again" line in its own "review
+	// failed" annotation) must NOT trigger a re-review. ADO fires a
+	// comment webhook for the bot's own posts too, so acting on them
+	// spins an infinite review->fail->annotate->webhook loop that floods
+	// the PR — observed on an oversized diff that could never pass review.
+	if commenter := adoIdentityName(event.Resource.Comment.Author); support.IsBotAuthor(d.settings.BotIdentities...)(commenter) {
+		logger.Debugf(
+			"ADO webhook: comment on PR #%d is authored by the bot itself (%s); skipping self-triggered re-review",
+			event.Resource.PullRequest.PullRequestID, commenter,
+		)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	pr := event.Resource.PullRequest
 	org := extractADOOrganization(pr.Repository.RemoteURL)
 	if !d.allowedOrganization(org) || !d.allowedProject(pr.Repository.Project.Name) {
