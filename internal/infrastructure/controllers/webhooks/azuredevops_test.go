@@ -22,8 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
-	infraRepos "github.com/rios0rios0/codeguru/internal/infrastructure/repositories"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers/webhooks"
+	infraRepos "github.com/rios0rios0/codeguru/internal/infrastructure/repositories"
 	doubles "github.com/rios0rios0/codeguru/test/infrastructure/doubles/repositories"
 )
 
@@ -904,5 +904,28 @@ func TestHandleAzureDevOpsCommentMention(t *testing.T) {
 		// then
 		assert.Equal(t, http.StatusForbidden, w.Code)
 		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 204 and not enqueue when the comment is authored by the bot itself", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the bot's own "review failed" annotation carries a
+		// "mention `@code-guru` ... to try again" line. ADO fires a comment
+		// webhook for it; acting on it would loop forever. The payload's
+		// author (felipe@example) is pinned as a configured bot identity.
+		settings := defaultADOSettings()
+		settings.BotIdentities = []string{"felipe@example"}
+		body := adoCommentEventPayload("@code-guru re-review")
+		d, sub := newDispatcherWithSettings(t, settings)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs(), "the bot must not re-review its own comment")
 	})
 }
