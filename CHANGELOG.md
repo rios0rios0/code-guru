@@ -28,6 +28,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 - fixed an infinite re-review loop where a comment webhook for the bot's own `@code-guru` annotation re-triggered a review; the GitHub and Azure DevOps mention handlers now skip comments authored by the bot itself — matched against the configured `bot_identities` / `CODE_GURU_BOT_IDENTITIES` or the built-in `code-guru` / `code-guru[bot]` / `code-guru@<tenant>` shapes via `support.IsBotAuthor` — so an oversized diff that can never pass review no longer floods the pull request with repeated "review failed" comments
 
+### Security
+
+- replaced `secrets: inherit` with an explicit `CLAUDE_CODE_OAUTH_TOKEN` pass-through in the Claude Code workflows to satisfy the `secrets-inherit` least-privilege check
+
 ## [1.8.3] - 2026-06-19
 
 ### Changed
