@@ -443,7 +443,10 @@ func (d *Dispatcher) handleADOComment(w http.ResponseWriter, _ *http.Request, bo
 	// comment webhook for the bot's own posts too, so acting on them
 	// spins an infinite review->fail->annotate->webhook loop that floods
 	// the PR — observed on an oversized diff that could never pass review.
-	if commenter := adoIdentityName(event.Resource.Comment.Author); support.IsBotAuthor(d.settings.BotIdentities...)(commenter) {
+	if commenter := adoIdentityName(event.Resource.Comment.Author); support.IsBotAuthor(
+		d.settings.BotIdentities...)(
+		commenter,
+	) {
 		logger.Debugf(
 			"ADO webhook: comment on PR #%d is authored by the bot itself (%s); skipping self-triggered re-review",
 			event.Resource.PullRequest.PullRequestID, commenter,
