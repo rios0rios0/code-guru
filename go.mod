@@ -2,7 +2,7 @@ module github.com/rios0rios0/codeguru
 
 go 1.26.4
 
-require github.com/rios0rios0/cliforge v0.3.8
+require github.com/rios0rios0/cliforge v0.3.11
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1

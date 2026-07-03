@@ -122,8 +122,8 @@ github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINE
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/rios0rios0/cliforge v0.3.8 h1:19auMywhRmt4830t8L4LTAA63JYtiOgS5OAmuTnG2vE=
-github.com/rios0rios0/cliforge v0.3.8/go.mod h1:6O1hcPN0eeBgiLk24oXS3j72CyWd72l6DNxoq8lRDcw=
+github.com/rios0rios0/cliforge v0.3.11 h1:n3DMKgehoObp/ZrZ4RTuq/NcIz/RCwiEmjLoNd+QRtg=
+github.com/rios0rios0/cliforge v0.3.11/go.mod h1:/iAXXVLrDgJfQ9aivufNXto+jSi7TJPSGkEdhNMvxPM=
 github.com/rios0rios0/gitforge v1.0.1-0.20260605155642-b0af1491fb99 h1:QbdutV/n8B3OE5IH61Q+n+yCLir7iEImgqhB/m5ljBE=
 github.com/rios0rios0/gitforge v1.0.1-0.20260605155642-b0af1491fb99/go.mod h1:p04mB8gJxwrbLaqnwiYfKhSKh1Q3Lw/Q6okrnt0S8t0=
 github.com/rios0rios0/langforge v0.6.7 h1:yPX/gSBywTXfcZfPinAt1/Ps3OBqe1lElg310wAa94k=
