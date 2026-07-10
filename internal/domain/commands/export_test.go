@@ -103,7 +103,21 @@ var (
 	// ShouldCloseResolution reports whether a given LLM status maps
 	// to a thread state that should auto-close the thread.
 	ShouldCloseResolution = shouldCloseResolution
+
+	// LoadProjectGuidelines re-exports the CLAUDE.md loader so tests
+	// can pin its gates (option off, file in diff, no file access,
+	// fetch error, truncation) without driving the full Execute flow.
+	LoadProjectGuidelines = (*ReviewCommand).loadProjectGuidelines
+
+	// DiffTouchesProjectGuidelines is the pure changed-paths check
+	// backing the "the PR already shows CLAUDE.md in its diff" skip.
+	DiffTouchesProjectGuidelines = diffTouchesProjectGuidelines
 )
+
+// MaxProjectGuidelinesBytes re-exports the guidelines size cap so the
+// truncation test derives its oversized fixture from the real bound
+// instead of hardcoding a copy that could drift.
+const MaxProjectGuidelinesBytes = maxProjectGuidelinesBytes
 
 // AnnotationThreadStatus re-exports the unexported package constant
 // so tests can pin the value the post helpers forward to gitforge —

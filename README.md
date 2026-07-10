@@ -22,6 +22,7 @@ A CLI tool that leverages AI (Claude Code CLI or OpenAI API) to automatically re
 - Dual AI backend: Claude Code CLI (`claude --print`) or OpenAI Chat Completions API
 - Rule-based reviews using Markdown files from [guide](https://github.com/rios0rios0/guide) (or any directory)
 - YAML `frontmatter` in rules for file-glob-based filtering (e.g., `paths: ["**/*.go"]`)
+- Project-aware reviews: the reviewed repository's own `CLAUDE.md` is loaded automatically (on any provider) and forwarded to the AI as project-specific context, so the review honours the project's documented conventions — see [Project Guidelines](#project-guidelines-claudemd)
 - Inline and general PR comments posted back via gitforge
 - Three modes: single PR review, batch review-all, and discover (list open PRs)
 - Reviews each PR exactly once — subsequent pushes are no-ops. To request a re-review, post a PR comment that mentions `@code-guru` (case-insensitive). On a re-review the bot acts as a reviewer who reads the existing conversation: it loads every prior bot inline thread plus every reply, classifies each as `resolved` / `outstanding` / `outdated`, posts one short reply **nested inside each prior thread** (via the provider's `ReplyToThread`, so the answer lands below the author's reply like a human reviewer rather than as a separate same-line comment), and auto-closes the threads it considers resolved (Azure DevOps thread state `fixed`). Net-new findings only land if the diff genuinely warrants one and it does NOT overlap a thread the bot already addressed — replacing the pre-existing failure mode where every re-review flooded the PR with reworded duplicates of every prior comment. The bot recognises its own prior comments by the built-in `code-guru` login shape, by self-detecting the account that posted its PR-wide review annotations on the PR, and by any identity listed in `bot_identities` (env `CODE_GURU_BOT_IDENTITIES`) — so re-reviews still read and resolve prior threads when the deployment posts under a service account
@@ -68,6 +69,10 @@ ai:
   # transient-error response before the review is marked failed. Defaults to 3;
   # set to 1 to disable retries.
   max_attempts: 3
+  # When true (the default), the reviewed repository's own root CLAUDE.md is
+  # loaded and forwarded to the AI as project-specific review context. Set to
+  # false to opt out.
+  project_guidelines: true
   claude:
     binary_path: 'claude'
     model: 'sonnet'
@@ -400,6 +405,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW`   | Records a native review (Approved / Changes Requested) on the platform's reviewer panel; set to `false` to opt out | `true`               |
 | `CODE_GURU_AI_REVIEW_DRAFTS`          | When `true`, the bot reviews draft PRs as well — by default drafts are skipped | `false`              |
 | `CODE_GURU_AI_MAX_ATTEMPTS`           | Times the AI backend is re-sampled per review when it returns a non-JSON or transient-error response before the review is marked failed (`1` disables retries) | `3`                  |
+| `CODE_GURU_AI_PROJECT_GUIDELINES`     | Loads the reviewed repository's own `CLAUDE.md` as project-specific review context; set to `false` to opt out | `true`               |
 | `CODE_GURU_BOT_IDENTITIES`            | Comma-separated account identities the bot posts under (so re-reviews recognise its own prior threads); the built-in `code-guru` shape and self-detection apply when unset |                      |
 
 ## Rules
@@ -419,6 +425,19 @@ Use `gofmt` for formatting...
 ```
 
 Universal categories (always included): `architecture`, `ci-cd`, `code-style`, `design-patterns`, `documentation`, `git-flow`, `security`, `testing`.
+
+### Project Guidelines (CLAUDE.md)
+
+On top of the operator-configured rules, Code Guru reads the **reviewed repository's own root `CLAUDE.md`** — the file projects use to document conventions for AI tooling — and forwards it to the AI as project-specific review context. This works on every supported provider (GitHub and Azure DevOps) through the same file-access API the trivial detectors use, and it means the review honours conventions the generic ruleset cannot know about (naming, layering, testing patterns, intentional trade-offs).
+
+Behaviour details:
+
+- When the PR itself modifies `CLAUDE.md`, the repository fetch is skipped — the model already reads the change in the diff, and layering the pre-change copy on top would present two conflicting versions of the same document.
+- The fetch is best-effort: a repository without a `CLAUDE.md`, a provider without file-access support, or a transient error simply produces a review without project guidelines. It never fails or delays the review beyond a 10-second fetch timeout.
+- Content is bounded to 32 KiB so a pathological guidelines file cannot crowd the diff out of the model's context window.
+- The document is framed to the model as documentation, not instructions — it cannot change the output format, the verdict rules, or the reviewer role.
+
+Enabled by default; opt out with `ai.project_guidelines: false` or `CODE_GURU_AI_PROJECT_GUIDELINES=false`.
 
 ## Contributing
 

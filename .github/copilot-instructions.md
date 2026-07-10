@@ -78,6 +78,7 @@ Key config sections:
 - `ai.anthropic` — `api_key`, `model` (default `claude-sonnet-4-20250514`). `api_key` is required when backend is `anthropic`.
 - `ai.claude` — `binary_path` (default `claude`), `model` (default `sonnet`), `max_turns` (default `1`).
 - `ai.max_attempts` — AI retry budget per review (env `CODE_GURU_AI_MAX_ATTEMPTS`, default `3`; `1` disables retries). Resolve via `AIConfig.ReviewAttempts()`.
+- `ai.project_guidelines` — tri-state; when enabled (default), the reviewed repository's own root `CLAUDE.md` is fetched via the provider's file-access API and forwarded to the LLM as project-specific review context (env `CODE_GURU_AI_PROJECT_GUIDELINES`). Resolve via `AIConfig.ProjectGuidelinesEnabled()`; never dereference the pointer directly.
 - `rules.path` — directory containing Markdown rule files (supports `${VAR}` expansion).
 - `rules.categories` — optional allow-list of rule categories to load; empty means load all.
 - `server.port` — webhook server port (default `8080`).
@@ -104,6 +105,8 @@ paths:
 ```
 
 **Category filtering**: `FilesystemRulesRepository.LoadForLanguages` always includes rules in the following *universal* categories regardless of detected languages: `architecture`, `ci-cd`, `code-style`, `design-patterns`, `documentation`, `git-flow`, `security`, `testing`. Language-specific rules are included when their category matches a detected language, or when their `paths` globs match the changed files.
+
+**Project guidelines**: On top of the configured rules, the review command loads the reviewed repository's own root `CLAUDE.md` (`internal/domain/commands/project_guidelines.go`) and forwards it on `ReviewRequest.ProjectGuidelines`; `support.BuildUserPromptFor` renders it into the user prompt as a fenced, escape-proofed documentation block. The fetch is skipped when the PR itself modifies `CLAUDE.md`, is best-effort (missing file or provider error never fails the review), and bounds content to 32 KiB.
 
 ## CLI Usage
 

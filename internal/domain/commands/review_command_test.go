@@ -2423,3 +2423,357 @@ func TestShouldCloseResolution(t *testing.T) {
 		})
 	}
 }
+
+// fileAccessRecordingProvider extends recordingReviewProvider with the
+// gitforge FileAccessProvider surface so tests can drive the project-
+// guidelines (CLAUDE.md) fetch. Only GetFileContent / HasFile are
+// implemented; the embedded nil forgeEntities.FileAccessProvider
+// supplies the rest of that interface's method set (ListFiles, GetTags,
+// CreateBranchWithChanges), which panics if reached — the same
+// panic-on-unexpected-call posture recordingReviewProvider documents.
+type fileAccessRecordingProvider struct {
+	recordingReviewProvider
+	forgeEntities.FileAccessProvider
+	// fileContents seeds GetFileContent / HasFile responses by path.
+	fileContents map[string]string
+	// fileErr, when set, makes GetFileContent fail so tests can pin the
+	// best-effort contract (a fetch failure never fails the review).
+	fileErr error
+	// fetchedPaths records every GetFileContent call so tests can assert
+	// the loader's skip gates really skip the network call, not just the
+	// returned value.
+	fetchedPaths []string
+}
+
+func (p *fileAccessRecordingProvider) GetFileContent(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	path string,
+) (string, error) {
+	p.fetchedPaths = append(p.fetchedPaths, path)
+	if p.fileErr != nil {
+		return "", p.fileErr
+	}
+	content, ok := p.fileContents[path]
+	if !ok {
+		return "", fmt.Errorf("file %q not found in stub", path)
+	}
+	return content, nil
+}
+
+func (p *fileAccessRecordingProvider) HasFile(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	path string,
+) bool {
+	_, ok := p.fileContents[path]
+	return ok
+}
+
+func TestLoadProjectGuidelines(t *testing.T) {
+	t.Parallel()
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	const prID = 4242
+	enabled := commands.ReviewOptions{LoadProjectGuidelines: true}
+
+	t.Run("should fetch the repository CLAUDE.md when enabled and the provider supports file access", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"CLAUDE.md": "# Project rules\n\nUse BDD blocks in every test.\n"},
+		}
+
+		// when
+		got := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
+
+		// then
+		assert.Equal(t, "# Project rules\n\nUse BDD blocks in every test.", got,
+			"the fetched content must be returned trimmed so the prompt does not carry stray blank lines")
+		assert.Equal(t, []string{"CLAUDE.md"}, provider.fetchedPaths,
+			"exactly one fetch for the root CLAUDE.md must be issued")
+	})
+
+	t.Run("should return empty and never fetch when the option is disabled", func(t *testing.T) {
+		t.Parallel()
+
+		// given: operator set `ai.project_guidelines: false` — the wire
+		// from settings resolves to LoadProjectGuidelines=false.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"CLAUDE.md": "# Project rules"},
+		}
+
+		// when
+		got := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"},
+			commands.ReviewOptions{LoadProjectGuidelines: false})
+
+		// then
+		assert.Empty(t, got)
+		assert.Empty(t, provider.fetchedPaths,
+			"the opt-out must skip the provider call entirely, not just discard the result")
+	})
+
+	t.Run("should skip the fetch when the PR diff already touches CLAUDE.md", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the PR modifies the guidelines file itself. The diff
+		// already shows it to the model; fetching the pre-change copy on
+		// top would present two conflicting versions of the document.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"CLAUDE.md": "# stale pre-change copy"},
+		}
+
+		// when
+		got := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"CLAUDE.md", "internal/foo.go"}, enabled)
+
+		// then
+		assert.Empty(t, got)
+		assert.Empty(t, provider.fetchedPaths,
+			"a CLAUDE.md-touching diff must skip the provider call — the model reads the file in the diff")
+	})
+
+	t.Run("should skip the fetch for the ADO-shape /CLAUDE.md path too", func(t *testing.T) {
+		t.Parallel()
+
+		// given: Azure DevOps prefixes every changed path with `/`. The
+		// skip gate must normalise before comparing, mirroring the rule
+		// used across the rest of the pipeline.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"CLAUDE.md": "# stale pre-change copy"},
+		}
+
+		// when
+		got := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"/CLAUDE.md"}, enabled)
+
+		// then
+		assert.Empty(t, got)
+		assert.Empty(t, provider.fetchedPaths)
+	})
+
+	t.Run("should return empty when the provider does not support file access", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a provider without the FileAccessProvider surface —
+		// nothing to fetch from, and the review must proceed regardless.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &recordingReviewProvider{}
+
+		// when
+		got := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
+
+		// then
+		assert.Empty(t, got)
+	})
+
+	t.Run("should return empty when the fetch fails so the review proceeds without guidelines", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a transient provider outage (or simply a repository with
+		// no CLAUDE.md — gitforge surfaces both as an error). Best-effort
+		// by contract: the loader degrades to "no guidelines".
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &fileAccessRecordingProvider{fileErr: errors.New("503 Service Unavailable")}
+
+		// when
+		got := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
+
+		// then
+		assert.Empty(t, got)
+		assert.Len(t, provider.fetchedPaths, 1, "the loader must have attempted exactly one fetch before degrading")
+	})
+
+	t.Run("should return empty when the file is whitespace-only", func(t *testing.T) {
+		t.Parallel()
+
+		// given: an effectively-empty CLAUDE.md must not add an empty
+		// guidelines section to the prompt.
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"CLAUDE.md": "  \n\t\n"},
+		}
+
+		// when
+		got := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
+
+		// then
+		assert.Empty(t, got)
+	})
+
+	t.Run("should truncate oversized guidelines at the byte cap with the sentinel", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a pathological guidelines file larger than the cap. The
+		// bound is applied at load time so every backend sees the same
+		// bounded content and the diff keeps its share of the context
+		// window.
+		oversized := strings.Repeat("A", commands.MaxProjectGuidelinesBytes+1024)
+		rc := commands.NewReviewCommand(nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"CLAUDE.md": oversized},
+		}
+
+		// when
+		got := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
+
+		// then
+		assert.Len(t, got, commands.MaxProjectGuidelinesBytes+len("...[truncated]"),
+			"the content must be cut at the cap plus the truncation sentinel")
+		assert.True(t, strings.HasSuffix(got, "...[truncated]"),
+			"the sentinel must close the content so the model can tell the document was cut")
+	})
+}
+
+func TestDiffTouchesProjectGuidelines(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		paths []string
+		want  bool
+	}{
+		{name: "should match the root CLAUDE.md", paths: []string{"CLAUDE.md"}, want: true},
+		{name: "should match the ADO-shape /CLAUDE.md", paths: []string{"/CLAUDE.md"}, want: true},
+		{name: "should match case-insensitively (claude.md)", paths: []string{"claude.md"}, want: true},
+		{
+			name:  "should NOT match a nested docs/CLAUDE.md — only the root file is the repository's guidance",
+			paths: []string{"docs/CLAUDE.md"},
+			want:  false,
+		},
+		{name: "should NOT match a suffixed CLAUDE.md.bak", paths: []string{"CLAUDE.md.bak"}, want: false},
+		{name: "should return false on an empty path list", paths: nil, want: false},
+		{
+			name:  "should return false when no changed path is the guidelines file",
+			paths: []string{"internal/foo.go", "README.md"},
+			want:  false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// when
+			got := commands.DiffTouchesProjectGuidelines(tc.paths)
+
+			// then
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestExecuteLLMPathLoadsProjectGuidelines(t *testing.T) {
+	t.Parallel()
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	pr := forgeEntities.PullRequestDetail{
+		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "feat", URL: "https://example/pr/4242"},
+	}
+
+	t.Run("should forward the fetched CLAUDE.md to the AI request", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a repository carrying a CLAUDE.md and a provider with
+		// file access — the end-to-end wiring the feature exists for.
+		rules := &doubles.StubRulesRepository{}
+		ai := &doubles.StubAIReviewerRepository{
+			NameValue: "stub",
+			Result:    &entities.ReviewResult{Verdict: "approve"},
+		}
+		rc := commands.NewReviewCommand(ai, rules, nil)
+		provider := &fileAccessRecordingProvider{
+			recordingReviewProvider: recordingReviewProvider{
+				files: []forgeEntities.PullRequestFile{
+					{Path: "internal/foo.go", Patch: "@@ -1 +1 @@\n-old\n+new\n"},
+				},
+			},
+			fileContents: map[string]string{"CLAUDE.md": "# Conventions\n\nAlways alias logrus as logger."},
+		}
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			LoadProjectGuidelines: true,
+		})
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "# Conventions\n\nAlways alias logrus as logger.", ai.LastRequest.ProjectGuidelines,
+			"the reviewed repository's CLAUDE.md must reach the AI request so every backend renders it into the prompt")
+		assert.Equal(t, []string{"CLAUDE.md"}, provider.fetchedPaths)
+	})
+
+	t.Run("should leave ProjectGuidelines empty when the operator disabled the feature", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rules := &doubles.StubRulesRepository{}
+		ai := &doubles.StubAIReviewerRepository{
+			NameValue: "stub",
+			Result:    &entities.ReviewResult{Verdict: "approve"},
+		}
+		rc := commands.NewReviewCommand(ai, rules, nil)
+		provider := &fileAccessRecordingProvider{
+			recordingReviewProvider: recordingReviewProvider{
+				files: []forgeEntities.PullRequestFile{
+					{Path: "internal/foo.go", Patch: "@@ -1 +1 @@\n-old\n+new\n"},
+				},
+			},
+			fileContents: map[string]string{"CLAUDE.md": "# Conventions"},
+		}
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			LoadProjectGuidelines: false,
+		})
+
+		// then
+		require.NoError(t, err)
+		assert.Empty(t, ai.LastRequest.ProjectGuidelines)
+		assert.Empty(t, provider.fetchedPaths, "the opt-out must not issue the file-content call at all")
+	})
+
+	t.Run("should not fetch when the PR itself modifies CLAUDE.md", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the diff carries the guidelines change — the model reads
+		// it there, and the repository fetch (which would return the
+		// default-branch copy) is skipped.
+		rules := &doubles.StubRulesRepository{}
+		ai := &doubles.StubAIReviewerRepository{
+			NameValue: "stub",
+			Result:    &entities.ReviewResult{Verdict: "approve"},
+		}
+		rc := commands.NewReviewCommand(ai, rules, nil)
+		provider := &fileAccessRecordingProvider{
+			recordingReviewProvider: recordingReviewProvider{
+				files: []forgeEntities.PullRequestFile{
+					{Path: "CLAUDE.md", Patch: "@@ -1 +1 @@\n-old guidance\n+new guidance\n"},
+				},
+			},
+			fileContents: map[string]string{"CLAUDE.md": "# default-branch copy"},
+		}
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			LoadProjectGuidelines: true,
+		})
+
+		// then
+		require.NoError(t, err)
+		assert.Empty(t, ai.LastRequest.ProjectGuidelines,
+			"the pre-change copy must not be layered on top of the diff that rewrites it")
+		assert.Empty(t, provider.fetchedPaths)
+	})
+}
