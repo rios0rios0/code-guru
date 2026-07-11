@@ -45,11 +45,15 @@ Trivial adapters detect PRs that can be auto-approved without calling the LLM (e
 2. Implement the `TrivialDetector` interface from `internal/domain/repositories/trivial_detector_repository.go`:
    ```go
    type TrivialDetector interface {
+       // Name returns the adapter identifier (e.g., "update-go", "bump-node", "docs-only").
        Name() string
-       IsTrivial(files []string) bool
-       Summary(files []string) string
+
+       // Detect checks whether the PR files match this adapter's trivial pattern
+       // and returns the detection outcome (Detected, Verdict, Summary).
+       Detect(ctx context.Context, dctx DetectionContext) DetectionResult
    }
    ```
+   The `DetectionContext` carries the changed file paths, the repository name, and an optional `FileContentFetcher` for reading repository files (e.g., `.autobump.yaml`).
 3. Register your adapter in `internal/infrastructure/repositories/trivial/registry.go` by adding an entry to the `allDetectors` map:
    ```go
    var allDetectors = map[string]repositories.TrivialDetector{

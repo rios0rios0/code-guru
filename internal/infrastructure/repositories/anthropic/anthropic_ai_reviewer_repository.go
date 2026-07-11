@@ -105,13 +105,7 @@ func (r *AIReviewerRepository) ReviewDiff(
 	request entities.ReviewRequest,
 ) (*entities.ReviewResult, error) {
 	systemPrompt := support.BuildSystemPromptFor(request)
-	userPrompt := support.BuildUserPromptWithConversation(
-		request.PullRequest.Title,
-		request.PullRequest.SourceBranch,
-		request.PullRequest.TargetBranch,
-		request.Diffs,
-		request.Conversation,
-	)
+	userPrompt := support.BuildUserPromptFor(request)
 
 	logger.Debugf("sending review request to Anthropic model %s", r.model)
 

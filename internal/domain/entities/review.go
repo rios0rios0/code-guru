@@ -67,6 +67,18 @@ type ReviewRequest struct {
 	// returned prose. 0 or 1 means the first attempt (no reinforcement),
 	// keeping that prompt byte-for-byte identical to its pre-retry shape.
 	Attempt int
+
+	// ProjectGuidelines carries the reviewed repository's own AI
+	// guidance file (its root `CLAUDE.md`), fetched from the provider at
+	// review time so the LLM judges the diff against the project's OWN
+	// conventions rather than only the operator-configured rules. Empty
+	// when the repository has no such file, when the fetch failed (the
+	// review proceeds without it), when the operator disabled the
+	// feature via `ai.project_guidelines: false`, or when the PR itself
+	// modifies the file (the diff already shows it, so the pre-change
+	// copy is not fetched on top). Content is truncated at load time so
+	// a pathological guidelines file cannot blow the prompt budget.
+	ProjectGuidelines string
 }
 
 // ReviewThread is one inline review conversation: the bot's original

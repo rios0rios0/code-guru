@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
@@ -427,5 +428,156 @@ func TestBuildSystemPromptForRetryReminder(t *testing.T) {
 		// then
 		assert.Contains(t, got, reminderMarker,
 			"a retry must reinforce the JSON-only instruction so the re-sample is nudged back to valid JSON")
+	})
+}
+
+// newGuidelinesRequest builds the ReviewRequest fixture shared by the
+// TestBuildUserPromptFor rows: one Go file diff on a feature branch,
+// with the caller layering guidelines / conversation on top per row.
+func newGuidelinesRequest() entities.ReviewRequest {
+	return entities.ReviewRequest{
+		PullRequest: forgeEntities.PullRequestDetail{
+			PullRequest:  forgeEntities.PullRequest{ID: 42, Title: "Add retry decorator"},
+			SourceBranch: "feat/retry",
+			TargetBranch: "main",
+		},
+		Diffs: []entities.FileDiff{
+			entitybuilders.NewFileDiffBuilder().
+				WithPath("internal/foo.go").
+				WithDiff("@@ -1 +1 @@\n-old\n+new").
+				BuildFileDiff(),
+		},
+	}
+}
+
+func TestBuildUserPromptFor(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should render the project guidelines section when the request carries guidelines", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		request := newGuidelinesRequest()
+		request.ProjectGuidelines = "# Project rules\n\nAll tests use BDD given/when/then blocks."
+
+		// when
+		result := support.BuildUserPromptFor(request)
+
+		// then
+		assert.Contains(t, result, "Project review guidelines (loaded from the repository's own CLAUDE.md).",
+			"the section header must tell the model where the document comes from")
+		assert.Contains(t, result, "All tests use BDD given/when/then blocks.",
+			"the guidelines content must reach the prompt")
+		assert.Contains(t, result, "```markdown\n",
+			"the guidelines must be wrapped in a fenced block so the model sees clear boundaries")
+		assert.Contains(t, result, "SECURITY:",
+			"repository-controlled content must carry the inert-data framing — same posture as the conversation block")
+	})
+
+	t.Run("should be byte-for-byte identical to BuildUserPrompt when guidelines and conversation are absent", func(t *testing.T) {
+		t.Parallel()
+
+		// given: no guidelines, no conversation — the common first-pass
+		// review. The no-drift invariant the codebase maintains for every
+		// optional prompt section applies here too.
+		request := newGuidelinesRequest()
+
+		// when
+		got := support.BuildUserPromptFor(request)
+		want := support.BuildUserPrompt(
+			request.PullRequest.Title,
+			request.PullRequest.SourceBranch,
+			request.PullRequest.TargetBranch,
+			request.Diffs,
+		)
+
+		// then
+		assert.Equal(t, want, got,
+			"an empty ProjectGuidelines must leave the prompt byte-for-byte identical to the historical shape")
+	})
+
+	t.Run("should be byte-for-byte identical to BuildUserPromptWithConversation on the re-review path", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a conversation but no guidelines — pins that swapping
+		// the backends from BuildUserPromptWithConversation to
+		// BuildUserPromptFor changed nothing for existing re-reviews.
+		request := newGuidelinesRequest()
+		request.Conversation = []entities.ReviewThread{
+			{
+				FilePath: "internal/foo.go",
+				Line:     10,
+				Comments: []entities.ReviewMessage{
+					{Author: "code-guru[bot]", Body: "[high] possible nil deref"},
+					{Author: "alice", Body: "fixed in the latest push"},
+				},
+			},
+		}
+
+		// when
+		got := support.BuildUserPromptFor(request)
+		want := support.BuildUserPromptWithConversation(
+			request.PullRequest.Title,
+			request.PullRequest.SourceBranch,
+			request.PullRequest.TargetBranch,
+			request.Diffs,
+			request.Conversation,
+		)
+
+		// then
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("should escape triple backticks inside the guidelines so the fenced block cannot be broken", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a realistic CLAUDE.md carries its own fenced code
+		// blocks. Without escaping, the document's first closing fence
+		// would terminate the prompt's ```markdown wrapper and everything
+		// after it would render as unfenced prompt text — the exact
+		// break-out `escapeFence` exists to prevent.
+		request := newGuidelinesRequest()
+		request.ProjectGuidelines = "Run the linter:\n```bash\nmake lint\n```\nAlways."
+
+		// when
+		result := support.BuildUserPromptFor(request)
+
+		// then
+		assert.NotContains(t, result, "```bash",
+			"the document's own fences must be neutralised inside the wrapper")
+		assert.Contains(t, result, "`\u200b``bash",
+			"the fence must be escaped with the same zero-width-space scheme the conversation block uses")
+		assert.Equal(t, 1, strings.Count(result, "```markdown"),
+			"exactly one guidelines wrapper fence must open")
+	})
+
+	t.Run("should render guidelines before the prior conversation and the diff", func(t *testing.T) {
+		t.Parallel()
+
+		// given: both optional sections present. Guidelines are stable
+		// context the model should absorb FIRST; the conversation and the
+		// diff are the material it judges against them.
+		request := newGuidelinesRequest()
+		request.ProjectGuidelines = "# Conventions"
+		request.Conversation = []entities.ReviewThread{
+			{
+				FilePath: "internal/foo.go",
+				Line:     10,
+				Comments: []entities.ReviewMessage{{Author: "code-guru[bot]", Body: "finding"}},
+			},
+		}
+
+		// when
+		result := support.BuildUserPromptFor(request)
+
+		// then
+		guidelinesAt := strings.Index(result, "Project review guidelines")
+		conversationAt := strings.Index(result, "Prior review conversation")
+		diffAt := strings.Index(result, "Files changed:")
+		assert.GreaterOrEqual(t, guidelinesAt, 0)
+		assert.Greater(t, conversationAt, guidelinesAt,
+			"the conversation block must come after the guidelines")
+		assert.Greater(t, diffAt, conversationAt,
+			"the diff must come last")
 	})
 }
