@@ -96,7 +96,7 @@ YAML config discovered via gitforge `FindConfigFile("code-guru")` in `.`, `.conf
 | `bot_identities` | `CODE_GURU_BOT_IDENTITIES` | only needed for service accounts not matching the built-in `code-guru` shapes |
 | `providers[]` | `CODE_GURU_PROVIDER_TOKEN` | env creates a single untyped catch-all entry |
 
-In the YAML path (`NewSettings`), env vars override YAML only for: trivial settings, `bot_identities`, and `ai.max_attempts`.
+In the YAML path (`NewSettings`), env vars override YAML only for: trivial settings, `bot_identities`, `ai.max_attempts`, and `ai.project_guidelines`.
 
 ## Testing
 

@@ -652,3 +652,74 @@ func TestNewSettingsFromEnvProjectGuidelines(t *testing.T) {
 		assert.True(t, settings.AI.ProjectGuidelinesEnabled())
 	})
 }
+
+func TestNewSettingsProjectGuidelinesEnvOverride(t *testing.T) {
+	// Pins that the project-guidelines kill switch works on the YAML path
+	// too: deployments ship a YAML baseline and flip per-environment
+	// behaviour via env, so CODE_GURU_AI_PROJECT_GUIDELINES must override
+	// the file — otherwise an operator's opt-out on a YAML-configured pod
+	// would be silently ignored (Copilot review on PR #215).
+
+	t.Run("should override YAML project_guidelines when the env var is set to false", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+  project_guidelines: true
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		t.Setenv("CODE_GURU_AI_PROJECT_GUIDELINES", "false")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.False(t, settings.AI.ProjectGuidelinesEnabled(),
+			"env var must override YAML so an operator can disable the fetch per-environment")
+	})
+
+	t.Run("should keep the YAML value when the env var is unset", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+  project_guidelines: false
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.False(t, settings.AI.ProjectGuidelinesEnabled(),
+			"an unset env var must leave the YAML opt-out authoritative")
+	})
+
+	t.Run("should leave the default ON when neither YAML nor env set the flag", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.Nil(t, settings.AI.ProjectGuidelines)
+		assert.True(t, settings.AI.ProjectGuidelinesEnabled())
+	})
+}
