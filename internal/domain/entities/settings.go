@@ -277,6 +277,15 @@ func NewSettings(path string) (*Settings, error) {
 			settings.AI.MaxAttempts = v
 		}
 	}
+	// Kill switch for the default-ON project-guidelines fetch. Deployments
+	// commonly ship a YAML baseline and flip per-environment behaviour via
+	// env (the same argument as CODE_GURU_AI_MAX_ATTEMPTS above); without
+	// this override an operator's CODE_GURU_AI_PROJECT_GUIDELINES=false on
+	// a YAML-configured pod would be silently ignored. nil (unset or
+	// unparseable) leaves the YAML value untouched.
+	if v := parseOptionalBoolEnv("CODE_GURU_AI_PROJECT_GUIDELINES"); v != nil {
+		settings.AI.ProjectGuidelines = v
+	}
 
 	if validateErr := validateSettings(&settings); validateErr != nil {
 		return nil, validateErr
