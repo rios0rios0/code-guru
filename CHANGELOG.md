@@ -25,6 +25,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - changed the Go module dependencies to their latest versions
 - changed the Go version to `1.26.5` and updated all module dependencies
 - changed all AI backends (`openai`, `claude`, `anthropic`) to assemble the user prompt through a single shared `BuildUserPromptFor` helper, mirroring the existing `BuildSystemPromptFor` seam, so request-derived prompt sections cannot drift between backends
+- changed the Go module dependencies to their latest versions
 
 ## [1.8.5] - 2026-07-03
 
