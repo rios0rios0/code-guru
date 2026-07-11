@@ -76,6 +76,23 @@ type AIConfig struct {
 	// ReviewAttempts() (defaults to 3 when unset). Honours
 	// CODE_GURU_AI_MAX_ATTEMPTS.
 	MaxAttempts int `yaml:"max_attempts"`
+
+	// ProjectGuidelines, when set, controls whether the bot loads the
+	// reviewed repository's own root `CLAUDE.md` and forwards it to the
+	// LLM as project-specific review context, so the review honours the
+	// project's own conventions in addition to the operator-configured
+	// rules. Works on every provider that supports API file access
+	// (GitHub, Azure DevOps); the fetch is best-effort — a missing file
+	// or a provider error never fails the review.
+	//
+	// Tri-state pointer so YAML / env "unset" can mean "use the default":
+	// nil resolves to true via ProjectGuidelinesEnabled (default ON).
+	// Operators that want to opt out explicitly set
+	// `project_guidelines: false` in YAML or
+	// CODE_GURU_AI_PROJECT_GUIDELINES=false. Call sites should always
+	// read the resolved value via ProjectGuidelinesEnabled rather than
+	// dereferencing the pointer directly.
+	ProjectGuidelines *bool `yaml:"project_guidelines"`
 }
 
 // defaultReviewAttempts is the attempt budget applied when AI.MaxAttempts is
@@ -107,6 +124,19 @@ func (a AIConfig) NativeReviewSubmissionEnabled() bool {
 		return true
 	}
 	return *a.SubmitNativeReview
+}
+
+// ProjectGuidelinesEnabled resolves the tri-state ProjectGuidelines pointer
+// into a single boolean. nil (the YAML / env "unset" state) returns true so
+// deployments that never wire the flag pick up the reviewed repository's
+// CLAUDE.md automatically; an explicit `project_guidelines: false` in YAML
+// or `CODE_GURU_AI_PROJECT_GUIDELINES=false` returns false. Callers should
+// always go through this helper rather than dereferencing the pointer.
+func (a AIConfig) ProjectGuidelinesEnabled() bool {
+	if a.ProjectGuidelines == nil {
+		return true
+	}
+	return *a.ProjectGuidelines
 }
 
 // OpenAIConfig holds OpenAI-specific settings.
@@ -247,6 +277,15 @@ func NewSettings(path string) (*Settings, error) {
 			settings.AI.MaxAttempts = v
 		}
 	}
+	// Kill switch for the default-ON project-guidelines fetch. Deployments
+	// commonly ship a YAML baseline and flip per-environment behaviour via
+	// env (the same argument as CODE_GURU_AI_MAX_ATTEMPTS above); without
+	// this override an operator's CODE_GURU_AI_PROJECT_GUIDELINES=false on
+	// a YAML-configured pod would be silently ignored. nil (unset or
+	// unparseable) leaves the YAML value untouched.
+	if v := parseOptionalBoolEnv("CODE_GURU_AI_PROJECT_GUIDELINES"); v != nil {
+		settings.AI.ProjectGuidelines = v
+	}
 
 	if validateErr := validateSettings(&settings); validateErr != nil {
 		return nil, validateErr
@@ -304,6 +343,7 @@ func NewSettingsFromEnv() (*Settings, error) {
 			SubmitNativeReview: parseOptionalBoolEnv("CODE_GURU_AI_SUBMIT_NATIVE_REVIEW"),
 			ReviewDrafts:       parseBoolEnv("CODE_GURU_AI_REVIEW_DRAFTS", false),
 			MaxAttempts:        maxAttempts,
+			ProjectGuidelines:  parseOptionalBoolEnv("CODE_GURU_AI_PROJECT_GUIDELINES"),
 		},
 		Rules: RulesConfig{
 			Path: os.Getenv("CODE_GURU_RULES_PATH"),

@@ -115,6 +115,18 @@ type ReviewOptions struct {
 	// annotations on the PR (see `support.DetectBotAuthors`). Wired from
 	// `Settings.BotIdentities` at each call site.
 	BotIdentities []string
+
+	// LoadProjectGuidelines, when true, fetches the reviewed
+	// repository's own root `CLAUDE.md` via the provider's file-access
+	// API and forwards it to the LLM as project-specific review context
+	// (`ReviewRequest.ProjectGuidelines`), so the review honours the
+	// project's own conventions on any provider. The fetch is skipped
+	// when the PR itself modifies CLAUDE.md — the diff already shows it
+	// — and is best-effort otherwise: a missing file or provider error
+	// logs and the review proceeds without guidelines. Wired from
+	// `settings.AI.ProjectGuidelinesEnabled()` at each call site, which
+	// resolves the tri-state YAML / env config (default true).
+	LoadProjectGuidelines bool
 }
 
 // ReviewCommand orchestrates a single PR review.
@@ -235,6 +247,11 @@ func (c *ReviewCommand) Execute(
 		Diffs:        diffs,
 		Rules:        rules,
 		Conversation: conversation,
+		// Best-effort project context: the reviewed repository's own
+		// CLAUDE.md, so the LLM judges the diff against the project's
+		// conventions. Empty (and the prompt unchanged) when disabled,
+		// unavailable, or when the PR itself modifies the file.
+		ProjectGuidelines: c.loadProjectGuidelines(ctx, provider, repo, pr.ID, paths, opts),
 	}
 
 	result, err := c.aiReviewer.ReviewDiff(ctx, request)

@@ -355,6 +355,7 @@ func (d *Dispatcher) HandlePR(
 		TrivialBypassPolicy:     d.settings.Trivial.BypassPolicy,
 		TrivialAutoMergeAuthors: d.settings.Trivial.AutoMergeAllowedAuthors,
 		BotIdentities:           d.settings.BotIdentities,
+		LoadProjectGuidelines:   d.settings.AI.ProjectGuidelinesEnabled(),
 	})
 	if err != nil {
 		return fmt.Errorf("review failed for PR #%d: %w", pr.ID, err)

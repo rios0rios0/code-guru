@@ -16,6 +16,9 @@ ai:
   claude:
     binary_path: 'claude'
     model: 'sonnet'
+  # Load the reviewed repository's own CLAUDE.md as project-specific
+  # review context (default: true; set false to opt out).
+  project_guidelines: true
 
 rules:
   path: '${HOME}/Development/github.com/rios0rios0/guide/.ai/claude/rules'

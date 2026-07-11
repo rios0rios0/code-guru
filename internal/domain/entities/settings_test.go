@@ -558,3 +558,168 @@ func TestNewSettingsMaxAttempts(t *testing.T) {
 			"env var must override YAML so deployments can tune the retry budget per-environment")
 	})
 }
+
+func TestProjectGuidelinesEnabled(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should default to true when ProjectGuidelines is nil", func(t *testing.T) {
+		t.Parallel()
+
+		// given: nil pointer mirrors the YAML / env "unset" state — pin
+		// this default so deployments pick up the reviewed repository's
+		// CLAUDE.md without any operator action.
+		ai := entities.AIConfig{ProjectGuidelines: nil}
+
+		// when
+		got := ai.ProjectGuidelinesEnabled()
+
+		// then
+		assert.True(t, got, "unset ProjectGuidelines must resolve to true (the default-ON contract)")
+	})
+
+	t.Run("should return true when ProjectGuidelines points to true", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		v := true
+		ai := entities.AIConfig{ProjectGuidelines: &v}
+
+		// when / then
+		assert.True(t, ai.ProjectGuidelinesEnabled())
+	})
+
+	t.Run("should return false only when operator explicitly opts out via false", func(t *testing.T) {
+		t.Parallel()
+
+		// given: explicit `project_guidelines: false` in YAML or
+		// CODE_GURU_AI_PROJECT_GUIDELINES=false is the documented
+		// opt-out path.
+		v := false
+		ai := entities.AIConfig{ProjectGuidelines: &v}
+
+		// when / then
+		assert.False(t, ai.ProjectGuidelinesEnabled())
+	})
+}
+
+func TestNewSettingsFromEnvProjectGuidelines(t *testing.T) {
+	t.Run("should leave ProjectGuidelines nil when the env var is not set so the default ON path takes over", func(t *testing.T) {
+		// given: a minimal env-only configuration with no
+		// CODE_GURU_AI_PROJECT_GUIDELINES setting at all.
+		t.Setenv("CODE_GURU_BACKEND", "openai")
+		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then: the field stays nil so ProjectGuidelinesEnabled returns
+		// the documented default (true) without operator action.
+		require.NoError(t, err)
+		assert.Nil(t, settings.AI.ProjectGuidelines,
+			"unset CODE_GURU_AI_PROJECT_GUIDELINES must leave the pointer nil so the default-ON resolver fires")
+		assert.True(t, settings.AI.ProjectGuidelinesEnabled())
+	})
+
+	t.Run("should resolve to false when the operator explicitly sets the env var to false", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "openai")
+		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+		t.Setenv("CODE_GURU_AI_PROJECT_GUIDELINES", "false")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		require.NotNil(t, settings.AI.ProjectGuidelines)
+		assert.False(t, *settings.AI.ProjectGuidelines)
+		assert.False(t, settings.AI.ProjectGuidelinesEnabled())
+	})
+
+	t.Run("should leave the pointer nil on an unparseable env value so the default applies", func(t *testing.T) {
+		// given: a typo (anything strconv.ParseBool rejects) must not
+		// silently flip behaviour — we want the default ON, not OFF.
+		t.Setenv("CODE_GURU_BACKEND", "openai")
+		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+		t.Setenv("CODE_GURU_AI_PROJECT_GUIDELINES", "maybe")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Nil(t, settings.AI.ProjectGuidelines)
+		assert.True(t, settings.AI.ProjectGuidelinesEnabled())
+	})
+}
+
+func TestNewSettingsProjectGuidelinesEnvOverride(t *testing.T) {
+	// Pins that the project-guidelines kill switch works on the YAML path
+	// too: deployments ship a YAML baseline and flip per-environment
+	// behaviour via env, so CODE_GURU_AI_PROJECT_GUIDELINES must override
+	// the file — otherwise an operator's opt-out on a YAML-configured pod
+	// would be silently ignored (Copilot review on PR #215).
+
+	t.Run("should override YAML project_guidelines when the env var is set to false", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+  project_guidelines: true
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		t.Setenv("CODE_GURU_AI_PROJECT_GUIDELINES", "false")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.False(t, settings.AI.ProjectGuidelinesEnabled(),
+			"env var must override YAML so an operator can disable the fetch per-environment")
+	})
+
+	t.Run("should keep the YAML value when the env var is unset", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+  project_guidelines: false
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.False(t, settings.AI.ProjectGuidelinesEnabled(),
+			"an unset env var must leave the YAML opt-out authoritative")
+	})
+
+	t.Run("should leave the default ON when neither YAML nor env set the flag", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.Nil(t, settings.AI.ProjectGuidelines)
+		assert.True(t, settings.AI.ProjectGuidelinesEnabled())
+	})
+}
