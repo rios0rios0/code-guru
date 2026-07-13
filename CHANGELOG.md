@@ -16,15 +16,17 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-07-13
+
 ### Added
 
 - added automatic loading of the reviewed repository's own `CLAUDE.md` as project-specific review context on every provider (GitHub and Azure DevOps): when the file is not part of the PR diff, it is fetched from the repository's default branch, bounded to 32 KiB, and rendered into the AI prompt with prompt-injection framing so the review honours the project's documented conventions; controlled by the new tri-state `ai.project_guidelines` setting (`CODE_GURU_AI_PROJECT_GUIDELINES`, default on)
 
 ### Changed
 
+- changed all AI backends (`openai`, `claude`, `anthropic`) to assemble the user prompt through a single shared `BuildUserPromptFor` helper, mirroring the existing `BuildSystemPromptFor` seam, so request-derived prompt sections cannot drift between backends
 - changed the Go module dependencies to their latest versions
 - changed the Go version to `1.26.5` and updated all module dependencies
-- changed all AI backends (`openai`, `claude`, `anthropic`) to assemble the user prompt through a single shared `BuildUserPromptFor` helper, mirroring the existing `BuildSystemPromptFor` seam, so request-derived prompt sections cannot drift between backends
 
 ## [1.8.5] - 2026-07-03
 
