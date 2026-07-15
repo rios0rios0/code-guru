@@ -29,6 +29,9 @@ func NewFilesystemTokenRepository() (*FilesystemTokenRepository, error) {
 
 // SaveToken persists an OAuth token to the filesystem.
 func (r *FilesystemTokenRepository) SaveToken(token entities.AuthToken) error {
+	// The config dir holds the auth token (written 0o600 below), so it stays owner-only; a
+	// directory needs the owner execute bit, making 0o700 (not 0o600) the least-privilege mode.
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission
 	if err := os.MkdirAll(r.configDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
