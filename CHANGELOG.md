@@ -20,6 +20,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 - changed the Go module dependencies to their latest versions
 
+### Security
+
+- resolved the Semgrep `incorrect-default-permission` CI failure on the auth config directory by documenting why owner-only `0o700` is the least-privilege mode for a directory (a directory needs the owner execute bit, so the rule's `0o600` file threshold would strip required access)
+
 ## [1.9.1] - 2026-07-14
 
 ### Changed
