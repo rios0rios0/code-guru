@@ -723,3 +723,126 @@ func TestNewSettingsProjectGuidelinesEnvOverride(t *testing.T) {
 		assert.True(t, settings.AI.ProjectGuidelinesEnabled())
 	})
 }
+
+func TestPullRequestMetadataEnabled(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should default to true when PRMetadata is nil", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the YAML / env "unset" state.
+		ai := entities.AIConfig{PRMetadata: nil}
+
+		// when
+		got := ai.PullRequestMetadataEnabled()
+
+		// then
+		assert.True(t, got, "unset PRMetadata must resolve to true (the default-ON contract)")
+	})
+
+	t.Run("should return true when PRMetadata points to true", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		v := true
+		ai := entities.AIConfig{PRMetadata: &v}
+
+		// when / then
+		assert.True(t, ai.PullRequestMetadataEnabled())
+	})
+
+	t.Run("should return false when the operator explicitly opts out", func(t *testing.T) {
+		t.Parallel()
+
+		// given: `pr_metadata: false` in YAML or
+		// CODE_GURU_AI_PR_METADATA=false is the documented opt-out.
+		v := false
+		ai := entities.AIConfig{PRMetadata: &v}
+
+		// when / then
+		assert.False(t, ai.PullRequestMetadataEnabled())
+	})
+}
+
+func TestNewSettingsFromEnvPRMetadata(t *testing.T) {
+	t.Run("should leave PRMetadata nil when the env var is not set so the default ON path takes over", func(t *testing.T) {
+		// given: a minimal env-only configuration with no
+		// CODE_GURU_AI_PR_METADATA setting at all.
+		t.Setenv("CODE_GURU_BACKEND", "openai")
+		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Nil(t, settings.AI.PRMetadata,
+			"unset CODE_GURU_AI_PR_METADATA must leave the pointer nil so the default-ON resolver fires")
+		assert.True(t, settings.AI.PullRequestMetadataEnabled())
+	})
+
+	t.Run("should resolve to false when the operator explicitly sets the env var to false", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "openai")
+		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+		t.Setenv("CODE_GURU_AI_PR_METADATA", "false")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		require.NotNil(t, settings.AI.PRMetadata)
+		assert.False(t, *settings.AI.PRMetadata)
+		assert.False(t, settings.AI.PullRequestMetadataEnabled())
+	})
+}
+
+func TestNewSettingsPRMetadataEnvOverride(t *testing.T) {
+	// Pins that the PR-metadata kill switch works on the YAML path too,
+	// mirroring the project-guidelines override contract: an operator's
+	// CODE_GURU_AI_PR_METADATA=false on a YAML-configured pod must win.
+
+	t.Run("should override YAML pr_metadata when the env var is set to false", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+  pr_metadata: true
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		t.Setenv("CODE_GURU_AI_PR_METADATA", "false")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.False(t, settings.AI.PullRequestMetadataEnabled(),
+			"env var must override YAML so an operator can disable the fetch per-environment")
+	})
+
+	t.Run("should keep the YAML opt-out when the env var is unset", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+  pr_metadata: false
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.False(t, settings.AI.PullRequestMetadataEnabled(),
+			"an unset env var must leave the YAML opt-out authoritative")
+	})
+}

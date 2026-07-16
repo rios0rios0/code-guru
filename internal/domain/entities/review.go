@@ -43,12 +43,41 @@ type ReviewResult struct {
 	ThreadResolutions []ThreadResolution `json:"thread_resolutions,omitempty"`
 }
 
+// PullRequestMetadata carries author-supplied context about a pull
+// request that is not part of the diff itself: the PR description (the
+// author's statement of WHAT the change does and WHY) and the number of
+// commits behind it (a signal of how the change was assembled). The
+// prompt builder renders it — together with the title and branch names
+// already present in the PR header — as an "intent" section so the LLM
+// can judge whether the diff actually does what the author claims and
+// flag undocumented scope creep. The zero value means "not available":
+// the prompt section collapses to nothing and the review proceeds
+// exactly as it did before this metadata existed.
+type PullRequestMetadata struct {
+	// Description is the PR body/description as written by the author.
+	// Untrusted content — the prompt builder fences and escape-proofs it
+	// exactly like comment bodies and project guidelines. Bounded at load
+	// time so a pathological description cannot crowd out the diff.
+	Description string
+	// CommitCount is the number of commits on the source branch of the
+	// PR. 0 means "unknown" (fetch failed or unsupported provider), and
+	// the prompt omits the commit line rather than claiming an empty PR.
+	CommitCount int
+}
+
 // ReviewRequest encapsulates the input needed to perform a review.
 type ReviewRequest struct {
 	Repository  forgeEntities.Repository
 	PullRequest forgeEntities.PullRequestDetail
 	Diffs       []FileDiff
 	Rules       []Rule
+
+	// Metadata carries the PR's author-supplied context (description,
+	// commit count) fetched from the provider at review time. Zero when
+	// the operator disabled the feature (`ai.pr_metadata: false`), the
+	// provider has no metadata fetcher, or the fetch failed — the review
+	// proceeds without it and the prompt keeps its metadata-free shape.
+	Metadata PullRequestMetadata
 
 	// Conversation carries the bot's prior inline review threads on this
 	// PR plus every reply on each one, so a re-review session triggered

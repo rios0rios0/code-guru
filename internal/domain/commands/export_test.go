@@ -112,12 +112,22 @@ var (
 	// DiffTouchesProjectGuidelines is the pure changed-paths check
 	// backing the "the PR already shows CLAUDE.md in its diff" skip.
 	DiffTouchesProjectGuidelines = diffTouchesProjectGuidelines
+
+	// LoadPullRequestMetadata re-exports the PR-metadata loader so
+	// tests can pin its gates (option off, nil repository, fetch
+	// error, description trimming + truncation) without driving the
+	// full Execute flow.
+	LoadPullRequestMetadata = (*ReviewCommand).loadPullRequestMetadata
 )
 
 // MaxProjectGuidelinesBytes re-exports the guidelines size cap so the
 // truncation test derives its oversized fixture from the real bound
 // instead of hardcoding a copy that could drift.
 const MaxProjectGuidelinesBytes = maxProjectGuidelinesBytes
+
+// MaxPRDescriptionBytes re-exports the PR-description size cap for the
+// same reason as MaxProjectGuidelinesBytes above.
+const MaxPRDescriptionBytes = maxPRDescriptionBytes
 
 // AnnotationThreadStatus re-exports the unexported package constant
 // so tests can pin the value the post helpers forward to gitforge —

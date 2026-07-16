@@ -127,6 +127,17 @@ type ReviewOptions struct {
 	// `settings.AI.ProjectGuidelinesEnabled()` at each call site, which
 	// resolves the tri-state YAML / env config (default true).
 	LoadProjectGuidelines bool
+
+	// LoadPullRequestMetadata, when true, fetches the PR's author-
+	// supplied metadata — its description and commit count — and
+	// forwards it to the LLM as intent context
+	// (`ReviewRequest.Metadata`), so the model can judge whether the
+	// diff actually does what the title, branch name, and description
+	// claim. Best-effort: an unsupported provider or a fetch error logs
+	// at debug and the review proceeds without the context. Wired from
+	// `settings.AI.PullRequestMetadataEnabled()` at each call site,
+	// which resolves the tri-state YAML / env config (default true).
+	LoadPullRequestMetadata bool
 }
 
 // ReviewCommand orchestrates a single PR review.
@@ -134,18 +145,24 @@ type ReviewCommand struct {
 	aiReviewer       repositories.AIReviewerRepository
 	rulesRepo        repositories.RulesRepository
 	detectorRegistry repositories.TrivialDetectorRegistry
+	metadataRepo     repositories.PullRequestMetadataRepository
 }
 
-// NewReviewCommand creates a new ReviewCommand.
+// NewReviewCommand creates a new ReviewCommand. `metadataRepo` may be
+// nil (mirroring the nil `detectorRegistry` on the review-all path):
+// the PR-metadata fetch is then skipped and the review runs exactly as
+// it did before the metadata context existed.
 func NewReviewCommand(
 	aiReviewer repositories.AIReviewerRepository,
 	rulesRepo repositories.RulesRepository,
 	detectorRegistry repositories.TrivialDetectorRegistry,
+	metadataRepo repositories.PullRequestMetadataRepository,
 ) *ReviewCommand {
 	return &ReviewCommand{
 		aiReviewer:       aiReviewer,
 		rulesRepo:        rulesRepo,
 		detectorRegistry: detectorRegistry,
+		metadataRepo:     metadataRepo,
 	}
 }
 
@@ -252,6 +269,11 @@ func (c *ReviewCommand) Execute(
 		// conventions. Empty (and the prompt unchanged) when disabled,
 		// unavailable, or when the PR itself modifies the file.
 		ProjectGuidelines: c.loadProjectGuidelines(ctx, provider, repo, pr.ID, paths, opts),
+		// Best-effort intent context: the PR's description and commit
+		// count, so the LLM judges whether the diff does what the
+		// author claims. Zero (and the prompt unchanged) when disabled
+		// or unavailable.
+		Metadata: c.loadPullRequestMetadata(ctx, provider, repo, pr.ID, opts),
 	}
 
 	result, err := c.aiReviewer.ReviewDiff(ctx, request)

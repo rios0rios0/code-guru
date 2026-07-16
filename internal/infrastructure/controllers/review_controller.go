@@ -13,6 +13,7 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
+	domainRepos "github.com/rios0rios0/codeguru/internal/domain/repositories"
 	infraRepos "github.com/rios0rios0/codeguru/internal/infrastructure/repositories"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
 	"github.com/rios0rios0/codeguru/internal/support"
@@ -23,6 +24,7 @@ type ReviewController struct {
 	providerRegistry  *registry.ProviderRegistry
 	aiReviewerFactory *infraRepos.AIReviewerFactory
 	rulesRepoFactory  *infraRepos.RulesRepositoryFactory
+	metadataRepo      domainRepos.PullRequestMetadataRepository
 }
 
 // NewReviewController creates a new ReviewController.
@@ -30,11 +32,13 @@ func NewReviewController(
 	providerRegistry *registry.ProviderRegistry,
 	aiReviewerFactory *infraRepos.AIReviewerFactory,
 	rulesRepoFactory *infraRepos.RulesRepositoryFactory,
+	metadataRepo domainRepos.PullRequestMetadataRepository,
 ) *ReviewController {
 	return &ReviewController{
 		providerRegistry:  providerRegistry,
 		aiReviewerFactory: aiReviewerFactory,
 		rulesRepoFactory:  rulesRepoFactory,
+		metadataRepo:      metadataRepo,
 	}
 }
 
@@ -126,7 +130,7 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 	// create the review command with settings-based dependencies
 	aiReviewer := c.aiReviewerFactory.Create(settings)
 	rulesRepo := c.rulesRepoFactory.Create(settings)
-	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, detectorRegistry)
+	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, detectorRegistry, c.metadataRepo)
 
 	// TODO: query CI status automatically via provider.GetPullRequestCheckStatus() once gitforge adds this method
 	ciPassed := false
@@ -143,6 +147,7 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 		TrivialAutoMergeAuthors: settings.Trivial.AutoMergeAllowedAuthors,
 		BotIdentities:           settings.BotIdentities,
 		LoadProjectGuidelines:   settings.AI.ProjectGuidelinesEnabled(),
+		LoadPullRequestMetadata: settings.AI.PullRequestMetadataEnabled(),
 	})
 	if err != nil {
 		logger.Errorf("review failed: %v", err)

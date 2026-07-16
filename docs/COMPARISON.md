@@ -84,8 +84,8 @@ Legend: ✅ supported · ⚠️ partial / opt-in · ❌ not supported · — not
 | Surrounding context lines (beyond hunk) | ❌ | ⚠️ (full project context gathering) | ✅ (full repo clone) |
 | Full file contents | ⚠️ (only via trivial detector adapters' `FileContentFetcher`) | ⚠️ | ✅ |
 | Repo-wide cross-file analysis | ❌ | ✅ | ✅ |
-| PR description / linked issues | ❌ (title + branches only) | ✅ | ✅ |
-| Commit history awareness | ❌ | ⚠️ | ✅ |
+| PR description / linked issues | ⚠️ (title, branches, description, commit count — linked issues not yet parsed) | ✅ | ✅ |
+| Commit history awareness | ⚠️ (commit count as an assembly signal; no per-commit messages) | ⚠️ | ✅ |
 | Related PR / past review awareness | ⚠️ (only this PR's threads) | ⚠️ ("Copilot Memory" preview) | ❌ |
 
 ### Action capabilities
@@ -223,16 +223,14 @@ Each gap below names the missing capability, the peer that has it, and a suggest
 - Read the check status before the review starts. When checks are red, prepend a sentence to the user prompt: "CI is currently failing — focus on whether the diff explains the failure".
 - Surface the check state in the completion annotation so the PR author sees "CI: ❌ failing" alongside the verdict.
 
-#### 8. PR description and linked-issue context
+#### 8. PR description and linked-issue context — ✅ SHIPPED (description + commit count)
 
 **Where peers stand**: Copilot and Claude Code Action both pull the PR description.
 
-**Code Guru today**: Only PR title + source/target branches reach the prompt.
+**Code Guru today**: The PR's description and commit count are fetched through the `prmetadata` fetcher registry (GitHub / Azure DevOps REST) and rendered — together with the title and branch names already in the prompt header — as an intent-context section that instructs the model to verify the diff against the stated intent and flag scope creep. Best-effort, bounded to 16 KiB, escape-proofed, opt-out via `ai.pr_metadata: false`.
 
-**Suggested implementation**:
-- Extend gitforge's `PullRequestDetail` with a `Body` field (already populated on GitHub; ADO via `description`).
-- Inject `Pull request description: <body>` into the user prompt, capped at 4 KB to bound prompt growth.
-- Optionally parse `Closes #N` / `AB#N` / `JIRA-N` markers; surface as a separate prompt line so the model can reference intent.
+**Remaining slice**:
+- Parse `Closes #N` / `AB#N` / `JIRA-N` markers from the description; fetch the linked issue / work item and surface it as a separate prompt block so the model can check the PR actually fulfils the ticket (Qodo Merge's "ticket compliance" and CodeRabbit's "linked-issue assessment" are the reference implementations).
 
 #### 9. Conversation continuation without explicit `@code-guru`
 
@@ -306,7 +304,7 @@ A suggested ordering for shipping the backlog. Each row is independent, so contr
 | Tier | Items |
 |------|-------|
 | **Now** (next 2-3 PRs) | #1 suggestion blocks · #3 auto-skip uninteresting files · #11 token-cost reporting |
-| **Next** (1 month) | #2 surrounding-file context · #4 streaming progress comment · #5 per-repo system-prompt overrides · #8 PR description + linked-issue context |
+| **Next** (1 month) | #2 surrounding-file context · #4 streaming progress comment · #5 per-repo system-prompt overrides · #8 linked-issue context (description + commit count already shipped) |
 | **Later** (1 quarter) | #6 fix commits · #7 CI awareness · #9 conversation continuation · #10 severity-based routing · #12 model fallback chain |
 | **Backlog** | Everything in the P2 table |
 

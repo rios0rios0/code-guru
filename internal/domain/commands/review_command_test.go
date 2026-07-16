@@ -1012,7 +1012,7 @@ func TestMarkerHelpersForwardThreadStatusOption(t *testing.T) {
 			// the helpers never touch them, and a constructor change
 			// that introduces a new dependency would surface as a
 			// nil-pointer panic here, not as a silent regression.
-			rc := commands.NewReviewCommand(nil, nil, nil)
+			rc := commands.NewReviewCommand(nil, nil, nil, nil)
 			provider := &recordingReviewProvider{}
 
 			// when
@@ -1043,7 +1043,7 @@ func TestSubmitNativeReviewFlagGate(t *testing.T) {
 		t.Parallel()
 
 		// given
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 
 		// when
@@ -1058,7 +1058,7 @@ func TestSubmitNativeReviewFlagGate(t *testing.T) {
 		t.Parallel()
 
 		// given
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 
 		// when
@@ -1075,7 +1075,7 @@ func TestSubmitNativeReviewFlagGate(t *testing.T) {
 		t.Parallel()
 
 		// given
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 
 		// when
@@ -1091,7 +1091,7 @@ func TestSubmitNativeReviewFlagGate(t *testing.T) {
 		t.Parallel()
 
 		// given
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 
 		// when
@@ -1108,7 +1108,7 @@ func TestSubmitNativeReviewFlagGate(t *testing.T) {
 		t.Parallel()
 
 		// given
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 
 		// when
@@ -1129,7 +1129,7 @@ func TestSubmitNativeReviewFlagGate(t *testing.T) {
 
 		// given: the gitforge error path is documented as best-effort UX,
 		// so a transient permission failure must not bubble up to Execute.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{submitErr: errors.New("permission denied")}
 
 		// when / then: no panic, no return — the helper is fire-and-forget
@@ -1148,7 +1148,7 @@ func TestExecuteSkipsDraftsByDefault(t *testing.T) {
 		t.Parallel()
 
 		// given
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 		repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 		pr := forgeEntities.PullRequestDetail{
@@ -1176,7 +1176,7 @@ func TestExecuteSkipsDraftsByDefault(t *testing.T) {
 		// draft branch was bypassed) and return the wrapped error so the
 		// test asserts the bypass without relying on panic behaviour.
 		expectedErr := errors.New("get pull request files failed")
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			getPullRequestFilesErr: expectedErr,
 		}
@@ -1211,7 +1211,7 @@ func TestDropDuplicateComments(t *testing.T) {
 		t.Parallel()
 
 		// given
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
 				{FilePath: "internal/foo.go", Line: 42, Body: "[high] this could be nil-checked"},
@@ -1238,7 +1238,7 @@ func TestDropDuplicateComments(t *testing.T) {
 		// follow-up reviews, so the only path that lands a duplicate
 		// PR-wide comment is the explicit @code-guru re-review which the
 		// user asked for.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
 				{Body: "summary"},
@@ -1260,7 +1260,7 @@ func TestDropDuplicateComments(t *testing.T) {
 
 		// given: ADO's threads carry `filePath: "/internal/foo.go"`
 		// while the AI emits `internal/foo.go` — both must dedup.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
 				{FilePath: "/internal/foo.go", Line: 42, Body: "[high] nil-check"},
@@ -1290,7 +1290,7 @@ func TestExecuteReviewOnceGate(t *testing.T) {
 		t.Parallel()
 
 		// given
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
 				{Body: "✅ **Code Guru review complete.** Verdict: `approve`"},
@@ -1317,7 +1317,7 @@ func TestExecuteReviewOnceGate(t *testing.T) {
 		// Execute reached past the gate (the user-requested re-review
 		// went through).
 		expectedErr := errors.New("get pull request files failed")
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
 				{Body: "✅ **Code Guru review complete.** Verdict: `approve`"},
@@ -1343,7 +1343,7 @@ func TestExecuteReviewOnceGate(t *testing.T) {
 		// given: empty existingComments + the deterministic error
 		// proves Execute walked past the gate down the normal path.
 		expectedErr := errors.New("get pull request files failed")
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			getPullRequestFilesErr: expectedErr,
 		}
@@ -1370,7 +1370,7 @@ func TestBuildConversation(t *testing.T) {
 		// was push-triggered (no mention). The conversation walk must
 		// stay nil so first-pass review prompts are byte-for-byte
 		// identical to the pre-conversation shape.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
 				{ID: 1, Line: 10, FilePath: "internal/foo.go", Body: "[high] x", Author: "code-guru[bot]"},
@@ -1389,7 +1389,7 @@ func TestBuildConversation(t *testing.T) {
 		t.Parallel()
 
 		// given
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
 				{ID: 1, Line: 10, FilePath: "internal/foo.go", Body: "[high] nil-check", Author: "code-guru[bot]"},
@@ -1416,7 +1416,7 @@ func TestBuildConversation(t *testing.T) {
 		// given: contract is best-effort — a list error must not break
 		// the re-review; the F3 dedup catches any duplicates the LLM
 		// emits without context.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			listCommentsErr: errors.New("transient API blip"),
 		}
@@ -1438,7 +1438,7 @@ func TestBuildConversation(t *testing.T) {
 		// `outdated` resolution status exists for, and dropping it at
 		// the conversation stage would deny the LLM the chance to
 		// auto-close it.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
 				{ID: 1, Line: 10, FilePath: "internal/foo.go", Body: "[high] live", Author: "code-guru[bot]"},
@@ -1468,7 +1468,7 @@ func TestBuildConversation(t *testing.T) {
 		// on the same anchor, and NO identity is configured. Without
 		// self-detection this returned nil and the LLM re-reviewed from
 		// scratch, re-posting findings the author already answered.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
 				{ID: 1, Line: 0, Author: "automation@example.com", Body: "✅ **Code Guru review complete.**\n\nVerdict: `request_changes`."},
@@ -1496,7 +1496,7 @@ func TestBuildConversation(t *testing.T) {
 		// marker annotation to self-detect from (e.g. the completion
 		// notice was deleted). An explicitly configured identity must
 		// still let the walk recognise the bot's thread.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
 				{ID: 1, Line: 10, FilePath: "internal/foo.go", Author: "automation@example.com", Body: "[high] nil-check"},
@@ -1579,7 +1579,7 @@ func TestExecuteRunsTrivialDetectionRegardlessOfCIPassed(t *testing.T) {
 		// confuse the failure mode. CIPassed left at its zero value.
 		registry := &recordingRegistry{verdict: "approve"}
 		rules := &doubles.StubRulesRepository{}
-		rc := commands.NewReviewCommand(failingAIReviewer{}, rules, registry)
+		rc := commands.NewReviewCommand(failingAIReviewer{}, rules, registry, nil)
 		provider := &recordingReviewProvider{
 			files: []forgeEntities.PullRequestFile{{Path: "/CHANGELOG.md"}},
 		}
@@ -1626,7 +1626,7 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 	newCmd := func(verdict string) (*commands.ReviewCommand, *recordingReviewProvider) {
 		registry := &recordingRegistry{verdict: verdict}
 		rules := &doubles.StubRulesRepository{}
-		rc := commands.NewReviewCommand(failingAIReviewer{}, rules, registry)
+		rc := commands.NewReviewCommand(failingAIReviewer{}, rules, registry, nil)
 		provider := &recordingReviewProvider{
 			files: []forgeEntities.PullRequestFile{{Path: "/CHANGELOG.md"}},
 		}
@@ -1875,7 +1875,7 @@ func TestExecuteLLMPathSubmitsNativeReviewWithEmptyBody(t *testing.T) {
 				Summary: "Three blocking issues found in the diff.",
 			},
 		}
-		rc := commands.NewReviewCommand(ai, rules, nil)
+		rc := commands.NewReviewCommand(ai, rules, nil, nil)
 		provider := &recordingReviewProvider{
 			// Non-empty Patch keeps the executor on the per-file diff
 			// path and avoids the ADO `GetPullRequestDiff` fallback,
@@ -1960,7 +1960,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 
 		// given: the LLM classifies thread #111 as resolved (the diff
 		// fixed it) and thread #222 as outstanding (still present).
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 		resolutions := []entities.ThreadResolution{
 			{FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "Diff adds the nil check."},
@@ -2015,7 +2015,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 		t.Parallel()
 
 		// given
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 		resolutions := []entities.ThreadResolution{
 			{FilePath: "internal/foo.go", Line: 10, Status: "outdated", Explanation: "The function in question was deleted."},
@@ -2053,7 +2053,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 				Comments: []entities.ReviewMessage{{Author: "code-guru[bot]", Body: "[medium] separate concern on the same line"}},
 			},
 		}
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 		resolutions := []entities.ThreadResolution{
 			{ID: "T1", FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "Diff added the nil check."},
@@ -2098,7 +2098,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 				Comments: []entities.ReviewMessage{{Author: "code-guru[bot]", Body: "x"}},
 			},
 		}
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 		resolutions := []entities.ThreadResolution{
 			{FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "Done."},
@@ -2119,7 +2119,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 		// never showed it. Without this guard, the bot would post an
 		// inline reply on a random line and call status updates on a
 		// thread that does not exist.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 		resolutions := []entities.ThreadResolution{
 			{FilePath: "does/not/exist.go", Line: 99, Status: "resolved", Explanation: "."},
@@ -2149,7 +2149,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 				Comments: []entities.ReviewMessage{{Author: "code-guru[bot]", Body: "x"}},
 			},
 		}
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 		resolutions := []entities.ThreadResolution{
 			{FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "Done."},
@@ -2171,7 +2171,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 		t.Parallel()
 
 		// given
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 
 		// when
@@ -2191,7 +2191,7 @@ func TestApplyThreadResolutions(t *testing.T) {
 		// suppress the duplicate inline comment in `postComments` on the
 		// same anchor. Otherwise a transient ADO blip would let the bot
 		// post the comment that the resolution was supposed to replace.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			replyErr: errors.New("transient ADO 503"),
 		}
@@ -2261,7 +2261,7 @@ func TestExecuteMentionPathAppliesThreadResolutions(t *testing.T) {
 				},
 			},
 		}
-		rc := commands.NewReviewCommand(ai, rules, nil)
+		rc := commands.NewReviewCommand(ai, rules, nil, nil)
 		provider := &recordingReviewProvider{
 			files: []forgeEntities.PullRequestFile{
 				{Path: "internal/foo.go", Patch: "@@ -10 +10 @@\n-old\n+new\n"},
@@ -2481,7 +2481,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		t.Parallel()
 
 		// given
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &fileAccessRecordingProvider{
 			fileContents: map[string]string{"CLAUDE.md": "# Project rules\n\nUse BDD blocks in every test.\n"},
 		}
@@ -2502,7 +2502,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 
 		// given: operator set `ai.project_guidelines: false` — the wire
 		// from settings resolves to LoadProjectGuidelines=false.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &fileAccessRecordingProvider{
 			fileContents: map[string]string{"CLAUDE.md": "# Project rules"},
 		}
@@ -2524,7 +2524,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		// given: the PR modifies the guidelines file itself. The diff
 		// already shows it to the model; fetching the pre-change copy on
 		// top would present two conflicting versions of the document.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &fileAccessRecordingProvider{
 			fileContents: map[string]string{"CLAUDE.md": "# stale pre-change copy"},
 		}
@@ -2545,7 +2545,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		// given: Azure DevOps prefixes every changed path with `/`. The
 		// skip gate must normalise before comparing, mirroring the rule
 		// used across the rest of the pipeline.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &fileAccessRecordingProvider{
 			fileContents: map[string]string{"CLAUDE.md": "# stale pre-change copy"},
 		}
@@ -2564,7 +2564,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 
 		// given: a provider without the FileAccessProvider surface —
 		// nothing to fetch from, and the review must proceed regardless.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 
 		// when
@@ -2581,7 +2581,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		// given: a transient provider outage (or simply a repository with
 		// no CLAUDE.md — gitforge surfaces both as an error). Best-effort
 		// by contract: the loader degrades to "no guidelines".
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &fileAccessRecordingProvider{fileErr: errors.New("503 Service Unavailable")}
 
 		// when
@@ -2598,7 +2598,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 
 		// given: an effectively-empty CLAUDE.md must not add an empty
 		// guidelines section to the prompt.
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &fileAccessRecordingProvider{
 			fileContents: map[string]string{"CLAUDE.md": "  \n\t\n"},
 		}
@@ -2619,7 +2619,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		// bounded content and the diff keeps its share of the context
 		// window.
 		oversized := strings.Repeat("A", commands.MaxProjectGuidelinesBytes+1024)
-		rc := commands.NewReviewCommand(nil, nil, nil)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &fileAccessRecordingProvider{
 			fileContents: map[string]string{"CLAUDE.md": oversized},
 		}
@@ -2692,7 +2692,7 @@ func TestExecuteLLMPathLoadsProjectGuidelines(t *testing.T) {
 			NameValue: "stub",
 			Result:    &entities.ReviewResult{Verdict: "approve"},
 		}
-		rc := commands.NewReviewCommand(ai, rules, nil)
+		rc := commands.NewReviewCommand(ai, rules, nil, nil)
 		provider := &fileAccessRecordingProvider{
 			recordingReviewProvider: recordingReviewProvider{
 				files: []forgeEntities.PullRequestFile{
@@ -2723,7 +2723,7 @@ func TestExecuteLLMPathLoadsProjectGuidelines(t *testing.T) {
 			NameValue: "stub",
 			Result:    &entities.ReviewResult{Verdict: "approve"},
 		}
-		rc := commands.NewReviewCommand(ai, rules, nil)
+		rc := commands.NewReviewCommand(ai, rules, nil, nil)
 		provider := &fileAccessRecordingProvider{
 			recordingReviewProvider: recordingReviewProvider{
 				files: []forgeEntities.PullRequestFile{
@@ -2755,7 +2755,7 @@ func TestExecuteLLMPathLoadsProjectGuidelines(t *testing.T) {
 			NameValue: "stub",
 			Result:    &entities.ReviewResult{Verdict: "approve"},
 		}
-		rc := commands.NewReviewCommand(ai, rules, nil)
+		rc := commands.NewReviewCommand(ai, rules, nil, nil)
 		provider := &fileAccessRecordingProvider{
 			recordingReviewProvider: recordingReviewProvider{
 				files: []forgeEntities.PullRequestFile{
@@ -2775,5 +2775,187 @@ func TestExecuteLLMPathLoadsProjectGuidelines(t *testing.T) {
 		assert.Empty(t, ai.LastRequest.ProjectGuidelines,
 			"the pre-change copy must not be layered on top of the diff that rewrites it")
 		assert.Empty(t, provider.fetchedPaths)
+	})
+}
+
+// TestLoadPullRequestMetadata pins the gates and hygiene of the PR
+// metadata loader: the operator opt-out and the nil-repository wiring
+// must skip the fetch entirely, a fetch error must degrade to the zero
+// value, and the description must arrive trimmed and bounded so a
+// generated changelog-dump body cannot blow the prompt budget.
+func TestLoadPullRequestMetadata(t *testing.T) {
+	t.Parallel()
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	const prID = 4242
+	enabled := commands.ReviewOptions{LoadPullRequestMetadata: true}
+
+	t.Run("should return the fetched metadata with a trimmed description when enabled", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		stub := &doubles.StubPullRequestMetadataRepository{
+			Metadata: entities.PullRequestMetadata{
+				Description: "  Adds a rate limiter.\n\n",
+				CommitCount: 3,
+			},
+		}
+		rc := commands.NewReviewCommand(nil, nil, nil, stub)
+
+		// when
+		got := commands.LoadPullRequestMetadata(
+			rc, context.Background(), &recordingReviewProvider{}, repo, prID, enabled)
+
+		// then
+		assert.Equal(t, "Adds a rate limiter.", got.Description,
+			"the description must be trimmed so the prompt does not carry stray blank lines")
+		assert.Equal(t, 3, got.CommitCount)
+		assert.Equal(t, 1, stub.Calls)
+		assert.Equal(t, prID, stub.LastPRID)
+	})
+
+	t.Run("should return zero and never fetch when the option is disabled", func(t *testing.T) {
+		t.Parallel()
+
+		// given: operator set `ai.pr_metadata: false` — the wire from
+		// settings resolves to LoadPullRequestMetadata=false.
+		stub := &doubles.StubPullRequestMetadataRepository{
+			Metadata: entities.PullRequestMetadata{Description: "unused", CommitCount: 9},
+		}
+		rc := commands.NewReviewCommand(nil, nil, nil, stub)
+
+		// when
+		got := commands.LoadPullRequestMetadata(
+			rc, context.Background(), &recordingReviewProvider{}, repo, prID,
+			commands.ReviewOptions{LoadPullRequestMetadata: false})
+
+		// then
+		assert.Zero(t, got)
+		assert.Zero(t, stub.Calls,
+			"the opt-out must skip the repository call entirely, not just discard the result")
+	})
+
+	t.Run("should return zero when no metadata repository is wired", func(t *testing.T) {
+		t.Parallel()
+
+		// given: paths that build the command without the fetcher (e.g.
+		// hand-rolled test wiring) must behave exactly as before the
+		// feature existed.
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+
+		// when
+		got := commands.LoadPullRequestMetadata(
+			rc, context.Background(), &recordingReviewProvider{}, repo, prID, enabled)
+
+		// then
+		assert.Zero(t, got)
+	})
+
+	t.Run("should return zero when the fetch fails so the review proceeds without metadata", func(t *testing.T) {
+		t.Parallel()
+
+		// given: an unsupported provider or a transient API outage —
+		// best-effort by contract, the loader degrades to "no metadata".
+		stub := &doubles.StubPullRequestMetadataRepository{Err: errors.New("503 Service Unavailable")}
+		rc := commands.NewReviewCommand(nil, nil, nil, stub)
+
+		// when
+		got := commands.LoadPullRequestMetadata(
+			rc, context.Background(), &recordingReviewProvider{}, repo, prID, enabled)
+
+		// then
+		assert.Zero(t, got)
+		assert.Equal(t, 1, stub.Calls, "the loader must have attempted exactly one fetch before degrading")
+	})
+
+	t.Run("should truncate an oversized description at the documented bound", func(t *testing.T) {
+		t.Parallel()
+
+		// given: release bots paste entire upstream changelogs into PR
+		// bodies; the loader must bound them before the prompt is built.
+		oversized := strings.Repeat("x", commands.MaxPRDescriptionBytes+100)
+		stub := &doubles.StubPullRequestMetadataRepository{
+			Metadata: entities.PullRequestMetadata{Description: oversized},
+		}
+		rc := commands.NewReviewCommand(nil, nil, nil, stub)
+
+		// when
+		got := commands.LoadPullRequestMetadata(
+			rc, context.Background(), &recordingReviewProvider{}, repo, prID, enabled)
+
+		// then
+		assert.Less(t, len(got.Description), len(oversized))
+		assert.Contains(t, got.Description, "...[truncated]",
+			"the cut must carry the sentinel so the model knows the document was bounded, not complete")
+	})
+}
+
+// TestExecuteForwardsPullRequestMetadata pins the end-to-end wiring: a
+// review run with the option enabled must surface the fetched metadata
+// on the AI request, and a metadata fetch failure must not fail the
+// review.
+func TestExecuteForwardsPullRequestMetadata(t *testing.T) {
+	t.Parallel()
+
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	pr := forgeEntities.PullRequestDetail{
+		PullRequest:  forgeEntities.PullRequest{ID: 7, Title: "Add limiter"},
+		SourceBranch: "feat/limiter",
+		TargetBranch: "main",
+	}
+	newProvider := func() *recordingReviewProvider {
+		return &recordingReviewProvider{
+			files: []forgeEntities.PullRequestFile{
+				{Path: "main.go", Patch: "@@ -1 +1 @@\n-a\n+b\n"},
+			},
+		}
+	}
+
+	t.Run("should forward the fetched metadata to the AI request", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rules := &doubles.StubRulesRepository{}
+		ai := &doubles.StubAIReviewerRepository{
+			NameValue: "stub",
+			Result:    &entities.ReviewResult{Verdict: "approve"},
+		}
+		metadata := &doubles.StubPullRequestMetadataRepository{
+			Metadata: entities.PullRequestMetadata{Description: "Adds a limiter.", CommitCount: 2},
+		}
+		rc := commands.NewReviewCommand(ai, rules, nil, metadata)
+
+		// when
+		_, err := rc.Execute(context.Background(), newProvider(), repo, pr, commands.ReviewOptions{
+			LoadPullRequestMetadata: true,
+		})
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "Adds a limiter.", ai.LastRequest.Metadata.Description)
+		assert.Equal(t, 2, ai.LastRequest.Metadata.CommitCount)
+	})
+
+	t.Run("should complete the review with zero metadata when the fetch fails", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rules := &doubles.StubRulesRepository{}
+		ai := &doubles.StubAIReviewerRepository{
+			NameValue: "stub",
+			Result:    &entities.ReviewResult{Verdict: "approve"},
+		}
+		metadata := &doubles.StubPullRequestMetadataRepository{Err: errors.New("boom")}
+		rc := commands.NewReviewCommand(ai, rules, nil, metadata)
+
+		// when
+		result, err := rc.Execute(context.Background(), newProvider(), repo, pr, commands.ReviewOptions{
+			LoadPullRequestMetadata: true,
+		})
+
+		// then
+		require.NoError(t, err, "a metadata fetch failure must never fail the review")
+		require.NotNil(t, result)
+		assert.Zero(t, ai.LastRequest.Metadata)
 	})
 }
