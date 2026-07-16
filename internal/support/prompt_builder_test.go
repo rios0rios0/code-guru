@@ -629,7 +629,8 @@ func TestBuildUserPromptWithPullRequestMetadata(t *testing.T) {
 		result := support.BuildUserPromptFor(request)
 
 		// then
-		assert.Contains(t, result, "Pull request context (metadata supplied by the PR author).")
+		assert.Contains(t, result,
+			"Pull request context (author-supplied title, branch, and description; platform-reported commit count).")
 		assert.Contains(t, result, "Commits in this pull request: 3\n")
 		assert.Contains(t, result, "Description:\n```text\nAdds a token-bucket rate limiter to the API.\n```\n")
 		assert.Contains(t, result, "judge INTENT",
