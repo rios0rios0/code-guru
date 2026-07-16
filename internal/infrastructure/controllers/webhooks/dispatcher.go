@@ -41,6 +41,7 @@ type Dispatcher struct {
 	aiFactory             *infraRepos.AIReviewerFactory
 	rulesFactory          *infraRepos.RulesRepositoryFactory
 	detectorRegistry      repositories.TrivialDetectorRegistry
+	metadataRepo          repositories.PullRequestMetadataRepository
 	settings              *entities.Settings
 	providerRegistry      *registry.ProviderRegistry
 	submitter             Submitter
@@ -73,6 +74,7 @@ func NewDispatcher(
 	aiFactory *infraRepos.AIReviewerFactory,
 	rulesFactory *infraRepos.RulesRepositoryFactory,
 	detectorRegistry repositories.TrivialDetectorRegistry,
+	metadataRepo repositories.PullRequestMetadataRepository,
 	settings *entities.Settings,
 	providerRegistry *registry.ProviderRegistry,
 ) *Dispatcher {
@@ -80,6 +82,7 @@ func NewDispatcher(
 		aiFactory:             aiFactory,
 		rulesFactory:          rulesFactory,
 		detectorRegistry:      detectorRegistry,
+		metadataRepo:          metadataRepo,
 		settings:              settings,
 		providerRegistry:      providerRegistry,
 		adoHydrator:           NewHTTPADOHydrator(nil),
@@ -343,7 +346,7 @@ func (d *Dispatcher) HandlePR(
 ) error {
 	aiReviewer := d.aiFactory.Create(d.settings)
 	rulesRepo := d.rulesFactory.Create(d.settings)
-	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, d.detectorRegistry)
+	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, d.detectorRegistry, d.metadataRepo)
 
 	result, err := reviewCmd.Execute(ctx, provider, repo, pr, commands.ReviewOptions{
 		CIPassed:                ciPassed,
@@ -356,6 +359,7 @@ func (d *Dispatcher) HandlePR(
 		TrivialAutoMergeAuthors: d.settings.Trivial.AutoMergeAllowedAuthors,
 		BotIdentities:           d.settings.BotIdentities,
 		LoadProjectGuidelines:   d.settings.AI.ProjectGuidelinesEnabled(),
+		LoadPullRequestMetadata: d.settings.AI.PullRequestMetadataEnabled(),
 	})
 	if err != nil {
 		return fmt.Errorf("review failed for PR #%d: %w", pr.ID, err)

@@ -6,6 +6,7 @@ import (
 	anthropicRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/anthropic"
 	claudeRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/claude"
 	openaiRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/openai"
+	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/prmetadata"
 	rulesRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/rules"
 	selfupdateRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/selfupdate"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
@@ -53,6 +54,17 @@ func RegisterProviders(container *dig.Container) error {
 			return trivial.NewDetectorRegistry(nil)
 		}
 		return trivial.NewDetectorRegistryFromConfig(s.Trivial)
+	}); err != nil {
+		return err
+	}
+
+	// Pull request metadata fetcher registry (description + commit
+	// count via provider REST APIs). Stateless, so a single instance is
+	// shared by the CLI controllers and the webhook dispatcher; the
+	// concrete type is bound to the domain interface here so consumers
+	// depend on the contract only.
+	if err := container.Provide(func() repositories.PullRequestMetadataRepository {
+		return prmetadata.NewRegistryPullRequestMetadataRepository()
 	}); err != nil {
 		return err
 	}

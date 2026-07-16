@@ -19,6 +19,9 @@ ai:
   # Load the reviewed repository's own CLAUDE.md as project-specific
   # review context (default: true; set false to opt out).
   project_guidelines: true
+  # Fetch the PR's description and commit count as intent context for
+  # the AI (default: true; set false to opt out).
+  pr_metadata: true
 
 rules:
   path: '${HOME}/Development/github.com/rios0rios0/guide/.ai/claude/rules'

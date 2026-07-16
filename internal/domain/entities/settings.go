@@ -93,6 +93,23 @@ type AIConfig struct {
 	// read the resolved value via ProjectGuidelinesEnabled rather than
 	// dereferencing the pointer directly.
 	ProjectGuidelines *bool `yaml:"project_guidelines"`
+
+	// PRMetadata, when set, controls whether the bot fetches the pull
+	// request's author-supplied metadata (description and commit count)
+	// from the provider and forwards it to the LLM as intent context —
+	// so the model can judge whether the diff actually does what the
+	// title, branch name, and description claim, and flag undocumented
+	// scope creep. The fetch is best-effort: an unsupported provider or
+	// a fetch error never fails the review.
+	//
+	// Tri-state pointer so YAML / env "unset" can mean "use the default":
+	// nil resolves to true via PullRequestMetadataEnabled (default ON).
+	// Operators that want to opt out explicitly set
+	// `pr_metadata: false` in YAML or CODE_GURU_AI_PR_METADATA=false.
+	// Call sites should always read the resolved value via
+	// PullRequestMetadataEnabled rather than dereferencing the pointer
+	// directly.
+	PRMetadata *bool `yaml:"pr_metadata"`
 }
 
 // defaultReviewAttempts is the attempt budget applied when AI.MaxAttempts is
@@ -137,6 +154,19 @@ func (a AIConfig) ProjectGuidelinesEnabled() bool {
 		return true
 	}
 	return *a.ProjectGuidelines
+}
+
+// PullRequestMetadataEnabled resolves the tri-state PRMetadata pointer into a
+// single boolean. nil (the YAML / env "unset" state) returns true so
+// deployments that never wire the flag pick up the PR description / commit
+// count context automatically; an explicit `pr_metadata: false` in YAML or
+// `CODE_GURU_AI_PR_METADATA=false` returns false. Callers should always go
+// through this helper rather than dereferencing the pointer.
+func (a AIConfig) PullRequestMetadataEnabled() bool {
+	if a.PRMetadata == nil {
+		return true
+	}
+	return *a.PRMetadata
 }
 
 // OpenAIConfig holds OpenAI-specific settings.
@@ -286,6 +316,11 @@ func NewSettings(path string) (*Settings, error) {
 	if v := parseOptionalBoolEnv("CODE_GURU_AI_PROJECT_GUIDELINES"); v != nil {
 		settings.AI.ProjectGuidelines = v
 	}
+	// Same kill-switch rationale as CODE_GURU_AI_PROJECT_GUIDELINES above,
+	// for the default-ON PR-metadata (description / commit count) fetch.
+	if v := parseOptionalBoolEnv("CODE_GURU_AI_PR_METADATA"); v != nil {
+		settings.AI.PRMetadata = v
+	}
 
 	if validateErr := validateSettings(&settings); validateErr != nil {
 		return nil, validateErr
@@ -344,6 +379,7 @@ func NewSettingsFromEnv() (*Settings, error) {
 			ReviewDrafts:       parseBoolEnv("CODE_GURU_AI_REVIEW_DRAFTS", false),
 			MaxAttempts:        maxAttempts,
 			ProjectGuidelines:  parseOptionalBoolEnv("CODE_GURU_AI_PROJECT_GUIDELINES"),
+			PRMetadata:         parseOptionalBoolEnv("CODE_GURU_AI_PR_METADATA"),
 		},
 		Rules: RulesConfig{
 			Path: os.Getenv("CODE_GURU_RULES_PATH"),
