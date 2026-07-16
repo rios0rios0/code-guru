@@ -101,6 +101,7 @@ func newDispatcherWithSettings(t *testing.T, settings *entities.Settings) (*webh
 		infraRepos.NewAIReviewerFactory(),
 		infraRepos.NewRulesRepositoryFactory(),
 		nil,
+		nil,
 		settings,
 		newTestRegistry(),
 	)

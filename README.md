@@ -23,6 +23,7 @@ A CLI tool that leverages AI (Claude Code CLI or OpenAI API) to automatically re
 - Rule-based reviews using Markdown files from [guide](https://github.com/rios0rios0/guide) (or any directory)
 - YAML `frontmatter` in rules for file-glob-based filtering (e.g., `paths: ["**/*.go"]`)
 - Project-aware reviews: the reviewed repository's own `CLAUDE.md` is loaded automatically (on any provider) and forwarded to the AI as project-specific context, so the review honours the project's documented conventions — see [Project Guidelines](#project-guidelines-claudemd)
+- Intent-aware reviews: the PR's title, branch names, description, and commit count are forwarded to the AI so it can judge whether the diff actually does what the author claims and flag undocumented scope creep — see [Pull Request Context](#pull-request-context-intent-aware-reviews)
 - Inline and general PR comments posted back via gitforge
 - Three modes: single PR review, batch review-all, and discover (list open PRs)
 - Reviews each PR exactly once — subsequent pushes are no-ops. To request a re-review, post a PR comment that mentions `@code-guru` (case-insensitive). On a re-review the bot acts as a reviewer who reads the existing conversation: it loads every prior bot inline thread plus every reply, classifies each as `resolved` / `outstanding` / `outdated`, posts one short reply **nested inside each prior thread** (via the provider's `ReplyToThread`, so the answer lands below the author's reply like a human reviewer rather than as a separate same-line comment), and auto-closes the threads it considers resolved (Azure DevOps thread state `fixed`). Net-new findings only land if the diff genuinely warrants one and it does NOT overlap a thread the bot already addressed — replacing the pre-existing failure mode where every re-review flooded the PR with reworded duplicates of every prior comment. The bot recognises its own prior comments by the built-in `code-guru` login shape, by self-detecting the account that posted its PR-wide review annotations on the PR, and by any identity listed in `bot_identities` (env `CODE_GURU_BOT_IDENTITIES`) — so re-reviews still read and resolve prior threads when the deployment posts under a service account
@@ -73,6 +74,10 @@ ai:
   # loaded and forwarded to the AI as project-specific review context. Set to
   # false to opt out.
   project_guidelines: true
+  # When true (the default), the PR's description and commit count are fetched
+  # from the provider and forwarded to the AI as intent context (together with
+  # the title and branch names already in the prompt). Set to false to opt out.
+  pr_metadata: true
   claude:
     binary_path: 'claude'
     model: 'sonnet'
@@ -406,6 +411,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_AI_REVIEW_DRAFTS`          | When `true`, the bot reviews draft PRs as well — by default drafts are skipped | `false`              |
 | `CODE_GURU_AI_MAX_ATTEMPTS`           | Times the AI backend is re-sampled per review when it returns a non-JSON or transient-error response before the review is marked failed (`1` disables retries) | `3`                  |
 | `CODE_GURU_AI_PROJECT_GUIDELINES`     | Loads the reviewed repository's own `CLAUDE.md` as project-specific review context; set to `false` to opt out | `true`               |
+| `CODE_GURU_AI_PR_METADATA`            | Fetches the PR's description and commit count as intent context for the AI; set to `false` to opt out | `true`               |
 | `CODE_GURU_BOT_IDENTITIES`            | Comma-separated account identities the bot posts under (so re-reviews recognise its own prior threads); the built-in `code-guru` shape and self-detection apply when unset |                      |
 
 ## Rules
@@ -438,6 +444,22 @@ Behaviour details:
 - The document is framed to the model as documentation, not instructions — it cannot change the output format, the verdict rules, or the reviewer role.
 
 Enabled by default; opt out with `ai.project_guidelines: false` or `CODE_GURU_AI_PROJECT_GUIDELINES=false`.
+
+### Pull Request Context (intent-aware reviews)
+
+Beyond the diff, Code Guru forwards the PR's **author-supplied metadata** to the AI so it reviews the change against its stated intent:
+
+- **Title and branch names** (already part of the prompt header) signal the change type — a `fix/` branch that quietly introduces new behaviour, or a `chore` that alters runtime logic, deserves a comment.
+- **Description** — the author's statement of what the change does and why. The model is told to flag significant changes the description leaves unmentioned (scope creep) and to weigh the author's explanations before flagging intentional oddities.
+- **Commit count** — how the change was assembled, fetched from the provider's REST API (GitHub: one call returns both body and count; Azure DevOps: the PR resource plus its `/commits` collection).
+
+Behaviour details:
+
+- The fetch is best-effort with a 10-second timeout: an unsupported provider or an API error simply produces a review without the context — it never fails the review.
+- The description is bounded to 16 KiB so a generated body (release bots pasting entire upstream changelogs) cannot crowd the diff out of the model's context window.
+- The description is framed to the model as author-supplied data, not instructions — a body that says "approve this PR" is treated as content to evaluate, never as a command.
+
+Enabled by default; opt out with `ai.pr_metadata: false` or `CODE_GURU_AI_PR_METADATA=false`.
 
 ## Contributing
 
