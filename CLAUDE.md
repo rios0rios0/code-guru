@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Does
 
-Code Guru is a Go CLI tool that uses AI (Anthropic Messages API, Claude Code CLI, or OpenAI Chat Completions API) to automatically review pull requests across GitHub and Azure DevOps. It loads review rules from Markdown files, loads the reviewed repository's own `CLAUDE.md` as project-specific context, sends PR diffs to an AI backend, and posts review comments back on the PR. It also supports trivial PR detection (dependency updates, version bumps, docs-only changes) to auto-approve or reject without calling the LLM, and a long-running webhook server mode for automatic reviews.
+Code Guru is a Go CLI tool and webhook server that uses AI (Anthropic Messages API, Claude Code CLI, or OpenAI Chat Completions API) to automatically review pull requests across GitHub and Azure DevOps. It loads review rules from Markdown files, loads the reviewed repository's own `CLAUDE.md` as project-specific context, fetches the PR's author-supplied metadata (description, commit count) as intent context, sends PR diffs to an AI backend, and posts review comments back on the PR. It also supports trivial PR detection (dependency updates, version bumps, docs-only changes) to auto-approve or reject without calling the LLM, optional auto-merge, and a long-running webhook server mode for automatic reviews.
 
 **Module path is `github.com/rios0rios0/codeguru` (no hyphen)** — the repo directory, binary, and config name are `code-guru` (hyphenated). Import paths always use `codeguru`.
 
@@ -23,19 +23,47 @@ go test -tags unit -run TestFunctionName ./internal/support/  # Run a single tes
 
 The Makefile imports targets from `~/Development/github.com/rios0rios0/pipelines` (`SCRIPTS_DIR`). There is no local `.golangci.yaml` — lint config comes from the pipelines repo (79 linters, including `funlen` at 100 lines, `golines` at 120 chars). CI runs `.github/workflows/default.yaml` via the reusable `rios0rios0/pipelines` Go workflow (lint, CodeQL, SonarCloud, Docker delivery to `ghcr.io/rios0rios0/code-guru`). `claude-code-review.yaml` auto-reviews PRs; `claude.yaml` answers `@claude` mentions.
 
+## Feature Catalog
+
+The complete inventory of shipped, user-facing capabilities. When adding a feature, extend this list AND the competitive-gaps section below if it closes a gap.
+
+**CLI commands** — `review <pr-url>` (single PR; bare `code-guru <pr-url>` works too; prints `VERDICT:<value>` for machine parsing), `review-all` (batch across configured providers/orgs; runs without trivial detection), `discover` (list open PRs, no posting), `serve` (webhook server), `health` (probes `/health`; doubles as the Docker `HEALTHCHECK` client), `self-update` (cliforge, GitHub releases), `version`. Persistent flags: `-c/--config`, `--backend`, `--rules-path`, `--dry-run`, `-v/--verbose`; `serve --port`, `health --url/--timeout`, `self-update --force`. Auto update-check on startup (skipped for `dev` builds); `DEBUG=true` enables debug logging.
+
+**Review pipeline** — draft-PR skip (default; `ai.review_drafts` opts in); review-once gate (scans for the bot's completed-review marker; `@code-guru` mention bypasses); no-files skip; trivial-detection fast path; "reviewing" marker with RFC 3339 start timestamp; per-file patch diffs with full-unified-diff fallback (ADO); language classification (langforge) driving rule selection; closed-PR mid-flight re-check (never posts on merged/abandoned PRs); stale-comment filter (drops findings on files no longer in the latest iteration); resolved-anchor filter (re-review path); duplicate-comment dedup (file+line+body-prefix fingerprint); inline vs PR-wide comment posting; severity levels `error`/`warning`/`info`; completion annotation (verdict + inline count + summary + timestamp); failure annotation (classified reason only — raw model output never reaches the PR); native review submission (Approve / Request Changes / Waiting-for-Author votes); three-verdict vocabulary (`approve`/`request_changes`/`comment`) plus trivial `approve`/`reject`.
+
+**Context the AI receives** — the diff (fenced per file with language tag); operator rules (Markdown files, YAML frontmatter `paths` globs, universal + language-matched categories); the reviewed repository's own root `CLAUDE.md` (any provider, 32 KiB bound, skipped when the PR modifies it); **PR intent metadata** — title and source/target branch names (prompt header) plus description and commit count (fetched via the `prmetadata` registry from the GitHub/ADO REST APIs, 16 KiB description bound) with explicit "judge intent / flag scope creep" guidance; prior bot review threads with all replies (mention re-review path only).
+
+**Re-review (`@code-guru` mention)** — conversation walk over the bot's prior inline threads (reply chains via `InReplyToID`, depth-bounded); per-thread LLM classification `resolved`/`outstanding`/`outdated` (required before any new comments); one reply nested inside each prior thread (`ReplyToThread`); auto-close of resolved (`fixed`) / outdated (`closed`) ADO threads; layered bot self-recognition (built-in `code-guru` shapes + configured `bot_identities` + self-detection from its own annotations); self-trigger loop guard (mention handlers skip bot-authored comments).
+
+**Trivial PR detection** — adapters: `update-go`/`update-node`/`update-python` (dependency-update file sets), `bump-go`/`bump-node`/`bump-python` (version bumps validated against `.autobump.yaml` — missing required files ⇒ reject), `docs-only` (all-Markdown). A `CHANGELOG.md`-only diff is claimed exclusively by `bump-*`. On match the LLM is skipped and the verdict posts immediately.
+
+**Auto-merge (trivial-approve only)** — double gate: `trivial.auto_merge` opt-in decides eligibility, `trivial.auto_merge_allowed_authors` decides author trust (case-insensitive; empty = any author); `trivial.merge_strategy` (merge/squash/rebase); `trivial.bypass_policy` for ADO branch-policy bypass (requires platform permission; GitHub ignores it); merge failures degrade to warn.
+
+**Webhook server** — endpoints `/health`, `/webhooks/github` (HMAC-SHA256, constant-time), `/webhooks/azuredevops` (HTTP Basic, username `code-guru`); source-IP CIDR allowlist (CF-Connecting-IP → X-Real-IP → X-Forwarded-For → RemoteAddr); org/project allowlists; bounded async worker pool (202 on accept, 503 on queue-full, panic-recovering workers, graceful drain); dedup per PR (30s per-pod TTL cache, or cross-pod Kubernetes Lease with explicit release, stale-lease takeover, 30s renewal loop, mass-release on shutdown, graceful RBAC degradation); mention deliveries bypass dedup; ADO skinny-payload REST hydration with SSRF host allowlist; GitHub App auth (RS256 JWT → cached installation tokens, PKCS#1/PKCS#8).
+
+**AI backends** — `anthropic` (raw HTTP to `/v1/messages`, 120s timeout, 10 MiB response cap), `claude` (subprocess `claude --print --output-format json`, user prompt on stdin, stdout+stderr captured on failure), `openai` (`go-openai`, temperature 0.2, JSON response format); unknown backend silently falls back to the Claude CLI. All wrapped in the `RetryingAIReviewer` decorator (re-samples on non-JSON/transient errors up to `ai.max_attempts`, reinforcing JSON-only output via `ReviewRequest.Attempt`). Four-stage response parsing (strict → fenced block → string repair → `ErrUnparseableResponse`); unknown verdicts normalise to `comment`.
+
+**Security hardening** — prompt-injection defence (SECURITY framing + `escapeFence` zero-width-space fence neutralisation on comment bodies, guidelines, and PR descriptions); SSRF guards (ADO host allowlist on hydration; constant API hosts on metadata fetch and token exchange); log-injection-safe truncation (`strconv.Quote`); raw model output logged only (SHA-256 fingerprint at error, body at debug); constant-time auth compares; 0600 token file storage.
+
+**Packaging & operations** — multi-stage Dockerfile (Debian slim pinned by digest, non-root 65532, Claude CLI installed via downloaded script, `HEALTHCHECK` via own binary); Kubernetes-ready (Lease RBAC documented, downward-API namespace detection, drain timeout inside default grace period); GitHub Actions + Azure Pipelines usage examples in `ci/`; self-dogfooding workflows; version injection via ldflags.
+
+**Known stubs/orphans** — the `auth` command tree and `FilesystemTokenRepository` exist but are not DI-wired (login is a TODO); `cmd/azfunc` and `cmd/lambda` are panic stubs; `ciPassed` is hardcoded `false` pending a gitforge check-status API; `ReviewComment.Suggestion` is parsed but not rendered as a GitHub suggestion block.
+
 ## Architecture
 
 Clean Architecture with domain/infrastructure separation, using Uber DIG for dependency injection and Cobra for the CLI.
 
 ### Flows
 
-**Review flow (single PR):** CLI input → `ReviewController` (parses PR URL, loads settings, builds provider from gitforge registry) → `ReviewCommand.Execute` → skip gates (draft unless `ai.review_drafts`; review-once unless `@code-guru` mentioned) → `GetPullRequestFiles` → trivial detection → post "reviewing" marker → build diffs (per-file patches, fallback to full unified diff split for ADO) → classify languages (langforge) → load rules → load project guidelines (reviewed repo's `CLAUDE.md`) → AI backend `ReviewDiff` → closed-PR re-check → post inline/PR-wide comments (with stale/duplicate/resolved-anchor filters) → completion annotation → native review submission.
+**Review flow (single PR):** CLI input → `ReviewController` (parses PR URL, loads settings, builds provider from gitforge registry) → `ReviewCommand.Execute` → skip gates (draft unless `ai.review_drafts`; review-once unless `@code-guru` mentioned) → `GetPullRequestFiles` → trivial detection → post "reviewing" marker → build diffs (per-file patches, fallback to full unified diff split for ADO) → classify languages (langforge) → load rules → load project guidelines (reviewed repo's `CLAUDE.md`) → load PR metadata (description + commit count) → AI backend `ReviewDiff` → closed-PR re-check → post inline/PR-wide comments (with stale/duplicate/resolved-anchor filters) → completion annotation → native review submission.
 
 **Trivial PR flow:** After file listing, `TrivialDetectorRegistry.Detect` runs each enabled adapter; on a match the LLM is skipped entirely and the verdict (approve/reject) posts immediately, optionally auto-merging (see gates below).
 
 **Re-review (mention) flow:** `@code-guru` mention webhook → Worker → `ReviewCommand` with `UserMentioned=true` → fetch prior bot inline threads via `ListPullRequestComments` → assemble `ReviewThread[]` (carrying gitforge `ThreadID`) → AI prompt requires per-thread `thread_resolutions` decisions (`resolved`/`outstanding`/`outdated`) BEFORE any new `comments` → `applyThreadResolutions` posts one reply **nested inside each prior thread** via `postResolutionReply` (gitforge `ReplyToThread` when a `ThreadID` exists, fresh inline comment otherwise) + `UpdatePullRequestThreadStatus("fixed")` on resolved / `"closed"` on outdated → `dropResolvedAnchorComments` strips new comments whose anchor was already addressed, so the same finding never lands twice. First-pass reviews leave `ThreadResolutions` empty so the prompt and post-pipeline behave exactly as before.
 
 **Project guidelines flow:** `ReviewCommand.loadProjectGuidelines` (`internal/domain/commands/project_guidelines.go`) fetches the reviewed repository's root `CLAUDE.md` via gitforge's `FileAccessProvider` (works on GitHub and Azure DevOps) and sets `ReviewRequest.ProjectGuidelines`; `support.BuildUserPromptFor` renders it as a fenced, escape-proofed documentation block between the PR header and the conversation/diff. Skipped when the PR itself modifies `CLAUDE.md` (the diff already shows it), when the operator set `ai.project_guidelines: false`, or when the provider lacks file access. Best-effort: a missing file or fetch error logs at debug and the review proceeds; content is trimmed and bounded to 32 KiB with a truncation sentinel; the fetch has a 10s timeout.
+
+**PR metadata flow:** `ReviewCommand.loadPullRequestMetadata` (`internal/domain/commands/pull_request_metadata.go`) fetches the PR's description and commit count through the domain `PullRequestMetadataRepository` contract (implemented by `infrastructure/repositories/prmetadata`: a Mapper-pattern registry keyed on `provider.Name()` dispatching to per-vendor REST fetchers — GitHub reads `body`+`commits` from one `GET /repos/{owner}/{repo}/pulls/{id}`; ADO reads `description` from the PR resource and `count` from `/commits`, degrading to description-only if the second call fails) and sets `ReviewRequest.Metadata`. The prompt builder renders a "Pull request context" section between the PR header and the guidelines: intent guidance (verify the diff against title/branch/description, flag scope creep, weigh author explanations), the commit-count line (omitted when 0 = unknown), and the description in a fenced, escape-proofed block with SECURITY framing. Skipped when `ai.pr_metadata: false`, when no repository is wired (nil-safe), or on any fetch error (logs at debug); description trimmed and bounded to 16 KiB at load time; 10s fetch timeout.
 
 **Webhook (serve) flow:** `POST /webhooks/github` (HMAC-SHA256) or `/webhooks/azuredevops` (HTTP Basic, username hardcoded `code-guru`) → source-IP CIDR allowlist → payload parsing + org/project allowlists → dedup (per-pod TTL cache, or cross-pod K8s Lease when in-cluster) → bounded worker pool → `Dispatcher.HandlePR` (fresh `ReviewCommand` per job). ADO org-wide subscriptions send "skinny" payloads (`{url, pullRequestId}` only) that are REST-hydrated with an SSRF guard (https + `dev.azure.com`/`*.visualstudio.com` only). GitHub App auth exchanges an RS256 JWT for cached installation tokens.
 
@@ -49,11 +77,11 @@ Clean Architecture with domain/infrastructure separation, using Uber DIG for dep
 ### Domain Layer (`internal/domain/`)
 
 - `entities/` — Framework-agnostic domain models:
-  - `settings.go` — `Settings` with `AIConfig` (tri-state `SubmitNativeReview`/`ProjectGuidelines` pointers resolved via `NativeReviewSubmissionEnabled()`/`ProjectGuidelinesEnabled()`, both default ON; `ReviewAttempts()` defaults to 3), `RulesConfig`, `TrivialConfig`, `ServerConfig`, `GitHubAppConfig`, `BotIdentities`. `NewSettings` (YAML + env overrides) and `NewSettingsFromEnv` (env-only).
-  - `review.go` — `ReviewRequest` (with `Conversation`, `Attempt`, `ProjectGuidelines`), `ReviewResult` (with `ThreadResolutions`), `ReviewComment`, `ReviewThread` (with `ThreadID`/`RootCommentID`), `ThreadResolution`, `ReviewMessage`, `FileDiff`, `Rule`.
+  - `settings.go` — `Settings` with `AIConfig` (tri-state `SubmitNativeReview`/`ProjectGuidelines`/`PRMetadata` pointers resolved via `NativeReviewSubmissionEnabled()`/`ProjectGuidelinesEnabled()`/`PullRequestMetadataEnabled()`, all default ON; `ReviewAttempts()` defaults to 3), `RulesConfig`, `TrivialConfig`, `ServerConfig`, `GitHubAppConfig`, `BotIdentities`. `NewSettings` (YAML + env overrides) and `NewSettingsFromEnv` (env-only).
+  - `review.go` — `ReviewRequest` (with `Conversation`, `Attempt`, `ProjectGuidelines`, `Metadata`), `PullRequestMetadata` (description + commit count; zero value = "not available"), `ReviewResult` (with `ThreadResolutions`), `ReviewComment`, `ReviewThread` (with `ThreadID`/`RootCommentID`), `ThreadResolution`, `ReviewMessage`, `FileDiff`, `Rule`.
   - `controller.go` — `Controller`/`FlagBinder` interfaces; `auth.go` — `AuthToken`; `version.go` — `AppVersion`.
-- `repositories/` — Interfaces only: `AIReviewerRepository` (`Name`, `ReviewDiff`), `RulesRepository` (`LoadAll`, `LoadForLanguages`), `TrivialDetector` (`Name`, `Detect(ctx, DetectionContext) DetectionResult`) + `TrivialDetectorRegistry` + `FileContentFetcher`, `TokenRepository`, `SelfUpdaterRepository`.
-- `commands/` — Business logic returning values directly (no listener pattern): `ReviewCommand` (the 1,700-line heart: skip gates, trivial detection, marker/annotation posting, conversation walk, thread resolutions, comment filters, auto-merge), `project_guidelines.go` (CLAUDE.md loader), `ReviewAllCommand` (batch), `DiscoverCommand`, `AuthCommand` (login is a TODO stub, **not DI-registered**), `SelfUpdateCommand`, `VersionCommand`.
+- `repositories/` — Interfaces only: `AIReviewerRepository` (`Name`, `ReviewDiff`), `RulesRepository` (`LoadAll`, `LoadForLanguages`), `TrivialDetector` (`Name`, `Detect(ctx, DetectionContext) DetectionResult`) + `TrivialDetectorRegistry` + `FileContentFetcher`, `PullRequestMetadataRepository` (`GetPullRequestMetadata` — takes the provider so per-delivery credentials work), `TokenRepository`, `SelfUpdaterRepository`.
+- `commands/` — Business logic returning values directly (no listener pattern): `ReviewCommand` (the 1,700-line heart: skip gates, trivial detection, marker/annotation posting, conversation walk, thread resolutions, comment filters, auto-merge; constructor takes `aiReviewer, rulesRepo, detectorRegistry, metadataRepo` — the last two may be nil), `project_guidelines.go` (CLAUDE.md loader), `pull_request_metadata.go` (description/commit-count loader), `ReviewAllCommand` (batch), `DiscoverCommand`, `AuthCommand` (login is a TODO stub, **not DI-registered**), `SelfUpdateCommand`, `VersionCommand`.
 
 ### Infrastructure Layer (`internal/infrastructure/`)
 
@@ -62,12 +90,13 @@ Clean Architecture with domain/infrastructure separation, using Uber DIG for dep
 - `repositories/anthropic/` — direct `net/http` to `/v1/messages` (120s timeout, 10MB response cap, `WithEndpoint` test seam).
 - `repositories/claude/` — shells out to `claude --print --output-format json --system-prompt <...>` with the user prompt on **stdin**; captures both stdout and stderr on failure.
 - `repositories/openai/` — `sashabaranov/go-openai`, temperature 0.2, JSON response format.
+- `repositories/prmetadata/` — PR metadata fetchers: `RegistryPullRequestMetadataRepository` (Mapper pattern keyed on gitforge provider name) dispatching to `GitHubFetcher` (Bearer, one call) and `AzureDevOpsFetcher` (Basic `:PAT`, PR resource + `/commits`, commit-count failure degrades to description-only). Constant API hosts (`api.github.com` / `dev.azure.com`) so crafted repo entities cannot redirect authenticated requests; `WithBaseURL` test seams; 4 MiB response cap.
 - `repositories/rules/` — loads `*.md` from `rules.path`; frontmatter supports only `paths:` globs; filename (sans `.md`) is both rule name and category.
 - `repositories/trivial/` — detectors: `update-go`, `update-node`, `update-python` (dependency updates), `bump-go`, `bump-node`, `bump-python` (version bumps validated against `.autobump.yaml` via `FileContentFetcher` — missing required files ⇒ **reject**), `docs-only`. A `CHANGELOG.md`-only change is classified as a version bump and claimed **exclusively** by the `bump-*` detectors (shared `isChangelogOnly` guard in `registry.go`); `docs-only`/`update-*` decline it, so disabling the `bump-*` adapters reliably keeps version bumps out of trivial auto-merge.
 - `repositories/trivial/autobump/` — `.autobump.yaml` parser; `{project_name}` placeholder resolves to the repo name.
 - `repositories/auth/` — filesystem token storage (`~/.config/code-guru/auth.json`, 0600) — implemented but **not DI-registered**.
 - `repositories/selfupdate/` — cliforge-based binary self-updater.
-- `repositories/container.go` — `AIReviewerFactory` (settings-driven backend selection; **unknown backend silently falls back to the Claude CLI**) wrapping every backend in the `RetryingAIReviewer` decorator (`WithRetry`): re-samples on non-JSON/transient errors up to `ai.max_attempts` times, setting `ReviewRequest.Attempt` so the prompt reinforces JSON-only output on retries; the raw model output never reaches the PR. Also `RulesRepositoryFactory`.
+- `repositories/container.go` — `AIReviewerFactory` (settings-driven backend selection; **unknown backend silently falls back to the Claude CLI**) wrapping every backend in the `RetryingAIReviewer` decorator (`WithRetry`): re-samples on non-JSON/transient errors up to `ai.max_attempts` times, setting `ReviewRequest.Attempt` so the prompt reinforces JSON-only output on retries; the raw model output never reaches the PR. Also `RulesRepositoryFactory` and the `PullRequestMetadataRepository` binding (one shared registry instance).
 
 ### Support Package (`internal/support/`)
 
@@ -87,32 +116,33 @@ YAML config discovered via gitforge `FindConfigFile("code-guru")` in `.`, `.conf
 | `ai.review_drafts` | `CODE_GURU_AI_REVIEW_DRAFTS` | `false` — drafts skipped by default |
 | `ai.max_attempts` | `CODE_GURU_AI_MAX_ATTEMPTS` | `3` via `ReviewAttempts()`; `1` disables retries |
 | `ai.project_guidelines` | `CODE_GURU_AI_PROJECT_GUIDELINES` | tri-state, default **true** (`ProjectGuidelinesEnabled()`) — loads the reviewed repo's `CLAUDE.md` |
+| `ai.pr_metadata` | `CODE_GURU_AI_PR_METADATA` | tri-state, default **true** (`PullRequestMetadataEnabled()`) — loads the PR's description + commit count as intent context |
 | `rules.path` / `rules.categories` | `CODE_GURU_RULES_PATH` | universal categories always load: `architecture`, `ci-cd`, `code-style`, `design-patterns`, `documentation`, `git-flow`, `security`, `testing` |
 | `trivial.enabled` / `.adapters` | `CODE_GURU_TRIVIAL_ADAPTERS` | env override also flips `enabled=true` |
-| `trivial.auto_merge` / `.merge_strategy` / `.bypass_policy` / `.auto_merge_allowed_authors` | `CODE_GURU_TRIVIAL_AUTO_MERGE` / `_MERGE_STRATEGY` / `_BYPASS_POLICIES` / `_AUTO_MERGE_AUTHORS` | all off/empty by default — see auto-merge gates below |
+| `trivial.auto_merge` / `.merge_strategy` / `.bypass_policy` / `.auto_merge_allowed_authors` | `CODE_GURU_TRIVIAL_AUTO_MERGE` / `_MERGE_STRATEGY` / `_BYPASS_POLICIES` / `_AUTO_MERGE_AUTHORS` | all off/empty by default — see auto-merge gates above |
 | `server.port` / `.webhook_secret` / `.queue_size` / `.workers` / `.shutdown_timeout` | `CODE_GURU_PORT` / `_WEBHOOK_SECRET` / `_SERVER_QUEUE_SIZE` / `_SERVER_WORKERS` / `_SERVER_SHUTDOWN_TIMEOUT` | `8080` / required for `serve` / `100` / NumCPU / `30s` |
 | `server.allowed_organizations` / `.allowed_projects` / `.allowed_source_cidrs` | `CODE_GURU_SERVER_ALLOWED_*` | empty = allow all |
 | `github_app.app_id` / `.private_key` | `CODE_GURU_GITHUB_APP_ID` / `_GITHUB_PRIVATE_KEY` | PKCS#1 or PKCS#8 PEM |
 | `bot_identities` | `CODE_GURU_BOT_IDENTITIES` | only needed for service accounts not matching the built-in `code-guru` shapes |
 | `providers[]` | `CODE_GURU_PROVIDER_TOKEN` | env creates a single untyped catch-all entry |
 
-In the YAML path (`NewSettings`), env vars override YAML only for: trivial settings, `bot_identities`, `ai.max_attempts`, and `ai.project_guidelines`.
+In the YAML path (`NewSettings`), env vars override YAML only for: trivial settings, `bot_identities`, `ai.max_attempts`, `ai.project_guidelines`, and `ai.pr_metadata`.
 
 ## Testing
 
 - Build tag `//go:build unit` required on every test file; run with `go test -tags unit ./...`. Entity builders use `//go:build integration || unit || test`.
-- External test packages (e.g., `package support_test`, `package commands_test`).
+- External test packages (e.g., `package support_test`, `package commands_test`). Internal tests (`package prmetadata`, `azuredevops_internal_test.go`) are the exception for pinning unexported construction details.
 - BDD structure: `// given`, `// when`, `// then` — all three markers even when a block is empty.
 - `t.Parallel()` at the top of every test function and in `t.Run()` subtests; table-driven where it fits.
-- `stretchr/testify` `assert`/`require` for assertions. **No mock libraries** — all doubles are hand-rolled.
-- Test doubles: `test/domain/doubles/repositories/` for domain-contract stubs (`StubAIReviewerRepository` records `LastRequest`, `StubRulesRepository`, `StubTrivialDetector`, `StubTokenRepository`); `test/infrastructure/doubles/repositories/` for infrastructure-only types (`StubWebhookSubmitter`, `StubGitHubTokenizer`, `StubWebhookDedup`) — keep the stub on the same side of the import boundary as the type it doubles.
+- `stretchr/testify` `assert`/`require` for assertions. **No mock libraries** — all doubles are hand-rolled; HTTP fetchers are tested against `httptest.NewServer` (a real server under test control, not a mock).
+- Test doubles: `test/domain/doubles/repositories/` for domain-contract stubs (`StubAIReviewerRepository` records `LastRequest`, `StubRulesRepository`, `StubTrivialDetector`, `StubPullRequestMetadataRepository`, `StubTokenRepository`); `test/infrastructure/doubles/repositories/` for infrastructure-only types (`StubWebhookSubmitter`, `StubGitHubTokenizer`, `StubWebhookDedup`) — keep the stub on the same side of the import boundary as the type it doubles.
 - Entity builders in `test/domain/entitybuilders/` (fluent API via `testkit.BaseBuilder`: `NewFileDiffBuilder().WithPath(...).BuildFileDiff()`).
 - `export_test.go` files (tagged `unit`) in `commands` and `webhooks` re-export unexported helpers as package-level variables/method values so external test packages can pin contracts without full stub scaffolding — extend these rather than exporting production symbols for tests.
 - In-test provider stubs embed the gitforge interface (`forgeEntities.ReviewProvider`) and override only the methods under test; unexpected calls panic by design (see `recordingReviewProvider` / `fileAccessRecordingProvider` in `review_command_test.go`).
 
 ## Key Dependencies
 
-- `github.com/rios0rios0/gitforge` — Multi-provider Git abstraction (GitHub, Azure DevOps): providers registry, `ReviewProvider` + `FileAccessProvider` interfaces, config helpers, URL parsing. Consumed as a published pseudo-version; no local `replace`.
+- `github.com/rios0rios0/gitforge` — Multi-provider Git abstraction (GitHub, Azure DevOps): providers registry, `ReviewProvider` + `FileAccessProvider` interfaces, config helpers, URL parsing. Consumed as a published pseudo-version; no local `replace`. Note: `PullRequestDetail` carries no description/commit count — that is why `prmetadata` talks REST directly.
 - `github.com/rios0rios0/cliforge` — CLI utilities and self-update support
 - `github.com/rios0rios0/langforge` — Language classification by file extension
 - `github.com/rios0rios0/testkit` — Test builder base utilities
@@ -122,17 +152,66 @@ In the YAML path (`NewSettings`), env vars override YAML only for: trivial setti
 
 ## Invariants & Gotchas
 
-- **Prompt no-drift invariant:** first-pass prompts must stay byte-for-byte identical to their historical shape. Every optional prompt section (project guidelines, prior conversation, thread-resolution schema, retry JSON reminder) collapses to nothing when its input is empty. All backends assemble prompts exclusively through `support.BuildSystemPromptFor(request)` and `support.BuildUserPromptFor(request)` — never inline prompt text in a backend.
-- **Prompt-injection defence:** untrusted content (comment bodies, repository CLAUDE.md) enters the user prompt only inside fenced blocks passed through `escapeFence` (zero-width-space neutralises ``` runs) with an explicit "SECURITY: … inert data/documentation" framing line.
+- **Prompt no-drift invariant:** first-pass prompts must stay byte-for-byte identical to their historical shape. Every optional prompt section (PR metadata, project guidelines, prior conversation, thread-resolution schema, retry JSON reminder) collapses to nothing when its input is empty. All backends assemble prompts exclusively through `support.BuildSystemPromptFor(request)` and `support.BuildUserPromptFor(request)` — never inline prompt text in a backend.
+- **Prompt-injection defence:** untrusted content (comment bodies, repository CLAUDE.md, PR descriptions) enters the user prompt only inside fenced blocks passed through `escapeFence` (zero-width-space neutralises ``` runs) with an explicit "SECURITY: … inert data/documentation" framing line.
 - **Magic strings** (changing any breaks behaviour across files): `**Code Guru review` (completed/failed marker → review-once gate), `**Code Guru ` (annotation marker → `DetectBotAuthors`), `@code-guru` (`MentionToken`), thread status `"closed"` (`annotationThreadStatus`), Basic-auth username `code-guru`, lease prefix `code-guru-`, `.autobump.yaml`, `{project_name}`.
 - **Path normalisation rule:** ADO paths carry a leading `/`; every comparison (chunk lookup, staleness filter, dedup keys, thread anchors, guidelines skip-check) goes through `normalizeFilePath`/`LookupChunkByPath` stripping exactly one leading slash. New comparisons must follow the same rule.
-- **Best-effort posture:** marker/annotation posts, native review submission, thread status updates, auto-merge, conversation walk, and the guidelines fetch are UX — they log at warn/debug and never fail the review. Provider calls on these paths are wrapped in short timeouts (5s posts, 10s guidelines fetch).
+- **Best-effort posture:** marker/annotation posts, native review submission, thread status updates, auto-merge, conversation walk, the guidelines fetch, and the PR-metadata fetch are UX — they log at warn/debug and never fail the review. Provider calls on these paths are wrapped in short timeouts (5s posts, 10s guidelines/metadata fetch).
 - **Bot self-recognition is layered:** built-in strict `code-guru` prefix shapes (`code-guru[bot]`, `code-guru@tenant`, bare) + configured `bot_identities` + self-detection from the bot's own PR-wide annotations. Deployments posting under other service accounts must set `CODE_GURU_BOT_IDENTITIES` or re-reviews re-post every finding. Mention handlers skip the bot's own comments to prevent infinite loops.
 - **Auto-merge double gate:** triviality decides *eligibility*; `auto_merge_allowed_authors` decides *trust* (case-insensitive author match; empty = any author — dangerous with `bypass_policy`, which also requires the ADO "Bypass policies when completing pull requests" permission or merges 403). GitHub ignores the bypass flag.
 - **Verdict vocabulary:** LLM emits `approve`/`request_changes`/`comment`; trivial detectors emit `approve`/`reject`. `support.MapVerdictToReview` maps both to native submissions (`comment` → WaitingForAuthor); `verdictApprove`/`verdictComment` constants are duplicated in `commands` (documented) — keep them in sync with `verdict_mapper.go`.
 - **Raw model output never reaches the PR:** failure annotations are content-free classifications; raw output is logged only (`TruncateForLog`), and unparsed responses log a SHA-256 fingerprint at error level with the raw body at debug.
 - **K8s cross-pod dedup requires RBAC** on `coordination.k8s.io/leases` (get/list/create/delete/update/patch); without it the bot silently degrades to per-pod dedup and duplicate reviews return with `replicas>1` (ADO fires `created`+`updated` for each PR).
 - **Orphans and stubs:** the `auth` command tree and `FilesystemTokenRepository` are implemented but not wired into DI; `cmd/azfunc` and `cmd/lambda` are panic stubs; `review-all` runs without trivial detection (nil registry); `ciPassed` is hardcoded `false` everywhere pending a gitforge check-status API.
+
+## Competitive Landscape: What Peers Have That Code Guru Does Not
+
+Snapshot (July 2026) of reviewer-facing features shipped by peer products and **not yet implemented here**. The deep two-peer matrix and the prioritised backlog live in `docs/COMPARISON.md`; this list is the broader market view. When you close one of these gaps, update both documents.
+
+Peers surveyed: GitHub Copilot code review, Claude Code Action + Claude Code Review (Anthropic), CodeRabbit, Qodo Merge / PR-Agent, Greptile, Graphite Agent, Sourcery, Amazon Q Developer, Gemini Code Assist.
+
+**Content generation on the PR**
+- PR summary / file-by-file walkthrough generation (Copilot, CodeRabbit, Qodo `/describe`, Sourcery, Gemini, Claude Code Review)
+- PR title, description, and label generation (`/describe`; CodeRabbit auto-labels + suggested reviewers)
+- Sequence / ER / architecture diagrams from the diff (CodeRabbit, Sourcery, Qodo Mermaid)
+- Changelog entry, docstring, and unit-test generation (Qodo `/update_changelog` `/add_docs` `/test`, CodeRabbit "finishing touches") — Code Guru can *enforce* a changelog rule but cannot *write* the entry
+
+**Fixes and agent handoff**
+- Committable ` ```suggestion ` blocks / one-click apply (Copilot, CodeRabbit, Graphite, Greptile) — `ReviewComment.Suggestion` exists but is never rendered (COMPARISON.md P0 #1)
+- Autofix commits, batch "Fix All", stacked fix PRs (CodeRabbit `autofix`, Greptile)
+- Handoff of findings to a coding agent that opens a fix PR (Copilot → coding agent; Greptile → Claude Code/Cursor; Qodo `/implement`)
+
+**Review lifecycle**
+- Automatic incremental re-review on every push with auto-resolution of fixed threads (Copilot rulesets, CodeRabbit default, Claude Code Review push mode) — Code Guru's review-once gate reopens only on `@code-guru` mention
+- False-positive verification pass before posting (Claude Code Review multi-agent verify; Qodo self-reflection)
+- Review effort levels / estimation scores (Copilot low/medium; Qodo 1–5 effort)
+- Pre-merge quality gates with machine-readable output for CI gating (CodeRabbit; Claude Code Review severity JSON in a check run)
+- Trigger scoping beyond org/project allowlists: base-branch filters, title-keyword/author ignores, label triggers, per-repo trigger modes (CodeRabbit, claude-code-action patterns)
+
+**Context and intelligence**
+- Full-codebase context beyond the diff: repo clone, semantic code graph, multi-agent whole-repo analysis (Greptile graph, Claude Code Review, Copilot context gathering) — Code Guru sends diff hunks + CLAUDE.md + PR metadata only (COMPARISON.md P0 #2)
+- Learnings/memory from reviewer feedback: thumbs reactions, dismissals, and reply corrections persisted per repo/team (CodeRabbit learnings, Greptile memory, Copilot Memory, Gemini enterprise memory)
+- Linked ticket/work-item compliance: fetch Jira/Linear/GitHub/ADO items referenced by the PR and verify the diff fulfils them (Qodo ticket compliance, CodeRabbit, Sourcery) — the remaining slice of COMPARISON.md #8 now that description + commit count are shipped
+- Org-level and hierarchical instruction files (`AGENTS.md`, path-scoped instruction files, org rulesets, `REVIEW.md`-style review-only overrides) — Code Guru reads one repo-root `CLAUDE.md` plus operator-side rule files
+- Auto-derived standards from historical PR discussions (Qodo best-practices scan, CodeRabbit `emit path instructions`)
+
+**Analysis breadth**
+- Sandboxed linter/security-tool execution folded into the review (CodeRabbit runs 40+ tools; Amazon Q SAST + secrets + SCA)
+- Dedicated security-review mode with CWE mapping (claude-code-security-review, Amazon Q)
+- CI-failure analysis on the PR (Qodo `/checks`) — blocked here on the unused `GetPullRequestCheckStatus`
+
+**Interaction**
+- Free-form chat / Q&A on the PR and on specific lines (`@coderabbitai`, `/gemini`, `@claude`, `/ask`) — `@code-guru` only triggers a re-review (intentional non-goal per COMPARISON.md, but the market norm is drifting toward dialogue)
+- Live-updating progress comment while reviewing (claude-code-action checklist; Code Guru's "reviewing" marker is static — COMPARISON.md P0 #4)
+
+**Platform and operations**
+- GitLab / Bitbucket / Gitea support (Qodo covers all; CodeRabbit GitLab+Bitbucket; Greptile GitLab) — new gitforge providers would unlock this
+- Cost/token reporting, spend caps, review analytics dashboards (Claude Code Review dashboard, Copilot premium-request budgets) — COMPARISON.md P1 #11
+- IDE / pre-commit review of uncommitted diffs (CodeRabbit CLI+IDE, Copilot IDEs, `/code-review` locally) — intentional non-goal (server-side reviewer)
+- Content-exclusion / auto-skip of generated and lock files (Copilot excludes lockfiles/SVG/logs by default) — COMPARISON.md P0 #3
+- Model fallback chains and per-review model/effort selection (Copilot effort levels) — COMPARISON.md P1 #12
+
+**Where Code Guru is ahead** (do not regress these): native Azure DevOps depth (thread status updates, skinny-payload hydration, reviewer votes), trivial-PR detection with gated auto-merge, mention re-review with structured per-thread `resolved`/`outstanding`/`outdated` adjudication and nested replies, self-hosted webhook server with cross-pod K8s Lease dedup, and AI-backend pluggability (Anthropic API / OpenAI / Claude CLI) with no SaaS dependency.
 
 ## Documentation & Change Control
 

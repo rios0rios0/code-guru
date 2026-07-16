@@ -16,9 +16,15 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added intent-aware review context: the pull request's description and commit count are fetched from the provider's REST API (GitHub: `GET /repos/{owner}/{repo}/pulls/{id}`; Azure DevOps: the PR resource plus its `/commits` collection) through a new provider-keyed `prmetadata` fetcher registry, and rendered — together with the title and branch names already in the prompt header — as a "Pull request context" section that instructs the AI to verify the diff against the stated intent, flag undocumented scope creep, and weigh the author's explanations before flagging intentional changes; the description is bounded to 16 KiB, escape-proofed against prompt injection, and the fetch is best-effort (never fails the review); controlled by the new tri-state `ai.pr_metadata` setting (`CODE_GURU_AI_PR_METADATA`, default on)
+
 ### Changed
 
 - changed the Go module dependencies to their latest versions
+- changed `CLAUDE.md` into a complete feature inventory and competitive landscape document, extracting every shipped capability (CLI, review pipeline, AI backends, rules and context system, trivial detection, webhook server, auto-merge gates, configuration, deployment, security hardening) and cataloguing the features peer products (GitHub Copilot code review, Claude Code Action / Claude Code Review, CodeRabbit, Qodo Merge, Greptile, Graphite, Sourcery, Amazon Q Developer, Gemini Code Assist) ship that Code Guru does not yet implement
+- changed `docs/COMPARISON.md` to mark the "PR description context" backlog item as shipped and to record the remaining linked-issue slice
 
 ### Security
 

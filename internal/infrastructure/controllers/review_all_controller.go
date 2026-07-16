@@ -12,6 +12,7 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
+	domainRepos "github.com/rios0rios0/codeguru/internal/domain/repositories"
 	infraRepos "github.com/rios0rios0/codeguru/internal/infrastructure/repositories"
 )
 
@@ -20,6 +21,7 @@ type ReviewAllController struct {
 	providerRegistry  *registry.ProviderRegistry
 	aiReviewerFactory *infraRepos.AIReviewerFactory
 	rulesRepoFactory  *infraRepos.RulesRepositoryFactory
+	metadataRepo      domainRepos.PullRequestMetadataRepository
 }
 
 // NewReviewAllController creates a new ReviewAllController.
@@ -27,11 +29,13 @@ func NewReviewAllController(
 	providerRegistry *registry.ProviderRegistry,
 	aiReviewerFactory *infraRepos.AIReviewerFactory,
 	rulesRepoFactory *infraRepos.RulesRepositoryFactory,
+	metadataRepo domainRepos.PullRequestMetadataRepository,
 ) *ReviewAllController {
 	return &ReviewAllController{
 		providerRegistry:  providerRegistry,
 		aiReviewerFactory: aiReviewerFactory,
 		rulesRepoFactory:  rulesRepoFactory,
+		metadataRepo:      metadataRepo,
 	}
 }
 
@@ -84,16 +88,17 @@ func (c *ReviewAllController) Execute(cmd *cobra.Command, _ []string) {
 	// create dependencies from settings
 	aiReviewer := c.aiReviewerFactory.Create(settings)
 	rulesRepo := c.rulesRepoFactory.Create(settings)
-	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, nil)
+	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, nil, c.metadataRepo)
 	reviewAllCmd := commands.NewReviewAllCommand(c.providerRegistry, reviewCmd)
 
 	results, err := reviewAllCmd.Execute(ctx, settings, commands.ReviewOptions{
-		DryRun:                dryRun,
-		Verbose:               verbose,
-		SubmitNativeReview:    settings.AI.NativeReviewSubmissionEnabled(),
-		ReviewDrafts:          settings.AI.ReviewDrafts,
-		BotIdentities:         settings.BotIdentities,
-		LoadProjectGuidelines: settings.AI.ProjectGuidelinesEnabled(),
+		DryRun:                  dryRun,
+		Verbose:                 verbose,
+		SubmitNativeReview:      settings.AI.NativeReviewSubmissionEnabled(),
+		ReviewDrafts:            settings.AI.ReviewDrafts,
+		BotIdentities:           settings.BotIdentities,
+		LoadProjectGuidelines:   settings.AI.ProjectGuidelinesEnabled(),
+		LoadPullRequestMetadata: settings.AI.PullRequestMetadataEnabled(),
 	})
 	if err != nil {
 		logger.Warnf("batch review completed with errors: %v", err)
