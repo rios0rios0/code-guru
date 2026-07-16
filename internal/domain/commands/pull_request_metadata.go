@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -75,9 +76,17 @@ func (c *ReviewCommand) loadPullRequestMetadata(
 
 	metadata.Description = support.Truncate(strings.TrimSpace(metadata.Description), maxPRDescriptionBytes)
 	if metadata.CommitCount > 0 || metadata.Description != "" {
+		// CommitCount 0 means "unknown" (e.g. the ADO commits endpoint
+		// failed and the fetcher degraded to description-only), not an
+		// empty PR — log it as such so an operator reading the line is
+		// not misled into thinking the provider reported zero commits.
+		commitPart := "commit count unknown"
+		if metadata.CommitCount > 0 {
+			commitPart = fmt.Sprintf("%d commit(s)", metadata.CommitCount)
+		}
 		logger.Infof(
-			"PR #%d: loaded pull request metadata (%d commit(s), %d byte(s) of description)",
-			prID, metadata.CommitCount, len(metadata.Description),
+			"PR #%d: loaded pull request metadata (%s, %d byte(s) of description)",
+			prID, commitPart, len(metadata.Description),
 		)
 	}
 	return metadata

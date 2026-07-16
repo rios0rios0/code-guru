@@ -458,7 +458,9 @@ func writePullRequestMetadataSection(prompt *strings.Builder, metadata entities.
 	if metadata.CommitCount <= 0 && description == "" {
 		return
 	}
-	prompt.WriteString("Pull request context (metadata supplied by the PR author).\n")
+	prompt.WriteString(
+		"Pull request context (author-supplied title, branch, and description; platform-reported commit count).\n",
+	)
 	prompt.WriteString(
 		"Use it together with the title and branch names above to judge INTENT: check that the diff actually does " +
 			"what the author claims, and point out significant changes the stated intent does not cover (scope creep). ",
