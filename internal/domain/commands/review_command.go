@@ -292,7 +292,7 @@ func (c *ReviewCommand) Execute(
 		// bubbles up to the worker. Skipped when the PR has been
 		// closed mid-flight — same gate as the success path below.
 		if !opts.DryRun && !isPullRequestClosed(ctx, provider, repo, pr.ID) {
-			c.postReviewFailedAnnotation(ctx, provider, repo, pr.ID, err)
+			c.postReviewFailedAnnotation(ctx, provider, repo, pr.ID, err, reviewFailureContextFrom(files, diffs))
 		}
 		return nil, fmt.Errorf("AI review failed: %w", err)
 	}
@@ -607,8 +607,9 @@ func (c *ReviewCommand) postReviewFailedAnnotation(
 	repo forgeEntities.Repository,
 	prID int,
 	reviewErr error,
+	sizeCtx reviewFailureContext,
 ) {
-	body := buildReviewFailedBody(time.Now().UTC(), reviewErr)
+	body := buildReviewFailedBody(time.Now().UTC(), reviewErr, sizeCtx)
 	logger.Infof("PR #%d: posting 'review failed' annotation", prID)
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, reviewingMarkerPostTimeout)
@@ -624,6 +625,32 @@ func (c *ReviewCommand) postReviewFailedAnnotation(
 	}
 }
 
+// reviewFailureContext carries the SCALE of the reviewed change so the
+// "review failed" annotation can quantify HOW MUCH is too much when the
+// failure is a context-window overflow. The zero value means "scale unknown",
+// in which case the annotation omits the figures and reads exactly as it did
+// before — so a failure on a path that never populated it is unaffected.
+type reviewFailureContext struct {
+	// FileCount is the number of changed files in the pull request.
+	FileCount int
+	// DiffBytes is the total size, in bytes, of the assembled per-file diffs
+	// that were sent to the AI backend.
+	DiffBytes int
+}
+
+// reviewFailureContextFrom measures the reviewed change from the file list and
+// the assembled diffs so the too-large annotation can report the PR's scale.
+func reviewFailureContextFrom(
+	files []forgeEntities.PullRequestFile, diffs []entities.FileDiff,
+) reviewFailureContext {
+	total := 0
+	for i := range diffs {
+		total += len(diffs[i].Diff)
+	}
+
+	return reviewFailureContext{FileCount: len(files), DiffBytes: total}
+}
+
 // buildReviewFailedBody renders the PR-wide failure notice, posted only
 // after the AI backend has failed every retry attempt (see the
 // `RetryingAIReviewer` decorator). Pure function — exposed via
@@ -637,7 +664,16 @@ func (c *ReviewCommand) postReviewFailedAnnotation(
 // socket connection closed" message), and echoing that into the PR thread
 // is exactly the leak this rewrite removes. The full error is logged by
 // the worker for operator diagnosis instead.
-func buildReviewFailedBody(now time.Time, reviewErr error) string {
+//
+// A context-window overflow is dispatched to `buildContextWindowFailedBody`:
+// it is a distinct failure with a distinct remedy, and the generic body's
+// "push a new commit to retry" advice is actively wrong for it (a bigger diff
+// only makes it worse).
+func buildReviewFailedBody(now time.Time, reviewErr error, sizeCtx reviewFailureContext) string {
+	if errors.Is(reviewErr, support.ErrContextWindowExceeded) {
+		return buildContextWindowFailedBody(now, sizeCtx)
+	}
+
 	return fmt.Sprintf(
 		"\xe2\x9a\xa0\xef\xb8\x8f **Code Guru review failed.**\n\n"+
 			"%s, so no review could be posted. This is usually transient — push a new commit or "+
@@ -647,6 +683,68 @@ func buildReviewFailedBody(now time.Time, reviewErr error) string {
 		classifyReviewFailure(reviewErr),
 		now.UTC().Format(time.RFC3339),
 	)
+}
+
+// buildContextWindowFailedBody renders the notice for the one failure class
+// the generic body must NOT cover: the pull request is larger than the AI
+// model's context window. It names the real cause and gives the CORRECT next
+// steps (split the PR, drop generated/lock files) instead of the generic
+// "usually transient — push a new commit" advice, which is wrong here. When
+// the change's scale is known (`sizeCtx`) it is stated so the author sees
+// exactly how much is too much; a zero-value context omits the figures. Like
+// the other annotation bodies it forces UTC and never echoes raw model output.
+func buildContextWindowFailedBody(now time.Time, sizeCtx reviewFailureContext) string {
+	lead := "This pull request is larger than the AI reviewer can read in a single pass"
+	if sizeCtx.FileCount > 0 {
+		scale := fmt.Sprintf("**%d %s**", sizeCtx.FileCount, pluralizeFiles(sizeCtx.FileCount))
+		if sizeCtx.DiffBytes > 0 {
+			scale += fmt.Sprintf(" (~%s of diff)", humanizeBytes(sizeCtx.DiffBytes))
+		}
+		lead = fmt.Sprintf(
+			"This pull request changes %s, which is more than the AI reviewer can read in a single pass",
+			scale,
+		)
+	}
+
+	return fmt.Sprintf(
+		"\xe2\x9a\xa0\xef\xb8\x8f **Code Guru couldn't review this pull request — "+
+			"it's too large for the AI model's context window.**\n\n"+
+			"%s, so no review was posted. Retrying — or pushing more commits — will not help, "+
+			"because the diff would only grow.\n\n"+
+			"To get an automated review, make the change smaller:\n"+
+			"- **Split it into several smaller, focused pull requests.** This is the most reliable fix.\n"+
+			"- **Exclude generated, vendored, or lock files** (for example `*.lock`, build output, "+
+			"`dist/`, snapshots) — they inflate the diff without needing review.\n"+
+			"- If the change genuinely cannot be split, review the largest files locally before merging.\n\n"+
+			"_Failed at %s._",
+		lead,
+		now.UTC().Format(time.RFC3339),
+	)
+}
+
+// humanizeBytes formats a byte count as a compact, human-readable size (e.g.
+// "1.8 MB") for the too-large annotation, using base-1024 units.
+func humanizeBytes(n int) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for size := int64(n) / unit; size >= unit; size /= unit {
+		div *= unit
+		exp++
+	}
+
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// pluralizeFiles returns the singular or plural noun matching a file count.
+func pluralizeFiles(n int) string {
+	if n == 1 {
+		return "file"
+	}
+
+	return "files"
 }
 
 // classifyReviewFailure maps a review error to a short, human-readable,

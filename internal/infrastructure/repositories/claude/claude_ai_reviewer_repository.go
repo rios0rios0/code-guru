@@ -91,15 +91,43 @@ func (r *AIReviewerRepository) ReviewDiff(
 		// failure mode that produces megabytes of output (large diff,
 		// runaway log) the `string(...)` conversion would copy the whole
 		// payload to the heap before the cap fired.
-		return nil, fmt.Errorf(
+		detail := fmt.Errorf(
 			"claude CLI failed: %w (stderr: %s; stdout: %s)",
 			err,
 			support.TruncateBytesForLog(stderr.Bytes(), claudeFailureLogLimit),
 			support.TruncateBytesForLog(stdout.Bytes(), claudeFailureLogLimit),
 		)
+		// The Claude CLI wraps the Anthropic "prompt is too long" 400 in its
+		// JSON error envelope (printed first, a few hundred bytes). Detect it
+		// on a bounded view of each stream — never the full buffer, which a
+		// runaway diff can blow up to megabytes — and wrap with the sentinel
+		// so the failure is classified as too-large: no futile retry, and a
+		// "split the PR" annotation instead of "usually transient".
+		if looksLikeContextWindowFailure(stdout.Bytes()) || looksLikeContextWindowFailure(stderr.Bytes()) {
+			return nil, fmt.Errorf("%w (%w)", support.ErrContextWindowExceeded, detail)
+		}
+
+		return nil, detail
 	}
 
 	return ParseClaudeResponse(stdout.Bytes())
+}
+
+// contextWindowDetectLimit bounds how many leading bytes of each captured
+// stream are scanned for a context-window marker. The CLI's JSON error
+// envelope is small and printed first, so 8 KB is ample without stringifying a
+// multi-megabyte runaway buffer.
+const contextWindowDetectLimit = 8192
+
+// looksLikeContextWindowFailure reports whether the leading bytes of a captured
+// CLI stream name a context-window / prompt-too-long failure, bounding the
+// scan so an oversized buffer is never fully materialised as a string.
+func looksLikeContextWindowFailure(b []byte) bool {
+	if len(b) > contextWindowDetectLimit {
+		b = b[:contextWindowDetectLimit]
+	}
+
+	return support.LooksLikeContextWindowError(string(b))
 }
 
 // claudeFailureLogLimit caps each captured stream when claude exits
