@@ -318,6 +318,45 @@ func TestReviewDiffContentSafety(t *testing.T) {
 		assert.ErrorIs(t, err, support.ErrContentSafetyRefusal,
 			"a fallback that also refuses must surface the content-safety refusal, not a different error")
 	})
+
+	t.Run("should surface the fallback error (not the refusal) when the fallback fails for a non-refusal reason", func(t *testing.T) {
+		t.Parallel()
+		// given: the primary model `m` refuses; the fallback `safe` hits a
+		// transient 500 — a recoverable, non-refusal failure. Mislabelling it a
+		// content-safety refusal would post the wrong annotation AND block the
+		// retry decorator from recovering it.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			var payload struct {
+				Model string `json:"model"`
+			}
+			_ = json.NewDecoder(req.Body).Decode(&payload)
+			w.Header().Set("Content-Type", "application/json")
+			if payload.Model == "safe" {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = io.WriteString(w, `{"error":{"type":"api_error","message":"overloaded, please retry"}}`)
+
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"stop_reason":  "refusal",
+				"content":      []any{},
+				"stop_details": map[string]any{"type": "refusal", "category": "cyber"},
+			})
+		}))
+		defer server.Close()
+		repo := anthropic.NewAIReviewerRepository("k", "m",
+			anthropic.WithEndpoint(server.URL), anthropic.WithRefusalFallbackModel("safe"))
+
+		// when
+		_, err := repo.ReviewDiff(context.Background(), newRequest())
+
+		// then
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, support.ErrContentSafetyRefusal,
+			"a non-refusal fallback failure must NOT be mislabelled a content-safety refusal")
+		assert.Contains(t, err.Error(), "overloaded",
+			"the actual fallback error must surface so the retry decorator can classify and retry it")
+	})
 }
 
 // anthropicModelRouterStub replies with a content-safety refusal (stop_reason
