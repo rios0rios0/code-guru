@@ -132,6 +132,28 @@ func TestRetryingAIReviewer(t *testing.T) {
 			"the returned error must still carry the sentinel so the command layer posts the 'split your PR' guidance")
 	})
 
+	t.Run("should NOT retry a content-safety refusal (deterministic — same content declined each attempt)", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the first call returns a content-safety refusal; a retry would
+		// re-send the identical diff and be declined the same way. The later
+		// queued errors would only be consumed by a (wrong) retry.
+		refusalErr := fmt.Errorf("anthropic: %w", &support.ContentSafetyRefusalError{Category: "cyber"})
+		fake := &fakeAIReviewer{errs: []error{refusalErr, support.ErrUnparseableResponse, support.ErrUnparseableResponse}}
+		reviewer := infraRepos.WithRetry(fake, 3)
+
+		// when
+		got, err := reviewer.ReviewDiff(context.Background(), entities.ReviewRequest{})
+
+		// then
+		require.Error(t, err)
+		assert.Nil(t, got)
+		assert.Equal(t, 1, fake.calls,
+			"a content-safety refusal must stop after the first attempt, never burning the retry budget")
+		assert.ErrorIs(t, err, support.ErrContentSafetyRefusal,
+			"the returned error must still carry the sentinel so the command layer posts the 'declined' guidance")
+	})
+
 	t.Run("should stop early when the context is cancelled", func(t *testing.T) {
 		t.Parallel()
 

@@ -177,3 +177,28 @@ func TestOpenAIReviewDiffContextWindow(t *testing.T) {
 			"a context-length error must carry the sentinel so retries are skipped and the PR gets 'too large' guidance")
 	})
 }
+
+func TestOpenAIReviewDiffContentSafety(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should classify a content_filter finish reason as a content-safety refusal", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a chat completion whose only choice finished via content_filter
+		// (OpenAI's content-safety decline)
+		server, _ := captureOpenAIChatRequest(t,
+			`{"choices":[{"finish_reason":"content_filter","message":{"content":""}}]}`)
+		defer server.Close()
+		repo := openai.NewAIReviewerRepository("k", "gpt-4o", openai.WithEndpoint(server.URL))
+
+		// when
+		_, err := repo.ReviewDiff(context.Background(), entities.ReviewRequest{
+			Diffs: []entities.FileDiff{{Path: "a.go", Diff: "+x", Language: "go"}},
+		})
+
+		// then
+		require.Error(t, err)
+		assert.ErrorIs(t, err, support.ErrContentSafetyRefusal,
+			"a content_filter finish reason must carry the sentinel so retries are skipped and the PR gets 'declined' guidance")
+	})
+}

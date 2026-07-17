@@ -109,6 +109,7 @@ func (f *AIReviewerFactory) createBackend(settings *entities.Settings) repositor
 			settings.AI.Anthropic.APIKey,
 			settings.AI.Anthropic.Model,
 			anthropicRepo.WithContext1M(settings.AI.Anthropic.Context1MEnabled()),
+			anthropicRepo.WithRefusalFallbackModel(settings.AI.Anthropic.RefusalFallbackModel),
 		)
 	case "claude":
 		return claudeRepo.NewAIReviewerRepository(

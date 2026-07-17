@@ -531,6 +531,52 @@ func TestBuildReviewFailedBody(t *testing.T) {
 		assert.NotContains(t, body, "changes **",
 			"with no measured scale the body must not emit an empty '**0 files**' clause")
 	})
+
+	// A content-safety refusal is the failure this change targets: the AI's
+	// safety system declined to review the content (common for security code).
+	// The notice must explain THAT, reassure the author it is not a defect, and
+	// point at the real remedies — never suggest retrying.
+
+	t.Run("should render dedicated content-safety guidance naming the category", func(t *testing.T) {
+		// given: the typed refusal wrapped the way a backend wraps it
+		ts := time.Date(2026, 5, 1, 2, 51, 21, 0, time.UTC)
+		err := fmt.Errorf("anthropic: %w", &support.ContentSafetyRefusalError{Category: "cyber"})
+
+		// when
+		body := commands.BuildReviewFailedBody(ts, err, commands.ReviewFailureContext{})
+
+		// then
+		assert.Contains(t, body, "content-safety system declined",
+			"the author must learn the real cause — the AI declined the content")
+		assert.Contains(t, body, "cybersecurity-related content",
+			"the `cyber` category must surface as a human-readable phrase")
+		assert.Contains(t, body, "not** a judgment that the change",
+			"the notice must reassure the author the PR is not being flagged as malicious")
+		assert.Contains(t, body, "Request a review from a human",
+			"the guidance must point at a manual review, the reliable remedy")
+		assert.Contains(t, body, "refusal_fallback_model",
+			"operators must learn the fallback-model lever")
+		assert.Contains(t, body, "**Code Guru review",
+			"the body must carry the review-once marker so a refused PR is not re-reviewed every push")
+		assert.Contains(t, body, "Failed at 2026-05-01T02:51:21Z.")
+	})
+
+	t.Run("should fall back to generic phrasing and never suggest retrying on an uncategorised refusal", func(t *testing.T) {
+		// given: a refusal with no category (e.g. OpenAI content_filter)
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		err := error(&support.ContentSafetyRefusalError{})
+
+		// when
+		body := commands.BuildReviewFailedBody(ts, err, commands.ReviewFailureContext{})
+
+		// then
+		assert.Contains(t, body, "flagged this change",
+			"an unknown/empty category must fall back to the generic phrase, not render an empty clause")
+		assert.NotContains(t, body, "@code-guru",
+			"a refused PR must not be told to mention the bot — that re-runs the same refusal")
+		assert.NotContains(t, body, "push a new commit",
+			"a refused PR must not be told to push more commits — the same content is re-evaluated")
+	})
 }
 
 func TestReviewFailedBodyAlwaysSetsReviewOnceMarker(t *testing.T) {
@@ -547,6 +593,7 @@ func TestReviewFailedBodyAlwaysSetsReviewOnceMarker(t *testing.T) {
 		"generic":        errors.New("boom"),
 		"unparseable":    support.ErrUnparseableResponse,
 		"context window": fmt.Errorf("%w (anthropic: prompt is too long)", support.ErrContextWindowExceeded),
+		"content safety": fmt.Errorf("anthropic: %w", &support.ContentSafetyRefusalError{Category: "cyber"}),
 	}
 	for name, reviewErr := range cases {
 		t.Run("should set the review-once marker for the "+name+" failure", func(t *testing.T) {

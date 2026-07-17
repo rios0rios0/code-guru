@@ -101,6 +101,21 @@ func (r *RetryingAIReviewer) ReviewDiff(
 
 			return nil, err
 		}
+		// A content-safety refusal is deterministic on the same content — the
+		// model declines the identical diff the same way — so a re-sample is
+		// futile. Return immediately so the command layer posts the "declined"
+		// guidance instead of burning the budget. (Any per-model recovery has
+		// already happened inside the backend via a configured fallback model.)
+		if errors.Is(err, support.ErrContentSafetyRefusal) {
+			logger.Warnf(
+				"AI review (%s) failed on attempt %d/%d: the model's content-safety system declined the content; not retrying",
+				r.inner.Name(),
+				attempt,
+				r.attempts,
+			)
+
+			return nil, err
+		}
 		if attempt < r.attempts {
 			logger.Warnf(
 				"AI review (%s) attempt %d/%d failed (%s); retrying",

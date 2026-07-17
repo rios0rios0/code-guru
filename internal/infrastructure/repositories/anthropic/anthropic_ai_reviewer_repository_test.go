@@ -263,6 +263,92 @@ func captureAnthropicBetaHeader(t *testing.T, opts ...anthropic.Option) string {
 	return captured
 }
 
+func TestReviewDiffContentSafety(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should classify stop_reason refusal as a content-safety refusal carrying the category", func(t *testing.T) {
+		t.Parallel()
+		// given: the model refuses with a `cyber` category; no fallback configured
+		server := anthropicModelRouterStub(t, "m", "cyber")
+		defer server.Close()
+		repo := anthropic.NewAIReviewerRepository("k", "m", anthropic.WithEndpoint(server.URL))
+
+		// when
+		_, err := repo.ReviewDiff(context.Background(), newRequest())
+
+		// then
+		require.Error(t, err)
+		require.ErrorIs(t, err, support.ErrContentSafetyRefusal,
+			"a refusal must classify as ErrContentSafetyRefusal so retries are skipped and the PR gets 'declined' guidance")
+		var refusal *support.ContentSafetyRefusalError
+		require.ErrorAs(t, err, &refusal)
+		assert.Equal(t, "cyber", refusal.Category,
+			"the policy category must survive so the annotation can name it")
+	})
+
+	t.Run("should recover via the fallback model when the primary model refuses", func(t *testing.T) {
+		t.Parallel()
+		// given: primary model `m` refuses, fallback `safe` produces a review
+		server := anthropicModelRouterStub(t, "m", "cyber")
+		defer server.Close()
+		repo := anthropic.NewAIReviewerRepository("k", "m",
+			anthropic.WithEndpoint(server.URL), anthropic.WithRefusalFallbackModel("safe"))
+
+		// when
+		result, err := repo.ReviewDiff(context.Background(), newRequest())
+
+		// then
+		require.NoError(t, err, "the fallback model must produce a review after the primary model refuses")
+		assert.Equal(t, "ok", result.Summary)
+	})
+
+	t.Run("should surface the original refusal when the fallback model also refuses", func(t *testing.T) {
+		t.Parallel()
+		// given: a server that refuses EVERY model, plus a fallback configured
+		server := anthropicModelRouterStub(t, "*", "cyber")
+		defer server.Close()
+		repo := anthropic.NewAIReviewerRepository("k", "m",
+			anthropic.WithEndpoint(server.URL), anthropic.WithRefusalFallbackModel("safe"))
+
+		// when
+		_, err := repo.ReviewDiff(context.Background(), newRequest())
+
+		// then
+		require.Error(t, err)
+		assert.ErrorIs(t, err, support.ErrContentSafetyRefusal,
+			"a fallback that also refuses must surface the content-safety refusal, not a different error")
+	})
+}
+
+// anthropicModelRouterStub replies with a content-safety refusal (stop_reason
+// "refusal") for requests naming refuseModel ("*" refuses every model), and a
+// valid review for any other model — so a test can drive both the refusal path
+// and the fallback-model recovery path off one server. When category is
+// non-empty it is attached as stop_details.category.
+func anthropicModelRouterStub(t *testing.T, refuseModel, category string) *httptest.Server {
+	t.Helper()
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var payload struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(req.Body).Decode(&payload)
+		w.Header().Set("Content-Type", "application/json")
+
+		if refuseModel == "*" || payload.Model == refuseModel {
+			resp := map[string]any{"stop_reason": "refusal", "content": []any{}}
+			if category != "" {
+				resp["stop_details"] = map[string]any{"type": "refusal", "category": category}
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+
+			return
+		}
+		_, _ = io.WriteString(w,
+			`{"stop_reason":"end_turn","content":[{"type":"text","text":"{\"summary\":\"ok\",\"comments\":[]}"}]}`)
+	}))
+}
+
 func newAnthropicStub(t *testing.T, status int, payload map[string]any) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
