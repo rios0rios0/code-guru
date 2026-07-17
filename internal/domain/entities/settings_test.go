@@ -674,6 +674,36 @@ func TestNewSettingsFromEnvContext1M(t *testing.T) {
 	})
 }
 
+func TestNewSettingsFromEnvRefusalFallbackModel(t *testing.T) {
+	t.Run("should read the refusal fallback model from the environment", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "anthropic")
+		t.Setenv("CODE_GURU_ANTHROPIC_API_KEY", "test-key-123")
+		t.Setenv("CODE_GURU_ANTHROPIC_REFUSAL_FALLBACK_MODEL", "claude-opus-4-1")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "claude-opus-4-1", settings.AI.Anthropic.RefusalFallbackModel)
+	})
+
+	t.Run("should default the refusal fallback model to empty (disabled)", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "anthropic")
+		t.Setenv("CODE_GURU_ANTHROPIC_API_KEY", "test-key-123")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Empty(t, settings.AI.Anthropic.RefusalFallbackModel,
+			"an unset env var must leave the fallback disabled (a refusal is reported as-is)")
+	})
+}
+
 func TestNewSettingsFromEnvProjectGuidelines(t *testing.T) {
 	t.Run("should leave ProjectGuidelines nil when the env var is not set so the default ON path takes over", func(t *testing.T) {
 		// given: a minimal env-only configuration with no
