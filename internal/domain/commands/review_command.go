@@ -673,6 +673,9 @@ func buildReviewFailedBody(now time.Time, reviewErr error, sizeCtx reviewFailure
 	if errors.Is(reviewErr, support.ErrContextWindowExceeded) {
 		return buildContextWindowFailedBody(now, sizeCtx)
 	}
+	if errors.Is(reviewErr, support.ErrContentSafetyRefusal) {
+		return buildContentSafetyRefusalBody(now, reviewErr)
+	}
 
 	return fmt.Sprintf(
 		"\xe2\x9a\xa0\xef\xb8\x8f **Code Guru review failed.**\n\n"+
@@ -694,21 +697,25 @@ func buildReviewFailedBody(now time.Time, reviewErr error, sizeCtx reviewFailure
 // exactly how much is too much; a zero-value context omits the figures. Like
 // the other annotation bodies it forces UTC and never echoes raw model output.
 func buildContextWindowFailedBody(now time.Time, sizeCtx reviewFailureContext) string {
-	lead := "This pull request is larger than the AI reviewer can read in a single pass"
+	lead := "It is larger than the AI reviewer can read in a single pass"
 	if sizeCtx.FileCount > 0 {
 		scale := fmt.Sprintf("**%d %s**", sizeCtx.FileCount, pluralizeFiles(sizeCtx.FileCount))
 		if sizeCtx.DiffBytes > 0 {
 			scale += fmt.Sprintf(" (~%s of diff)", humanizeBytes(sizeCtx.DiffBytes))
 		}
 		lead = fmt.Sprintf(
-			"This pull request changes %s, which is more than the AI reviewer can read in a single pass",
+			"It changes %s, which is more than the AI reviewer can read in a single pass",
 			scale,
 		)
 	}
 
+	// The headline MUST carry the `**Code Guru review` substring
+	// (`support.botReviewCompleteMarker`) so this notice sets the
+	// review-once gate — otherwise a too-large PR would be re-reviewed and
+	// re-failed on every push, flooding it with duplicate annotations.
 	return fmt.Sprintf(
-		"\xe2\x9a\xa0\xef\xb8\x8f **Code Guru couldn't review this pull request — "+
-			"it's too large for the AI model's context window.**\n\n"+
+		"\xe2\x9a\xa0\xef\xb8\x8f **Code Guru review couldn't run — "+
+			"this pull request is too large for the AI model's context window.**\n\n"+
 			"%s, so no review was posted. Retrying — or pushing more commits — will not help, "+
 			"because the diff would only grow.\n\n"+
 			"To get an automated review, make the change smaller:\n"+
@@ -718,6 +725,52 @@ func buildContextWindowFailedBody(now time.Time, sizeCtx reviewFailureContext) s
 			"- If the change genuinely cannot be split, review the largest files locally before merging.\n\n"+
 			"_Failed at %s._",
 		lead,
+		now.UTC().Format(time.RFC3339),
+	)
+}
+
+// buildContentSafetyRefusalBody renders the notice for a content-safety
+// refusal: the AI model's safety system declined to review the change (common
+// for security-related code). It states the real cause, reassures that this is
+// a limitation of the reviewer's safety filters — NOT a judgment that the PR
+// is malicious or a defect in the code — and gives the correct next steps (a
+// human review; an operator can point Code Guru at a fallback model or a
+// different backend). It deliberately does NOT suggest retrying: the same
+// content is declined the same way. The provider's coarse category label
+// ("cyber", "bio") is surfaced when present; raw model output never is.
+//
+// The headline carries the `**Code Guru review` review-once marker (see
+// buildContextWindowFailedBody) so the notice gates re-review — otherwise a
+// refused PR would be re-reviewed and re-refused on every push.
+func buildContentSafetyRefusalBody(now time.Time, reviewErr error) string {
+	// Map the provider category to a human phrase (Mapper over switch/case);
+	// an unknown or empty category falls back to the generic phrasing.
+	categoryPhrase := map[string]string{
+		"cyber": "flagged this change as cybersecurity-related content",
+		"bio":   "flagged this change as biology-related content",
+	}
+	flagged := "flagged this change"
+	var refusal *support.ContentSafetyRefusalError
+	if errors.As(reviewErr, &refusal) {
+		if phrase, ok := categoryPhrase[refusal.Category]; ok {
+			flagged = phrase
+		}
+	}
+
+	return fmt.Sprintf(
+		"\xe2\x9a\xa0\xef\xb8\x8f **Code Guru review couldn't run — "+
+			"the AI model's content-safety system declined this pull request.**\n\n"+
+			"The AI reviewer's safety filters %s and declined to produce a review, so none was posted. "+
+			"This is a limitation of the AI model's safety system — it is **not** a judgment that the change "+
+			"is malicious or a problem with the code. Retrying or pushing more commits will not change it, "+
+			"because the same content is re-evaluated each time.\n\n"+
+			"To get this pull request reviewed:\n"+
+			"- **Request a review from a human** — the change itself is unaffected.\n"+
+			"- An operator can point Code Guru at a **fallback model that handles this content** "+
+			"(`ai.anthropic.refusal_fallback_model`) or switch the `ai.backend` — safety-classifier coverage "+
+			"varies by model and provider.\n\n"+
+			"_Failed at %s._",
+		flagged,
 		now.UTC().Format(time.RFC3339),
 	)
 }

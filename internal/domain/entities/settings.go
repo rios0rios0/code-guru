@@ -202,6 +202,16 @@ type AnthropicConfig struct {
 	// Call sites should always read the resolved value via Context1MEnabled
 	// rather than dereferencing the pointer directly.
 	Context1M *bool `yaml:"context_1m"`
+
+	// RefusalFallbackModel, when set, is the Anthropic model the backend
+	// re-issues the review against if the primary model declines the content
+	// on content-safety grounds (`stop_reason: "refusal"`, common for
+	// security-related code). Safety-classifier coverage varies by model, so a
+	// fallback to a different model can produce a review where the primary
+	// refused. Empty (the default) disables the fallback: a refusal is reported
+	// as-is with the "content-safety declined" annotation. Honours
+	// CODE_GURU_ANTHROPIC_REFUSAL_FALLBACK_MODEL.
+	RefusalFallbackModel string `yaml:"refusal_fallback_model"`
 }
 
 // Context1MEnabled resolves the tri-state Context1M pointer into a single
@@ -411,9 +421,10 @@ func NewSettingsFromEnv() (*Settings, error) {
 				MaxTurns:   maxTurns,
 			},
 			Anthropic: AnthropicConfig{
-				APIKey:    os.Getenv("CODE_GURU_ANTHROPIC_API_KEY"),
-				Model:     envOrDefault("CODE_GURU_ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
-				Context1M: parseOptionalBoolEnv("CODE_GURU_ANTHROPIC_CONTEXT_1M"),
+				APIKey:               os.Getenv("CODE_GURU_ANTHROPIC_API_KEY"),
+				Model:                envOrDefault("CODE_GURU_ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+				Context1M:            parseOptionalBoolEnv("CODE_GURU_ANTHROPIC_CONTEXT_1M"),
+				RefusalFallbackModel: os.Getenv("CODE_GURU_ANTHROPIC_REFUSAL_FALLBACK_MODEL"),
 			},
 			SubmitNativeReview: parseOptionalBoolEnv("CODE_GURU_AI_SUBMIT_NATIVE_REVIEW"),
 			ReviewDrafts:       parseBoolEnv("CODE_GURU_AI_REVIEW_DRAFTS", false),

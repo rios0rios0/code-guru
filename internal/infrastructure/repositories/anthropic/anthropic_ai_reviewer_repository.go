@@ -40,6 +40,12 @@ const (
 	// apply, which is why it is operator-toggleable.
 	context1MBeta   = "context-1m-2025-08-07"
 	betaHeaderField = "Anthropic-Beta"
+
+	// refusalStopReason is the `stop_reason` value Anthropic returns (on an
+	// HTTP 200) when its content-safety classifiers decline to answer — common
+	// for security-related code. The response carries little or no content, so
+	// this must be checked BEFORE reading the content blocks.
+	refusalStopReason = "refusal"
 )
 
 // Option configures an AIReviewerRepository.
@@ -62,13 +68,26 @@ func WithContext1M(enabled bool) Option {
 	}
 }
 
+// WithRefusalFallbackModel sets the model the backend re-issues the review
+// against when the primary model declines the content on content-safety
+// grounds (`stop_reason: "refusal"`). Safety-classifier coverage varies by
+// model, so a fallback to a different model can produce a review where the
+// primary refused. Empty (the default) disables the fallback — a refusal is
+// reported as-is.
+func WithRefusalFallbackModel(model string) Option {
+	return func(r *AIReviewerRepository) {
+		r.refusalFallbackModel = model
+	}
+}
+
 // AIReviewerRepository implements the AI reviewer using the Anthropic Messages API.
 type AIReviewerRepository struct {
-	httpClient *http.Client
-	apiKey     string
-	model      string
-	endpoint   string
-	context1M  bool
+	httpClient           *http.Client
+	apiKey               string
+	model                string
+	endpoint             string
+	context1M            bool
+	refusalFallbackModel string
 }
 
 // NewAIReviewerRepository creates a new Anthropic AI reviewer repository.
@@ -111,8 +130,14 @@ type contentBlock struct {
 	Text string `json:"text"`
 }
 
+type stopDetails struct {
+	Category string `json:"category"`
+}
+
 type responsePayload struct {
-	Content []contentBlock `json:"content"`
+	Content     []contentBlock `json:"content"`
+	StopReason  string         `json:"stop_reason"`
+	StopDetails *stopDetails   `json:"stop_details"`
 }
 
 type errorPayload struct {
@@ -122,18 +147,77 @@ type errorPayload struct {
 	} `json:"error"`
 }
 
-// ReviewDiff sends the PR diffs with rules context to Anthropic and returns review results.
+// ReviewDiff sends the PR diffs with rules context to Anthropic and returns
+// review results. On a content-safety refusal (`stop_reason: "refusal"` — the
+// model's safety classifiers declining the content, common for security-
+// related code) it retries ONCE with the configured fallback model, since
+// safety-classifier coverage varies by model; a fallback that also refuses (or
+// is not configured) surfaces the original refusal.
 func (r *AIReviewerRepository) ReviewDiff(
 	ctx context.Context,
 	request entities.ReviewRequest,
 ) (*entities.ReviewResult, error) {
+	result, err := r.review(ctx, request, r.model)
+
+	var refusal *support.ContentSafetyRefusalError
+	if errors.As(err, &refusal) && r.refusalFallbackModel != "" && r.refusalFallbackModel != r.model {
+		logger.Warnf(
+			"anthropic model %s declined the review (content-safety refusal, category=%q); retrying with fallback model %s",
+			r.model,
+			refusal.Category,
+			r.refusalFallbackModel,
+		)
+		fbResult, fbErr := r.review(ctx, request, r.refusalFallbackModel)
+		if fbErr == nil {
+			logger.Infof(
+				"anthropic fallback model %s produced a review after the primary model's content-safety refusal",
+				r.refusalFallbackModel,
+			)
+
+			return fbResult, nil
+		}
+		// Only surface the ORIGINAL refusal when the fallback ALSO refused — a
+		// genuine content-safety decline (the annotation is right, a retry is
+		// futile). If the fallback failed for a DIFFERENT reason (transient
+		// 5xx, network, a context-window overflow on the fallback model),
+		// surface THAT error so the retry decorator and command layer classify
+		// it correctly instead of mislabelling it a content-safety refusal.
+		if errors.Is(fbErr, support.ErrContentSafetyRefusal) {
+			logger.Warnf(
+				"anthropic refusal fallback model %s also refused; surfacing the original refusal",
+				r.refusalFallbackModel,
+			)
+
+			return result, err
+		}
+		logger.Warnf(
+			"anthropic refusal fallback model %s failed for a non-refusal reason (%s); surfacing the fallback error",
+			r.refusalFallbackModel, support.TruncateForLog(fbErr.Error(), errorBodyPreview),
+		)
+
+		return fbResult, fbErr
+	}
+
+	return result, err
+}
+
+// review performs a single Anthropic Messages request with the given model and
+// parses the response. A non-2xx body is classified (context-window overflow
+// wrapped as ErrContextWindowExceeded); a 200 with `stop_reason: "refusal"` is
+// returned as a *support.ContentSafetyRefusalError BEFORE the content is read, so
+// the model's refusal prose is never mistaken for a review.
+func (r *AIReviewerRepository) review(
+	ctx context.Context,
+	request entities.ReviewRequest,
+	model string,
+) (*entities.ReviewResult, error) {
 	systemPrompt := support.BuildSystemPromptFor(request)
 	userPrompt := support.BuildUserPromptFor(request)
 
-	logger.Debugf("sending review request to Anthropic model %s", r.model)
+	logger.Debugf("sending review request to Anthropic model %s", model)
 
 	body, err := json.Marshal(requestPayload{
-		Model:     r.model,
+		Model:     model,
 		MaxTokens: maxTokens,
 		System:    systemPrompt,
 		Messages: []messagePayload{
@@ -167,32 +251,26 @@ func (r *AIReviewerRepository) ReviewDiff(
 	}
 
 	if httpResp.StatusCode < http.StatusOK || httpResp.StatusCode >= http.StatusMultipleChoices {
-		var apiErr errorPayload
-		var reviewErr error
-		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error.Message != "" {
-			reviewErr = fmt.Errorf("anthropic API error (%s): %s", apiErr.Error.Type, apiErr.Error.Message)
-		} else {
-			reviewErr = fmt.Errorf(
-				"anthropic API returned status %d: %s",
-				httpResp.StatusCode,
-				truncate(string(respBody), errorBodyPreview),
-			)
-		}
-		// A "prompt is too long" 400 is a distinct, deterministic failure
-		// class: the PR is bigger than the context window, so retrying is
-		// futile and the PR annotation must guide the author to shrink it
-		// rather than push a new commit. Wrap with the sentinel so the retry
-		// decorator and command layer classify it with a single errors.Is.
-		if support.LooksLikeContextWindowError(reviewErr.Error()) {
-			return nil, fmt.Errorf("%w (%w)", support.ErrContextWindowExceeded, reviewErr)
-		}
-
-		return nil, reviewErr
+		return nil, classifyErrorResponse(httpResp.StatusCode, respBody)
 	}
 
 	var message responsePayload
 	if unmarshalErr := json.Unmarshal(respBody, &message); unmarshalErr != nil {
 		return nil, fmt.Errorf("anthropic response unmarshaling failed: %w", unmarshalErr)
+	}
+
+	// Check stop_reason BEFORE the content: a content-safety refusal returns
+	// HTTP 200 with `stop_reason: "refusal"` and little or no content, so
+	// reading the content first would either fail as "no text content" or treat
+	// the model's refusal prose as a review. `stop_details.category` names the
+	// policy that fired ("cyber", "bio", ...) — a coarse label safe to surface.
+	if message.StopReason == refusalStopReason {
+		category := ""
+		if message.StopDetails != nil {
+			category = message.StopDetails.Category
+		}
+
+		return nil, &support.ContentSafetyRefusalError{Category: category}
 	}
 
 	text := concatTextBlocks(message.Content)
@@ -201,6 +279,29 @@ func (r *AIReviewerRepository) ReviewDiff(
 	}
 
 	return support.ParseReviewResponse(text)
+}
+
+// classifyErrorResponse turns a non-2xx Anthropic response into an error,
+// preferring the API's structured error message and wrapping a "prompt too
+// long" body with support.ErrContextWindowExceeded so the too-large failure
+// class is recognised by the retry decorator and command layer.
+func classifyErrorResponse(status int, respBody []byte) error {
+	var apiErr errorPayload
+	var reviewErr error
+	if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error.Message != "" {
+		reviewErr = fmt.Errorf("anthropic API error (%s): %s", apiErr.Error.Type, apiErr.Error.Message)
+	} else {
+		reviewErr = fmt.Errorf(
+			"anthropic API returned status %d: %s",
+			status,
+			truncate(string(respBody), errorBodyPreview),
+		)
+	}
+	if support.LooksLikeContextWindowError(reviewErr.Error()) {
+		return fmt.Errorf("%w (%w)", support.ErrContextWindowExceeded, reviewErr)
+	}
+
+	return reviewErr
 }
 
 func concatTextBlocks(blocks []contentBlock) string {
