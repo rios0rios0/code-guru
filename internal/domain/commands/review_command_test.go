@@ -492,6 +492,8 @@ func TestBuildReviewFailedBody(t *testing.T) {
 			"the diff size must be humanised so the scale is legible at a glance")
 		assert.Contains(t, body, "Split it into several smaller",
 			"the fix guidance must point at splitting the PR, the reliable remedy")
+		assert.Contains(t, body, "**Code Guru review",
+			"the body must carry the review-once marker so a too-large PR is not re-reviewed (and re-failed) on every push")
 		assert.Contains(t, body, "Failed at 2026-05-01T02:51:21Z.")
 	})
 
@@ -529,6 +531,37 @@ func TestBuildReviewFailedBody(t *testing.T) {
 		assert.NotContains(t, body, "changes **",
 			"with no measured scale the body must not emit an empty '**0 files**' clause")
 	})
+}
+
+func TestReviewFailedBodyAlwaysSetsReviewOnceMarker(t *testing.T) {
+	t.Parallel()
+
+	// Every "review failed" body MUST contain the review-once marker
+	// (`support.HasCompletedReviewMarker` scans for `**Code Guru review`) so a
+	// failed review — of ANY class — gates the next push and does not flood
+	// the PR with duplicate annotations. A body that reworded the headline out
+	// of this substring (as the first context-window draft did) is exactly the
+	// regression this test exists to catch.
+	ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	cases := map[string]error{
+		"generic":        errors.New("boom"),
+		"unparseable":    support.ErrUnparseableResponse,
+		"context window": fmt.Errorf("%w (anthropic: prompt is too long)", support.ErrContextWindowExceeded),
+	}
+	for name, reviewErr := range cases {
+		t.Run("should set the review-once marker for the "+name+" failure", func(t *testing.T) {
+			t.Parallel()
+
+			// given / when: exercise the real gate function on the rendered body
+			body := commands.BuildReviewFailedBody(
+				ts, reviewErr, commands.ReviewFailureContext{FileCount: 5, DiffBytes: 1024},
+			)
+
+			// then
+			require.True(t, support.HasCompletedReviewMarker([]string{body}),
+				"the failure body must carry the review-once marker so the PR is not re-reviewed on every push")
+		})
+	}
 }
 
 func TestReviewFailureContextFrom(t *testing.T) {
