@@ -150,6 +150,29 @@ func TestClaudeReviewer_ReviewDiff_FailureCapturesBothStreams(t *testing.T) {
 		assert.Contains(t, errMsg, "...[truncated]",
 			"the sentinel from support.TruncateBytesForLog must be appended to flag the cut")
 	})
+
+	t.Run("should classify a 'prompt is too long' CLI envelope as a context-window failure", func(t *testing.T) {
+		// given: the Claude CLI wraps the Anthropic too-large 400 in its JSON
+		// error envelope on stdout (per `--output-format json`). This is the
+		// too-large failure class — it must carry the sentinel so the retry
+		// decorator skips the (futile) re-sample and the PR gets "split your
+		// PR" guidance instead of "usually transient".
+		bin := writeFakeClaudeBinary(t)
+		t.Setenv("FAKE_STDOUT",
+			`{"type":"error","error":{"type":"invalid_request_error",`+
+				`"message":"prompt is too long: 258000 tokens > 200000 maximum"}}`)
+		t.Setenv("FAKE_STDERR", "")
+		t.Setenv("FAKE_EXIT", "1")
+		repo := claude.NewAIReviewerRepository(bin, "sonnet", 1)
+
+		// when
+		_, err := repo.ReviewDiff(context.Background(), minimalReviewRequest())
+
+		// then
+		require.Error(t, err)
+		assert.ErrorIs(t, err, support.ErrContextWindowExceeded,
+			"the CLI's prompt-too-long envelope must carry the sentinel so retries are skipped")
+	})
 }
 
 func TestParseClaudeResponse(t *testing.T) {

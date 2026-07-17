@@ -380,7 +380,7 @@ func TestBuildReviewFailedBody(t *testing.T) {
 		err := errors.New("boom")
 
 		// when
-		body := commands.BuildReviewFailedBody(ts, err)
+		body := commands.BuildReviewFailedBody(ts, err, commands.ReviewFailureContext{})
 
 		// then
 		assert.Contains(t, body, "Code Guru review failed.",
@@ -398,7 +398,7 @@ func TestBuildReviewFailedBody(t *testing.T) {
 		err := errors.New("claude CLI failed: API Error: socket connection closed RAW_ENVELOPE_TOKEN")
 
 		// when
-		body := commands.BuildReviewFailedBody(ts, err)
+		body := commands.BuildReviewFailedBody(ts, err, commands.ReviewFailureContext{})
 
 		// then
 		assert.NotContains(t, body, "RAW_ENVELOPE_TOKEN",
@@ -414,7 +414,7 @@ func TestBuildReviewFailedBody(t *testing.T) {
 		err := fmt.Errorf("AI review failed after 3 attempt(s): %w", support.ErrUnparseableResponse)
 
 		// when
-		body := commands.BuildReviewFailedBody(ts, err)
+		body := commands.BuildReviewFailedBody(ts, err, commands.ReviewFailureContext{})
 
 		// then
 		assert.Contains(t, body, "expected JSON format",
@@ -431,7 +431,7 @@ func TestBuildReviewFailedBody(t *testing.T) {
 		ts := time.Date(2026, 4, 30, 23, 51, 21, 0, spLoc) // == 2026-05-01T02:51:21Z
 
 		// when
-		body := commands.BuildReviewFailedBody(ts, errors.New("transient"))
+		body := commands.BuildReviewFailedBody(ts, errors.New("transient"), commands.ReviewFailureContext{})
 
 		// then
 		assert.Contains(t, body, "Failed at 2026-05-01T02:51:21Z.",
@@ -445,7 +445,7 @@ func TestBuildReviewFailedBody(t *testing.T) {
 		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 
 		// when
-		body := commands.BuildReviewFailedBody(ts, nil)
+		body := commands.BuildReviewFailedBody(ts, nil, commands.ReviewFailureContext{})
 
 		// then
 		assert.Contains(t, body, "could not be completed")
@@ -460,13 +460,97 @@ func TestBuildReviewFailedBody(t *testing.T) {
 		oversized := errors.New(strings.Repeat("X", 10*1024))
 
 		// when
-		body := commands.BuildReviewFailedBody(ts, oversized)
+		body := commands.BuildReviewFailedBody(ts, oversized, commands.ReviewFailureContext{})
 
 		// then
 		assert.Less(t, len(body), 1024,
 			"the body must not grow with the error size — the raw error is never echoed, so a runaway backend cannot flood the PR")
 		assert.NotContains(t, body, strings.Repeat("X", 100),
 			"none of the raw error content may appear in the body")
+	})
+
+	// A context-window overflow is the failure this whole change targets: the
+	// PR is too large, so the annotation must explain THAT (not "usually
+	// transient") and tell the author to shrink the change — never to push
+	// another commit, which only grows the diff.
+
+	t.Run("should render dedicated 'too large' guidance for a context-window failure", func(t *testing.T) {
+		// given: the sentinel wrapped the way a backend + retry decorator wrap it
+		ts := time.Date(2026, 5, 1, 2, 51, 21, 0, time.UTC)
+		err := fmt.Errorf("%w (anthropic: prompt is too long)", support.ErrContextWindowExceeded)
+		sizeCtx := commands.ReviewFailureContext{FileCount: 180, DiffBytes: 1887436}
+
+		// when
+		body := commands.BuildReviewFailedBody(ts, err, sizeCtx)
+
+		// then
+		assert.Contains(t, body, "too large for the AI model's context window",
+			"the author must learn the real cause, not a generic 'backend errored'")
+		assert.Contains(t, body, "180 files",
+			"the annotation must quantify the scale so the author sees how much is too much")
+		assert.Contains(t, body, "1.8 MB",
+			"the diff size must be humanised so the scale is legible at a glance")
+		assert.Contains(t, body, "Split it into several smaller",
+			"the fix guidance must point at splitting the PR, the reliable remedy")
+		assert.Contains(t, body, "Failed at 2026-05-01T02:51:21Z.")
+	})
+
+	t.Run("should NOT tell the author to retry or mention the bot on a too-large failure", func(t *testing.T) {
+		// given: retrying a too-large PR re-runs the identical failure, and
+		// "push a new commit" makes the diff bigger — both are wrong here.
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		err := fmt.Errorf("%w (openai: maximum context length is 128000 tokens)", support.ErrContextWindowExceeded)
+
+		// when
+		body := commands.BuildReviewFailedBody(ts, err, commands.ReviewFailureContext{})
+
+		// then
+		assert.NotContains(t, body, "@code-guru",
+			"a too-large PR must not be told to mention the bot — that re-runs the same failure")
+		assert.NotContains(t, body, "push a new commit",
+			"a too-large PR must not be told to push more commits — that only grows the diff")
+		assert.NotContains(t, body, "prompt is too long",
+			"the raw backend message must never reach the PR body")
+		assert.Contains(t, body, "too large for the AI model's context window")
+	})
+
+	t.Run("should omit the scale figures when the PR size is unknown", func(t *testing.T) {
+		// given: a zero-value context (scale not measured) still renders a
+		// coherent, actionable body — just without the concrete numbers.
+		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		err := fmt.Errorf("%w (claude: prompt is too long)", support.ErrContextWindowExceeded)
+
+		// when
+		body := commands.BuildReviewFailedBody(ts, err, commands.ReviewFailureContext{})
+
+		// then
+		assert.Contains(t, body, "larger than the AI reviewer can read in a single pass")
+		assert.Contains(t, body, "Split it into several smaller")
+		assert.NotContains(t, body, "changes **",
+			"with no measured scale the body must not emit an empty '**0 files**' clause")
+	})
+}
+
+func TestReviewFailureContextFrom(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should count files and sum the assembled diff bytes", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		files := []forgeEntities.PullRequestFile{{Path: "a.go"}, {Path: "b.ts"}, {Path: "c.md"}}
+		diffs := []entities.FileDiff{
+			{Path: "a.go", Diff: "12345"},   // 5 bytes
+			{Path: "b.ts", Diff: "1234567"}, // 7 bytes
+			{Path: "c.md", Diff: ""},        // 0 bytes
+		}
+
+		// when
+		got := commands.ReviewFailureContextFrom(files, diffs)
+
+		// then
+		assert.Equal(t, 3, got.FileCount, "file count comes from the PR file list")
+		assert.Equal(t, 12, got.DiffBytes, "diff bytes is the sum of every assembled per-file diff")
 	})
 }
 
@@ -999,7 +1083,9 @@ func TestMarkerHelpersForwardThreadStatusOption(t *testing.T) {
 		{
 			name: "should forward WithThreadStatus(closed) from postReviewFailedAnnotation",
 			invoke: func(rc *commands.ReviewCommand, p *recordingReviewProvider) {
-				commands.PostReviewFailedAnnotation(rc, context.Background(), p, repo, prID, errors.New("claude crashed"))
+				commands.PostReviewFailedAnnotation(
+					rc, context.Background(), p, repo, prID, errors.New("claude crashed"), commands.ReviewFailureContext{},
+				)
 			},
 		},
 	}

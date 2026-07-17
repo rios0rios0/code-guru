@@ -602,6 +602,78 @@ func TestProjectGuidelinesEnabled(t *testing.T) {
 	})
 }
 
+func TestContext1MEnabled(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should default to true when Context1M is nil", func(t *testing.T) {
+		t.Parallel()
+
+		// given: nil mirrors the YAML / env "unset" state — the larger
+		// context window is ON by default so large PRs are reviewable
+		// without operator action.
+		cfg := entities.AnthropicConfig{Context1M: nil}
+
+		// when / then
+		assert.True(t, cfg.Context1MEnabled(), "unset Context1M must resolve to true (default-ON contract)")
+	})
+
+	t.Run("should return true when Context1M points to true", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		v := true
+		cfg := entities.AnthropicConfig{Context1M: &v}
+
+		// when / then
+		assert.True(t, cfg.Context1MEnabled())
+	})
+
+	t.Run("should return false only when the operator explicitly opts out via false", func(t *testing.T) {
+		t.Parallel()
+
+		// given: explicit `context_1m: false` in YAML or
+		// CODE_GURU_ANTHROPIC_CONTEXT_1M=false is the documented opt-out for
+		// accounts / models that cannot use the 1M beta.
+		v := false
+		cfg := entities.AnthropicConfig{Context1M: &v}
+
+		// when / then
+		assert.False(t, cfg.Context1MEnabled())
+	})
+}
+
+func TestNewSettingsFromEnvContext1M(t *testing.T) {
+	t.Run("should leave Context1M nil when the env var is unset so the default-ON path takes over", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "anthropic")
+		t.Setenv("CODE_GURU_ANTHROPIC_API_KEY", "test-key-123")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Nil(t, settings.AI.Anthropic.Context1M,
+			"unset CODE_GURU_ANTHROPIC_CONTEXT_1M must leave the pointer nil so the default-ON resolver fires")
+		assert.True(t, settings.AI.Anthropic.Context1MEnabled())
+	})
+
+	t.Run("should resolve to false when the operator explicitly sets the env var to false", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "anthropic")
+		t.Setenv("CODE_GURU_ANTHROPIC_API_KEY", "test-key-123")
+		t.Setenv("CODE_GURU_ANTHROPIC_CONTEXT_1M", "false")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		require.NotNil(t, settings.AI.Anthropic.Context1M)
+		assert.False(t, settings.AI.Anthropic.Context1MEnabled())
+	})
+}
+
 func TestNewSettingsFromEnvProjectGuidelines(t *testing.T) {
 	t.Run("should leave ProjectGuidelines nil when the env var is not set so the default ON path takes over", func(t *testing.T) {
 		// given: a minimal env-only configuration with no
