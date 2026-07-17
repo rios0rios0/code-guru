@@ -694,21 +694,25 @@ func buildReviewFailedBody(now time.Time, reviewErr error, sizeCtx reviewFailure
 // exactly how much is too much; a zero-value context omits the figures. Like
 // the other annotation bodies it forces UTC and never echoes raw model output.
 func buildContextWindowFailedBody(now time.Time, sizeCtx reviewFailureContext) string {
-	lead := "This pull request is larger than the AI reviewer can read in a single pass"
+	lead := "It is larger than the AI reviewer can read in a single pass"
 	if sizeCtx.FileCount > 0 {
 		scale := fmt.Sprintf("**%d %s**", sizeCtx.FileCount, pluralizeFiles(sizeCtx.FileCount))
 		if sizeCtx.DiffBytes > 0 {
 			scale += fmt.Sprintf(" (~%s of diff)", humanizeBytes(sizeCtx.DiffBytes))
 		}
 		lead = fmt.Sprintf(
-			"This pull request changes %s, which is more than the AI reviewer can read in a single pass",
+			"It changes %s, which is more than the AI reviewer can read in a single pass",
 			scale,
 		)
 	}
 
+	// The headline MUST carry the `**Code Guru review` substring
+	// (`support.botReviewCompleteMarker`) so this notice sets the
+	// review-once gate — otherwise a too-large PR would be re-reviewed and
+	// re-failed on every push, flooding it with duplicate annotations.
 	return fmt.Sprintf(
-		"\xe2\x9a\xa0\xef\xb8\x8f **Code Guru couldn't review this pull request — "+
-			"it's too large for the AI model's context window.**\n\n"+
+		"\xe2\x9a\xa0\xef\xb8\x8f **Code Guru review couldn't run — "+
+			"this pull request is too large for the AI model's context window.**\n\n"+
 			"%s, so no review was posted. Retrying — or pushing more commits — will not help, "+
 			"because the diff would only grow.\n\n"+
 			"To get an automated review, make the change smaller:\n"+
