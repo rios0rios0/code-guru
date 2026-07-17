@@ -186,6 +186,36 @@ type ClaudeConfig struct {
 type AnthropicConfig struct {
 	APIKey string `yaml:"api_key"`
 	Model  string `yaml:"model"`
+
+	// Context1M, when set, controls whether the Anthropic backend requests
+	// the 1M-token context window (the `context-1m-2025-08-07` beta) instead
+	// of the default 200K. Enabling it lets pull requests up to ~5x larger be
+	// reviewed in a single pass before they overflow the window and fail with
+	// a "too large" annotation. For prompts under 200K tokens the beta is a
+	// no-op, so it is safe on small PRs; very large prompts (200K–1M tokens)
+	// may incur Anthropic long-context pricing, which is why it is toggleable.
+	//
+	// Tri-state pointer so YAML / env "unset" can mean "use the default":
+	// nil resolves to true via Context1MEnabled (default ON). Operators whose
+	// account or model does not support the beta can opt out with
+	// `context_1m: false` in YAML or CODE_GURU_ANTHROPIC_CONTEXT_1M=false.
+	// Call sites should always read the resolved value via Context1MEnabled
+	// rather than dereferencing the pointer directly.
+	Context1M *bool `yaml:"context_1m"`
+}
+
+// Context1MEnabled resolves the tri-state Context1M pointer into a single
+// boolean. nil (the YAML / env "unset" state) returns true so deployments that
+// never wire the flag pick up the larger context window automatically; an
+// explicit `context_1m: false` in YAML or `CODE_GURU_ANTHROPIC_CONTEXT_1M=false`
+// returns false. Callers should always go through this helper rather than
+// dereferencing the pointer.
+func (c AnthropicConfig) Context1MEnabled() bool {
+	if c.Context1M == nil {
+		return true
+	}
+
+	return *c.Context1M
 }
 
 // RulesConfig configures where review rules are loaded from.
@@ -307,26 +337,35 @@ func NewSettings(path string) (*Settings, error) {
 			settings.AI.MaxAttempts = v
 		}
 	}
-	// Kill switch for the default-ON project-guidelines fetch. Deployments
-	// commonly ship a YAML baseline and flip per-environment behaviour via
-	// env (the same argument as CODE_GURU_AI_MAX_ATTEMPTS above); without
-	// this override an operator's CODE_GURU_AI_PROJECT_GUIDELINES=false on
-	// a YAML-configured pod would be silently ignored. nil (unset or
-	// unparseable) leaves the YAML value untouched.
-	if v := parseOptionalBoolEnv("CODE_GURU_AI_PROJECT_GUIDELINES"); v != nil {
-		settings.AI.ProjectGuidelines = v
-	}
-	// Same kill-switch rationale as CODE_GURU_AI_PROJECT_GUIDELINES above,
-	// for the default-ON PR-metadata (description / commit count) fetch.
-	if v := parseOptionalBoolEnv("CODE_GURU_AI_PR_METADATA"); v != nil {
-		settings.AI.PRMetadata = v
-	}
+	// Kill switches for the default-ON AI features. Deployments commonly ship a
+	// YAML baseline and flip per-environment behaviour via env (the same
+	// argument as CODE_GURU_AI_MAX_ATTEMPTS above); without these overrides an
+	// operator's opt-out on a YAML-configured pod would be silently ignored.
+	applyTristateAIEnvOverrides(&settings.AI)
 
 	if validateErr := validateSettings(&settings); validateErr != nil {
 		return nil, validateErr
 	}
 
 	return &settings, nil
+}
+
+// applyTristateAIEnvOverrides applies the env kill switches for the default-ON
+// tri-state AI features onto an AIConfig already populated from YAML. Each
+// override fires only when the env var parses to a bool; nil (unset or
+// unparseable) leaves the YAML value untouched. Extracted from NewSettings so
+// that function stays within the cognitive-complexity budget as the tri-state
+// list grows.
+func applyTristateAIEnvOverrides(ai *AIConfig) {
+	if v := parseOptionalBoolEnv("CODE_GURU_AI_PROJECT_GUIDELINES"); v != nil {
+		ai.ProjectGuidelines = v
+	}
+	if v := parseOptionalBoolEnv("CODE_GURU_AI_PR_METADATA"); v != nil {
+		ai.PRMetadata = v
+	}
+	if v := parseOptionalBoolEnv("CODE_GURU_ANTHROPIC_CONTEXT_1M"); v != nil {
+		ai.Anthropic.Context1M = v
+	}
 }
 
 // parseTrivialAdaptersEnv parses `CODE_GURU_TRIVIAL_ADAPTERS` into a
@@ -372,8 +411,9 @@ func NewSettingsFromEnv() (*Settings, error) {
 				MaxTurns:   maxTurns,
 			},
 			Anthropic: AnthropicConfig{
-				APIKey: os.Getenv("CODE_GURU_ANTHROPIC_API_KEY"),
-				Model:  envOrDefault("CODE_GURU_ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+				APIKey:    os.Getenv("CODE_GURU_ANTHROPIC_API_KEY"),
+				Model:     envOrDefault("CODE_GURU_ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+				Context1M: parseOptionalBoolEnv("CODE_GURU_ANTHROPIC_CONTEXT_1M"),
 			},
 			SubmitNativeReview: parseOptionalBoolEnv("CODE_GURU_AI_SUBMIT_NATIVE_REVIEW"),
 			ReviewDrafts:       parseBoolEnv("CODE_GURU_AI_REVIEW_DRAFTS", false),

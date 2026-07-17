@@ -17,6 +17,7 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/anthropic"
+	"github.com/rios0rios0/codeguru/internal/support"
 )
 
 func newRequest() entities.ReviewRequest {
@@ -182,6 +183,84 @@ func TestReviewDiff(t *testing.T) {
 		assert.Equal(t, "application/json", capturedContentType)
 		assert.Equal(t, "claude-custom", capturedModel)
 	})
+}
+
+func TestReviewDiffContextWindow(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should send the 1M context-window beta header when enabled", func(t *testing.T) {
+		t.Parallel()
+		// given / when
+		beta := captureAnthropicBetaHeader(t, anthropic.WithContext1M(true))
+
+		// then
+		assert.Equal(t, "context-1m-2025-08-07", beta,
+			"enabling the 1M window must send the context-1m beta so large PRs fit in one pass")
+	})
+
+	t.Run("should NOT send the beta header when the 1M window is disabled", func(t *testing.T) {
+		t.Parallel()
+		// given / when
+		beta := captureAnthropicBetaHeader(t, anthropic.WithContext1M(false))
+
+		// then
+		assert.Empty(t, beta, "the beta header must be absent when the operator opts out")
+	})
+
+	t.Run("should NOT send the beta header by default (bare constructor)", func(t *testing.T) {
+		t.Parallel()
+		// given / when: no WithContext1M option — the factory is the single
+		// place that resolves the default-ON toggle, so a bare backend is off.
+		beta := captureAnthropicBetaHeader(t)
+
+		// then
+		assert.Empty(t, beta)
+	})
+
+	t.Run("should classify a 'prompt is too long' 400 as a context-window failure", func(t *testing.T) {
+		t.Parallel()
+		// given: the real Anthropic too-large 400 shape
+		server := newAnthropicStub(t, http.StatusBadRequest, map[string]any{
+			"error": map[string]any{
+				"type":    "invalid_request_error",
+				"message": "prompt is too long: 258000 tokens > 200000 maximum",
+			},
+		})
+		defer server.Close()
+		repo := anthropic.NewAIReviewerRepository("k", "m", anthropic.WithEndpoint(server.URL))
+
+		// when
+		_, err := repo.ReviewDiff(context.Background(), newRequest())
+
+		// then
+		require.Error(t, err)
+		assert.ErrorIs(t, err, support.ErrContextWindowExceeded,
+			"a prompt-too-long 400 must carry the sentinel so retries are skipped and the PR gets 'too large' guidance")
+		assert.Contains(t, err.Error(), "prompt is too long",
+			"the raw provider detail must remain in the (log-only) error for diagnosis")
+	})
+}
+
+// captureAnthropicBetaHeader runs one successful review against a stub that
+// records the outbound Anthropic-Beta header, returning whatever the backend
+// sent (empty when it sent none). Keeps the three header-contract tests to a
+// single line each.
+func captureAnthropicBetaHeader(t *testing.T, opts ...anthropic.Option) string {
+	t.Helper()
+	var captured string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		captured = req.Header.Get("Anthropic-Beta")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"{\"summary\":\"ok\",\"comments\":[]}"}]}`)
+	}))
+	defer server.Close()
+	repo := anthropic.NewAIReviewerRepository(
+		"k", "m", append([]anthropic.Option{anthropic.WithEndpoint(server.URL)}, opts...)...,
+	)
+	_, err := repo.ReviewDiff(context.Background(), newRequest())
+	require.NoError(t, err)
+
+	return captured
 }
 
 func newAnthropicStub(t *testing.T, status int, payload map[string]any) *httptest.Server {

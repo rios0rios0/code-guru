@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	logger "github.com/sirupsen/logrus"
@@ -83,6 +84,22 @@ func (r *RetryingAIReviewer) ReviewDiff(
 		// is no longer wanted and the next attempt would fail the same way.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, fmt.Errorf("AI review cancelled after %d attempt(s): %w", attempt, ctxErr)
+		}
+		// Do not retry a prompt-too-long failure: the prompt is byte-for-byte
+		// identical on every attempt, so a re-sample is guaranteed to fail the
+		// same way. Return immediately (the error already carries the sentinel)
+		// so the command layer posts the "split your PR" guidance instead of
+		// burning the whole budget — and, on paid backends, the cost — on a
+		// review that cannot succeed until the PR itself shrinks.
+		if errors.Is(err, support.ErrContextWindowExceeded) {
+			logger.Warnf(
+				"AI review (%s) failed on attempt %d/%d: the pull request exceeds the model context window; not retrying",
+				r.inner.Name(),
+				attempt,
+				r.attempts,
+			)
+
+			return nil, err
 		}
 		if attempt < r.attempts {
 			logger.Warnf(
