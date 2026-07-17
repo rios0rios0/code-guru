@@ -176,10 +176,26 @@ func (r *AIReviewerRepository) ReviewDiff(
 
 			return fbResult, nil
 		}
+		// Only surface the ORIGINAL refusal when the fallback ALSO refused — a
+		// genuine content-safety decline (the annotation is right, a retry is
+		// futile). If the fallback failed for a DIFFERENT reason (transient
+		// 5xx, network, a context-window overflow on the fallback model),
+		// surface THAT error so the retry decorator and command layer classify
+		// it correctly instead of mislabelling it a content-safety refusal.
+		if errors.Is(fbErr, support.ErrContentSafetyRefusal) {
+			logger.Warnf(
+				"anthropic refusal fallback model %s also refused; surfacing the original refusal",
+				r.refusalFallbackModel,
+			)
+
+			return result, err
+		}
 		logger.Warnf(
-			"anthropic refusal fallback model %s also failed (%s); surfacing the original refusal",
+			"anthropic refusal fallback model %s failed for a non-refusal reason (%s); surfacing the fallback error",
 			r.refusalFallbackModel, support.TruncateForLog(fbErr.Error(), errorBodyPreview),
 		)
+
+		return fbResult, fbErr
 	}
 
 	return result, err
