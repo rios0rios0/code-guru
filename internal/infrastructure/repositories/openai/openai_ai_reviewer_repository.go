@@ -109,6 +109,14 @@ func (r *AIReviewerRepository) ReviewDiff(
 		return nil, errors.New("OpenAI returned no choices")
 	}
 
-	content := resp.Choices[0].Message.Content
-	return support.ParseReviewResponse(content)
+	choice := resp.Choices[0]
+	// A `content_filter` finish reason is OpenAI's content-safety decline — the
+	// same class as an Anthropic refusal. Classify it so the retry decorator
+	// skips the (futile) re-sample and the command layer posts the "declined"
+	// guidance. OpenAI does not report a policy category, so Category is empty.
+	if choice.FinishReason == oai.FinishReasonContentFilter {
+		return nil, &support.ContentSafetyRefusalError{}
+	}
+
+	return support.ParseReviewResponse(choice.Message.Content)
 }

@@ -413,6 +413,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_AI_PROJECT_GUIDELINES`     | Loads the reviewed repository's own `CLAUDE.md` as project-specific review context; set to `false` to opt out | `true`               |
 | `CODE_GURU_AI_PR_METADATA`            | Fetches the PR's description and commit count as intent context for the AI; set to `false` to opt out | `true`               |
 | `CODE_GURU_ANTHROPIC_CONTEXT_1M`      | Requests the Anthropic 1M-token context window (`context-1m-2025-08-07` beta) so larger PRs fit in one review pass; set to `false` for accounts/models that cannot use the beta | `true`               |
+| `CODE_GURU_ANTHROPIC_REFUSAL_FALLBACK_MODEL` | Anthropic model to re-issue the review against when the primary model declines the content on content-safety grounds (`stop_reason: refusal`); empty disables the fallback | (empty)              |
 | `CODE_GURU_BOT_IDENTITIES`            | Comma-separated account identities the bot posts under (so re-reviews recognise its own prior threads); the built-in `code-guru` shape and self-detection apply when unset |                      |
 
 ## Rules
@@ -469,6 +470,14 @@ Every review sends the full diff — plus the rules, the repository's `CLAUDE.md
 - **A clear failure notice.** The PR gets a "too large for the AI model's context window" annotation that reports the change's scale (file count and total diff size) and the correct next steps — split the change into smaller pull requests, or exclude generated/vendored/lock files — instead of a generic "try again" message. Retrying or pushing more commits does not help, because the diff only grows.
 - **No wasted retries.** A prompt-too-long failure is deterministic (the prompt is identical on every attempt), so the retry budget is skipped entirely for this class of failure.
 - **A larger window on Anthropic.** The Anthropic backend requests the 1M-token context window (`context-1m-2025-08-07` beta) by default, so pull requests up to roughly five times larger fit in one pass before hitting this path. For prompts under 200K tokens the beta is a no-op; very large prompts may incur Anthropic long-context pricing. Opt out with `ai.anthropic.context_1m: false` or `CODE_GURU_ANTHROPIC_CONTEXT_1M=false` on accounts or models that cannot use the beta.
+
+## Content-safety refusals
+
+The AI models Code Guru uses run content-safety classifiers that sometimes **decline** to review a change — most often security-related code (offensive-security tooling, exploit or credential-handling code, cryptography) and, for some models, certain biology content. On Anthropic this arrives as `stop_reason: "refusal"` (an HTTP 200 with no review), on OpenAI as a `content_filter` finish reason. Code Guru handles this explicitly rather than reporting a generic error:
+
+- **A clear, reassuring notice.** The PR gets a "the AI model's content-safety system declined this pull request" annotation that names the cause, surfaces the provider's policy category when reported, and makes clear this is a **limitation of the AI reviewer's safety filters — not a judgment that the change is malicious or a defect in the code**. It points at the real remedies (request a human review; an operator can switch the model or backend) and does **not** suggest retrying, since the same content is declined the same way.
+- **No wasted retries.** A refusal is deterministic on the same content, so the retry budget is skipped for this class.
+- **An optional fallback model.** Because safety-classifier coverage varies by model, an operator can set `ai.anthropic.refusal_fallback_model` (`CODE_GURU_ANTHROPIC_REFUSAL_FALLBACK_MODEL`) so the Anthropic backend re-issues the review once against a model that handles the content when the primary model refuses. It is off by default; a fallback that also refuses surfaces the original refusal.
 
 ## Contributing
 
