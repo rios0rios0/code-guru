@@ -54,7 +54,6 @@ func LooksLikeContextWindowError(msg string) bool {
 		"maximum context",
 		"context limit",
 		"input is too long",
-		"too many tokens",
 	}
 
 	lower := strings.ToLower(msg)

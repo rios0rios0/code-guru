@@ -24,7 +24,7 @@ func TestLooksLikeContextWindowError(t *testing.T) {
 			"openai message": "This model's maximum context length is 128000 tokens. However, your messages resulted in 210000 tokens",
 			"openai code":    "context_length_exceeded",
 			"generic window": "the request exceeds the model's context window",
-			"case-insensiti": "PROMPT IS TOO LONG",
+			"case-insensitive": "PROMPT IS TOO LONG",
 		}
 
 		for name, msg := range cases {
