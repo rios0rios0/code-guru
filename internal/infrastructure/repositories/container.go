@@ -105,7 +105,11 @@ func (f *AIReviewerFactory) createBackend(settings *entities.Settings) repositor
 	case "openai":
 		return openaiRepo.NewAIReviewerRepository(settings.AI.OpenAI.APIKey, settings.AI.OpenAI.Model)
 	case "anthropic":
-		return anthropicRepo.NewAIReviewerRepository(settings.AI.Anthropic.APIKey, settings.AI.Anthropic.Model)
+		return anthropicRepo.NewAIReviewerRepository(
+			settings.AI.Anthropic.APIKey,
+			settings.AI.Anthropic.Model,
+			anthropicRepo.WithContext1M(settings.AI.Anthropic.Context1MEnabled()),
+		)
 	case "claude":
 		return claudeRepo.NewAIReviewerRepository(
 			settings.AI.Claude.BinaryPath, settings.AI.Claude.Model, settings.AI.Claude.MaxTurns,

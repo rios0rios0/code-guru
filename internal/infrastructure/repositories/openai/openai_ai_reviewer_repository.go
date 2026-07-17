@@ -93,6 +93,15 @@ func (r *AIReviewerRepository) ReviewDiff(
 		},
 	})
 	if err != nil {
+		// A context-length-exceeded error ("maximum context length is N
+		// tokens...") means the PR is too large for the model. Wrap with the
+		// sentinel so the retry decorator skips the (futile) re-sample and the
+		// command layer posts the "split your PR" guidance instead of the
+		// generic "usually transient" annotation.
+		if support.LooksLikeContextWindowError(err.Error()) {
+			return nil, fmt.Errorf("%w (openai: %w)", support.ErrContextWindowExceeded, err)
+		}
+
 		return nil, fmt.Errorf("OpenAI chat completion failed: %w", err)
 	}
 

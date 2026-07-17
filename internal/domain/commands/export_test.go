@@ -118,6 +118,11 @@ var (
 	// error, description trimming + truncation) without driving the
 	// full Execute flow.
 	LoadPullRequestMetadata = (*ReviewCommand).loadPullRequestMetadata
+
+	// ReviewFailureContextFrom re-exports the scale-measuring helper so
+	// tests can pin the file-count + diff-byte figures the too-large
+	// annotation reports, without driving the full Execute flow.
+	ReviewFailureContextFrom = reviewFailureContextFrom
 )
 
 // MaxProjectGuidelinesBytes re-exports the guidelines size cap so the
@@ -139,3 +144,8 @@ const AnnotationThreadStatus = annotationThreadStatus
 // `pullRequestStatusGetter` interface so external tests can build a
 // 1-method stub without depending on the full `forgeEntities.ReviewProvider`.
 type PullRequestStatusGetter = pullRequestStatusGetter
+
+// ReviewFailureContext re-exports the unexported reviewFailureContext so
+// external tests can build a scale (file count + diff bytes) and assert how
+// the too-large annotation renders it.
+type ReviewFailureContext = reviewFailureContext

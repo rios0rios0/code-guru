@@ -16,6 +16,15 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added a dedicated "pull request too large" failure notice: when a review fails because the assembled prompt (diff plus rules, guidelines, metadata, and conversation) exceeds the AI model's context window, the PR annotation now names that specific cause, reports the change's scale (file count and total diff size), and gives correct next steps (split the PR into smaller ones, exclude generated/vendored/lock files) instead of the generic "usually transient — push a new commit" message, which was misleading for an over-large change (pushing more commits only grows the diff); every backend (Anthropic, OpenAI, Claude CLI) now classifies its provider-specific "prompt too long" error into this shared class
+- added the Anthropic 1M-token context window: the Anthropic backend requests the `context-1m-2025-08-07` beta so pull requests up to ~5x larger fit in a single review pass before overflowing the default 200K window; controlled by the new tri-state `ai.anthropic.context_1m` setting (`CODE_GURU_ANTHROPIC_CONTEXT_1M`, default on) so operators whose account or model cannot use the beta can opt out (for prompts under 200K tokens the beta is a no-op, so small PRs are unaffected; very large prompts may incur Anthropic long-context pricing)
+
+### Changed
+
+- changed the retry decorator to stop immediately on a context-window overflow instead of re-sending the byte-for-byte identical oversized prompt for every attempt: a prompt-too-long failure is deterministic, so retrying was guaranteed to fail the same way and only wasted the attempt budget (and, on paid backends, the cost)
+
 ## [1.10.0] - 2026-07-16
 
 ### Added

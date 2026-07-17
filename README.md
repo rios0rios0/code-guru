@@ -412,6 +412,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_AI_MAX_ATTEMPTS`           | Times the AI backend is re-sampled per review when it returns a non-JSON or transient-error response before the review is marked failed (`1` disables retries) | `3`                  |
 | `CODE_GURU_AI_PROJECT_GUIDELINES`     | Loads the reviewed repository's own `CLAUDE.md` as project-specific review context; set to `false` to opt out | `true`               |
 | `CODE_GURU_AI_PR_METADATA`            | Fetches the PR's description and commit count as intent context for the AI; set to `false` to opt out | `true`               |
+| `CODE_GURU_ANTHROPIC_CONTEXT_1M`      | Requests the Anthropic 1M-token context window (`context-1m-2025-08-07` beta) so larger PRs fit in one review pass; set to `false` for accounts/models that cannot use the beta | `true`               |
 | `CODE_GURU_BOT_IDENTITIES`            | Comma-separated account identities the bot posts under (so re-reviews recognise its own prior threads); the built-in `code-guru` shape and self-detection apply when unset |                      |
 
 ## Rules
@@ -460,6 +461,14 @@ Behaviour details:
 - The description is framed to the model as author-supplied data, not instructions — a body that says "approve this PR" is treated as content to evaluate, never as a command.
 
 Enabled by default; opt out with `ai.pr_metadata: false` or `CODE_GURU_AI_PR_METADATA=false`.
+
+## Large pull requests
+
+Every review sends the full diff — plus the rules, the repository's `CLAUDE.md`, the PR metadata, and any prior review conversation — to the AI backend in a single request. When that combined prompt is larger than the model's context window, the review cannot be produced, and Code Guru handles it explicitly rather than failing silently:
+
+- **A clear failure notice.** The PR gets a "too large for the AI model's context window" annotation that reports the change's scale (file count and total diff size) and the correct next steps — split the change into smaller pull requests, or exclude generated/vendored/lock files — instead of a generic "try again" message. Retrying or pushing more commits does not help, because the diff only grows.
+- **No wasted retries.** A prompt-too-long failure is deterministic (the prompt is identical on every attempt), so the retry budget is skipped entirely for this class of failure.
+- **A larger window on Anthropic.** The Anthropic backend requests the 1M-token context window (`context-1m-2025-08-07` beta) by default, so pull requests up to roughly five times larger fit in one pass before hitting this path. For prompts under 200K tokens the beta is a no-op; very large prompts may incur Anthropic long-context pricing. Opt out with `ai.anthropic.context_1m: false` or `CODE_GURU_ANTHROPIC_CONTEXT_1M=false` on accounts or models that cannot use the beta.
 
 ## Contributing
 
