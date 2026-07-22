@@ -28,6 +28,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - changed the retry decorator to stop immediately on a context-window overflow instead of re-sending the byte-for-byte identical oversized prompt for every attempt: a prompt-too-long failure is deterministic, so retrying was guaranteed to fail the same way and only wasted the attempt budget (and, on paid backends, the cost)
 - changed the retry decorator to also stop immediately on a content-safety refusal: a refusal on the same content is deterministic, so retrying only wasted the attempt budget
 - changed the Go module dependencies to their latest versions
+- changed the Go module dependencies to their latest versions
 
 ## [1.10.0] - 2026-07-16
 
