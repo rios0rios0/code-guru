@@ -110,7 +110,13 @@ func (c *ReviewCommand) loadProjectGuidelines(
 	}
 
 	bounded := support.Truncate(trimmed, budget)
-	if len(bounded) < len(trimmed) {
+	// Compare the ORIGINAL length to the budget, never len(bounded) to
+	// len(trimmed): `support.Truncate` appends a sentinel, so a document
+	// just over budget produces a `bounded` that is LONGER than `trimmed`,
+	// and a `len(bounded) < len(trimmed)` guard would miss those cuts
+	// entirely. `len(trimmed) > budget` is exactly the condition Truncate
+	// itself uses to decide whether to cut.
+	if len(trimmed) > budget {
 		logger.Warnf(
 			"PR #%d: %s is %d byte(s) but the budget is %d; the model will review against a TRUNCATED "+
 				"copy of the project's conventions — raise `ai.max_guidelines_bytes` if the window allows",

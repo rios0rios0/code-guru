@@ -11,6 +11,8 @@ import (
 	"time"
 
 	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
+	logger "github.com/sirupsen/logrus"
+	logrustest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -2849,6 +2851,72 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		// then
 		assert.Len(t, got, operatorBudget+len("...[truncated]"),
 			"the configured budget must override the default, not be ignored")
+	})
+}
+
+// TestLoadProjectGuidelinesTruncationWarning pins the exact boundary the
+// warning condition must fire on. It is deliberately NOT parallel: it
+// captures entries off the global logger via a local hook, matching the
+// established pattern in `internal/support/response_parser_test.go`.
+//
+// The regression it guards: `support.Truncate` appends a 14-byte sentinel,
+// so a document just a few bytes over budget produces a `bounded` value
+// LONGER than the original. A `len(bounded) < len(trimmed)` guard (the
+// first cut of this code) therefore stays silent for every file in the
+// (budget, budget+sentinel] band — truncating the project's conventions
+// without ever telling the operator. The condition must key off the
+// ORIGINAL length vs. the budget instead.
+func TestLoadProjectGuidelinesTruncationWarning(t *testing.T) {
+	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	const prID = 4242
+	const budget = 4096
+
+	warned := func(t *testing.T, contentLen int) bool {
+		t.Helper()
+
+		// given: a guidelines file of exactly contentLen bytes and a hook
+		// capturing the global logger for the duration of the load.
+		hook := logrustest.NewLocal(logger.StandardLogger())
+		defer hook.Reset()
+
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"CLAUDE.md": strings.Repeat("D", contentLen)},
+		}
+		opts := commands.ReviewOptions{LoadProjectGuidelines: true, MaxGuidelinesBytes: budget}
+
+		// when
+		commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, opts)
+
+		// then
+		for _, entry := range hook.AllEntries() {
+			if entry.Level == logger.WarnLevel && strings.Contains(entry.Message, "TRUNCATED") {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("should warn when the file is just over budget (inside the sentinel band)", func(t *testing.T) {
+		// given: budget+5 — with the old len(bounded) < len(trimmed) guard,
+		// bounded (budget+14) is LONGER than trimmed (budget+5), so no warn
+		// fired even though the content was cut.
+		assert.True(t, warned(t, budget+5),
+			"a document a few bytes over budget is still truncated and must warn")
+	})
+
+	t.Run("should warn when the file is far over budget", func(t *testing.T) {
+		// given
+		assert.True(t, warned(t, budget*4),
+			"an obviously oversized document must warn")
+	})
+
+	t.Run("should NOT warn when the file exactly fills the budget", func(t *testing.T) {
+		// given: len == budget is not a truncation (support.Truncate cuts
+		// only when len > n), so no warning must be emitted.
+		assert.False(t, warned(t, budget),
+			"a document that exactly fits must not warn — nothing was cut")
 	})
 }
 
