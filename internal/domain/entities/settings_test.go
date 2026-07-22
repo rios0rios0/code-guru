@@ -504,6 +504,106 @@ func TestReviewAttempts(t *testing.T) {
 	}
 }
 
+func TestPromptBudgets(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should default the guidelines budget to a quarter of a 1M-token window", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the budget exists so a large but legitimate CLAUDE.md
+		// reaches the model whole. 1 MiB is ~256k tokens at ~4 bytes per
+		// token — about 25% of a 1M-token context window, leaving the rest
+		// for the diff.
+		cfg := entities.AIConfig{}
+
+		// when / then
+		assert.Equal(t, 1024*1024, cfg.GuidelinesBytes())
+	})
+
+	t.Run("should default the description budget below the guidelines budget", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a description is intent context, whereas the guidelines
+		// are the standard the diff is judged against — so the description
+		// must never be allowed to claim the larger share.
+		cfg := entities.AIConfig{}
+
+		// when / then
+		assert.Equal(t, 64*1024, cfg.PRDescriptionBytes())
+		assert.Less(t, cfg.PRDescriptionBytes(), cfg.GuidelinesBytes())
+	})
+
+	budgetCases := []struct {
+		name  string
+		value int
+		want  int
+	}{
+		{name: "should fall back to the default when unset (zero)", value: 0, want: 1024 * 1024},
+		{name: "should fall back to the default when negative", value: -1, want: 1024 * 1024},
+		{name: "should honour an explicit lower value for a small-window backend", value: 32768, want: 32768},
+		{name: "should honour an explicit higher value", value: 4 * 1024 * 1024, want: 4 * 1024 * 1024},
+	}
+	for _, tt := range budgetCases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			cfg := entities.AIConfig{MaxGuidelinesBytes: tt.value}
+
+			// when / then
+			assert.Equal(t, tt.want, cfg.GuidelinesBytes())
+		})
+	}
+}
+
+func TestNewSettingsPromptBudgetEnv(t *testing.T) {
+	// Pins that a deployment on a small-context-window backend can lower
+	// the budgets from env alone, without re-rendering its YAML baseline.
+
+	t.Run("should parse both budget env vars from the env-only path", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+		t.Setenv("CODE_GURU_AI_MAX_GUIDELINES_BYTES", "65536")
+		t.Setenv("CODE_GURU_AI_MAX_PR_DESCRIPTION_BYTES", "8192")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, 65536, settings.AI.GuidelinesBytes())
+		assert.Equal(t, 8192, settings.AI.PRDescriptionBytes())
+	})
+
+	t.Run("should fall back to the shipped defaults when the env vars are unset", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, 1024*1024, settings.AI.GuidelinesBytes(),
+			"an unwired deployment must pick up the larger budget automatically")
+		assert.Equal(t, 64*1024, settings.AI.PRDescriptionBytes())
+	})
+
+	t.Run("should ignore a non-numeric budget rather than truncating to nothing", func(t *testing.T) {
+		// given: a typo'd env var must not silently zero the budget and
+		// strip every repository's guidelines out of the prompt.
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+		t.Setenv("CODE_GURU_AI_MAX_GUIDELINES_BYTES", "not-a-number")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, 1024*1024, settings.AI.GuidelinesBytes())
+	})
+}
+
 func TestNewSettingsMaxAttempts(t *testing.T) {
 	// Pins that the per-review AI retry budget is configurable so a flaky
 	// backend (non-JSON responses, dropped sockets) re-samples instead of

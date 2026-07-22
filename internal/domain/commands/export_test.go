@@ -2,6 +2,8 @@
 
 package commands
 
+import "github.com/rios0rios0/codeguru/internal/domain/entities"
+
 // Re-exports of the unexported helpers in the `commands` package so the
 // external `commands_test` package can pin their contracts directly,
 // without standing up stubs for every repository/provider/registry that
@@ -125,14 +127,15 @@ var (
 	ReviewFailureContextFrom = reviewFailureContextFrom
 )
 
-// MaxProjectGuidelinesBytes re-exports the guidelines size cap so the
-// truncation test derives its oversized fixture from the real bound
-// instead of hardcoding a copy that could drift.
-const MaxProjectGuidelinesBytes = maxProjectGuidelinesBytes
-
-// MaxPRDescriptionBytes re-exports the PR-description size cap for the
-// same reason as MaxProjectGuidelinesBytes above.
-const MaxPRDescriptionBytes = maxPRDescriptionBytes
+// DefaultMaxProjectGuidelinesBytes / DefaultMaxPRDescriptionBytes re-export
+// the resolved DEFAULT budgets so truncation tests derive their oversized
+// fixtures from the real bound instead of hardcoding a copy that could
+// drift. The budgets are operator-configurable now, so these are what a
+// caller that wires nothing gets — the same fallback the loaders apply.
+var (
+	DefaultMaxProjectGuidelinesBytes = entities.AIConfig{}.GuidelinesBytes()
+	DefaultMaxPRDescriptionBytes     = entities.AIConfig{}.PRDescriptionBytes()
+)
 
 // AnnotationThreadStatus re-exports the unexported package constant
 // so tests can pin the value the post helpers forward to gitforge —

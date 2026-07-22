@@ -95,6 +95,8 @@ func (c *ReviewAllController) Execute(cmd *cobra.Command, _ []string) {
 		DryRun:                  dryRun,
 		Verbose:                 verbose,
 		SubmitNativeReview:      settings.AI.NativeReviewSubmissionEnabled(),
+		MaxGuidelinesBytes:      settings.AI.GuidelinesBytes(),
+		MaxPRDescriptionBytes:   settings.AI.PRDescriptionBytes(),
 		ReviewDrafts:            settings.AI.ReviewDrafts,
 		BotIdentities:           settings.BotIdentities,
 		LoadProjectGuidelines:   settings.AI.ProjectGuidelinesEnabled(),

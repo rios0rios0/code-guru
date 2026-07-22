@@ -140,6 +140,8 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 		Verbose:                 verbose,
 		CIPassed:                ciPassed,
 		SubmitNativeReview:      settings.AI.NativeReviewSubmissionEnabled(),
+		MaxGuidelinesBytes:      settings.AI.GuidelinesBytes(),
+		MaxPRDescriptionBytes:   settings.AI.PRDescriptionBytes(),
 		ReviewDrafts:            settings.AI.ReviewDrafts,
 		TrivialAutoMerge:        settings.Trivial.AutoMerge,
 		TrivialMergeStrategy:    settings.Trivial.MergeStrategy,

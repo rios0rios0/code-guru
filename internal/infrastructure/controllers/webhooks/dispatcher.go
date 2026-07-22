@@ -351,6 +351,8 @@ func (d *Dispatcher) HandlePR(
 	result, err := reviewCmd.Execute(ctx, provider, repo, pr, commands.ReviewOptions{
 		CIPassed:                ciPassed,
 		SubmitNativeReview:      d.settings.AI.NativeReviewSubmissionEnabled(),
+		MaxGuidelinesBytes:      d.settings.AI.GuidelinesBytes(),
+		MaxPRDescriptionBytes:   d.settings.AI.PRDescriptionBytes(),
 		ReviewDrafts:            d.settings.AI.ReviewDrafts,
 		UserMentioned:           userMentioned,
 		TrivialAutoMerge:        d.settings.Trivial.AutoMerge,

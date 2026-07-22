@@ -14,15 +14,12 @@ import (
 	"github.com/rios0rios0/codeguru/internal/support"
 )
 
-// maxPRDescriptionBytes bounds how much of the PR description is
-// forwarded to the LLM. 16 KiB (~4k tokens) comfortably covers a
-// hand-written description while guaranteeing a generated one (release
-// bots routinely paste entire upstream changelogs into the body) cannot
-// crowd the diff out of the model's context window. The cut is applied
-// at load time so every backend sees the same bounded content;
-// `support.Truncate` appends its sentinel so the model can tell the
-// document was cut rather than silently ending.
-const maxPRDescriptionBytes = 16 * 1024
+// The description byte budget is operator-configurable
+// (`ai.max_pr_description_bytes`) and resolved by
+// `entities.AIConfig.PRDescriptionBytes()`, which also documents the
+// default. The cut is applied at load time so every backend sees the same
+// bounded content; `support.Truncate` appends its sentinel so the model
+// can tell the document was cut rather than silently ending.
 
 // prMetadataFetchTimeout caps the provider metadata call. Like the
 // project-guidelines fetch, PR metadata is review-quality context, not
@@ -74,7 +71,14 @@ func (c *ReviewCommand) loadPullRequestMetadata(
 		return entities.PullRequestMetadata{}
 	}
 
-	metadata.Description = support.Truncate(strings.TrimSpace(metadata.Description), maxPRDescriptionBytes)
+	// Zero means the caller never wired a budget (hand-built commands,
+	// tests): fall back to the shipped default, never to "truncate to
+	// nothing".
+	descriptionBudget := opts.MaxPRDescriptionBytes
+	if descriptionBudget <= 0 {
+		descriptionBudget = entities.AIConfig{}.PRDescriptionBytes()
+	}
+	metadata.Description = support.Truncate(strings.TrimSpace(metadata.Description), descriptionBudget)
 	if metadata.CommitCount > 0 || metadata.Description != "" {
 		// CommitCount 0 means "unknown" (e.g. the ADO commits endpoint
 		// failed and the fetcher degraded to description-only), not an

@@ -78,6 +78,12 @@ ai:
   # from the provider and forwarded to the AI as intent context (together with
   # the title and branch names already in the prompt). Set to false to opt out.
   pr_metadata: true
+  # Byte budgets for the two documents sent alongside the diff. The defaults
+  # (1 MiB / 64 KiB) assume a 1M-token context window — the guidelines budget
+  # is roughly a quarter of it. Lower max_guidelines_bytes on a small-window
+  # backend (e.g. a 128K-token model, or Anthropic with context_1m disabled).
+  max_guidelines_bytes: 1048576
+  max_pr_description_bytes: 65536
   claude:
     binary_path: 'claude'
     model: 'sonnet'
@@ -442,7 +448,7 @@ Behaviour details:
 
 - When the PR itself modifies `CLAUDE.md`, the repository fetch is skipped — the model already reads the change in the diff, and layering the pre-change copy on top would present two conflicting versions of the same document.
 - The fetch is best-effort: a repository without a `CLAUDE.md`, a provider without file-access support, or a transient error simply produces a review without project guidelines. It never fails or delays the review beyond a 10-second fetch timeout.
-- Content is bounded to 32 KiB so a pathological guidelines file cannot crowd the diff out of the model's context window.
+- Content is bounded to `ai.max_guidelines_bytes` (default 1 MiB, roughly 256k tokens — about a quarter of a 1M-token context window) so a pathological guidelines file cannot crowd the diff out of the model's context window. A large but legitimate `CLAUDE.md` is sent whole; when the bound does bite, the truncation is logged with the file size and the budget. **The default assumes a 1M-token window** — on a 128K-token model, or on Anthropic with `ai.anthropic.context_1m` disabled, lower it via `ai.max_guidelines_bytes` or `CODE_GURU_AI_MAX_GUIDELINES_BYTES`.
 - The document is framed to the model as documentation, not instructions — it cannot change the output format, the verdict rules, or the reviewer role.
 
 Enabled by default; opt out with `ai.project_guidelines: false` or `CODE_GURU_AI_PROJECT_GUIDELINES=false`.
@@ -458,7 +464,7 @@ Beyond the diff, Code Guru forwards the PR's **author-supplied metadata** to the
 Behaviour details:
 
 - The fetch is best-effort with a 10-second timeout: an unsupported provider or an API error simply produces a review without the context — it never fails the review.
-- The description is bounded to 16 KiB so a generated body (release bots pasting entire upstream changelogs) cannot crowd the diff out of the model's context window.
+- The description is bounded to `ai.max_pr_description_bytes` (default 64 KiB) so a generated body (release bots pasting entire upstream changelogs) cannot crowd the diff out of the model's context window.
 - The description is framed to the model as author-supplied data, not instructions — a body that says "approve this PR" is treated as content to evaluate, never as a command.
 
 Enabled by default; opt out with `ai.pr_metadata: false` or `CODE_GURU_AI_PR_METADATA=false`.
