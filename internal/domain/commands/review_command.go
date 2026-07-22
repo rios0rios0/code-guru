@@ -41,6 +41,20 @@ type ReviewOptions struct {
 	Verbose  bool
 	CIPassed bool
 
+	// MaxGuidelinesBytes bounds the reviewed repository's own CLAUDE.md
+	// before it reaches the prompt. Zero (the "unset" state, used by
+	// hand-built commands and tests) falls back to
+	// entities.AIConfig.GuidelinesBytes()'s default, so a caller that
+	// never wires the budget still gets the shipped one. Wired from
+	// settings.AI.GuidelinesBytes() at each call site.
+	MaxGuidelinesBytes int
+
+	// MaxPRDescriptionBytes bounds the pull request description before it
+	// reaches the prompt. Zero falls back to the shipped default, on the
+	// same argument as MaxGuidelinesBytes. Wired from
+	// settings.AI.PRDescriptionBytes() at each call site.
+	MaxPRDescriptionBytes int
+
 	// SubmitNativeReview, when true, also records a native PR review on the
 	// underlying provider (Approved / Changes Requested) so the verdict
 	// surfaces in the platform's reviewer panel rather than only in the

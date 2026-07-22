@@ -2784,7 +2784,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		// bound is applied at load time so every backend sees the same
 		// bounded content and the diff keeps its share of the context
 		// window.
-		oversized := strings.Repeat("A", commands.MaxProjectGuidelinesBytes+1024)
+		oversized := strings.Repeat("A", commands.DefaultMaxProjectGuidelinesBytes+1024)
 		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &fileAccessRecordingProvider{
 			fileContents: map[string]string{"CLAUDE.md": oversized},
@@ -2795,10 +2795,60 @@ func TestLoadProjectGuidelines(t *testing.T) {
 			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
 
 		// then
-		assert.Len(t, got, commands.MaxProjectGuidelinesBytes+len("...[truncated]"),
+		assert.Len(t, got, commands.DefaultMaxProjectGuidelinesBytes+len("...[truncated]"),
 			"the content must be cut at the cap plus the truncation sentinel")
 		assert.True(t, strings.HasSuffix(got, "...[truncated]"),
 			"the sentinel must close the content so the model can tell the document was cut")
+	})
+
+	t.Run("should send a real-world guidelines file whole under the default budget", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the regression this budget exists to prevent. A large but
+		// entirely legitimate CLAUDE.md (256 KiB — well beyond the 32 KiB
+		// the loader used to allow) must reach the model INTACT: judging a
+		// diff against a document that stops mid-sentence is worse than a
+		// long prompt, because the model silently applies half a standard.
+		wholeDocument := strings.Repeat("B", 256*1024)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"CLAUDE.md": wholeDocument},
+		}
+
+		// when
+		got := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
+
+		// then
+		assert.Equal(t, wholeDocument, got,
+			"a legitimate guidelines file well under the budget must not be truncated at all")
+		assert.NotContains(t, got, "...[truncated]")
+	})
+
+	t.Run("should honour an operator-configured budget below the default", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a deployment on a small-context-window backend lowers the
+		// budget so a huge guidelines file cannot crowd out the diff.
+		// The explicit value must win over the shipped default.
+		const operatorBudget = 4096
+		content := strings.Repeat("C", operatorBudget*4)
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"CLAUDE.md": content},
+		}
+		bounded := commands.ReviewOptions{
+			LoadProjectGuidelines: true,
+			MaxGuidelinesBytes:    operatorBudget,
+		}
+
+		// when
+		got := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, bounded)
+
+		// then
+		assert.Len(t, got, operatorBudget+len("...[truncated]"),
+			"the configured budget must override the default, not be ignored")
 	})
 }
 
@@ -3039,7 +3089,7 @@ func TestLoadPullRequestMetadata(t *testing.T) {
 
 		// given: release bots paste entire upstream changelogs into PR
 		// bodies; the loader must bound them before the prompt is built.
-		oversized := strings.Repeat("x", commands.MaxPRDescriptionBytes+100)
+		oversized := strings.Repeat("x", commands.DefaultMaxPRDescriptionBytes+100)
 		stub := &doubles.StubPullRequestMetadataRepository{
 			Metadata: entities.PullRequestMetadata{Description: oversized},
 		}

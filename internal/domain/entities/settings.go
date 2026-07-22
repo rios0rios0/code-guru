@@ -110,6 +110,24 @@ type AIConfig struct {
 	// PullRequestMetadataEnabled rather than dereferencing the pointer
 	// directly.
 	PRMetadata *bool `yaml:"pr_metadata"`
+
+	// MaxGuidelinesBytes bounds how much of the reviewed repository's own
+	// `CLAUDE.md` is forwarded to the LLM. Resolve via GuidelinesBytes()
+	// (defaults to defaultMaxGuidelinesBytes when unset or non-positive).
+	// Honours CODE_GURU_AI_MAX_GUIDELINES_BYTES.
+	//
+	// Lower this when the configured backend has a SMALL context window
+	// (see the defaultMaxGuidelinesBytes doc): the default is sized for a
+	// 1M-token window and a genuinely huge guidelines file could otherwise
+	// crowd out the diff on a 128K/200K-token model.
+	MaxGuidelinesBytes int `yaml:"max_guidelines_bytes"`
+
+	// MaxPRDescriptionBytes bounds how much of the pull request's
+	// description is forwarded to the LLM. Resolve via
+	// PRDescriptionBytes() (defaults to defaultMaxPRDescriptionBytes when
+	// unset or non-positive). Honours
+	// CODE_GURU_AI_MAX_PR_DESCRIPTION_BYTES.
+	MaxPRDescriptionBytes int `yaml:"max_pr_description_bytes"`
 }
 
 // defaultReviewAttempts is the attempt budget applied when AI.MaxAttempts is
@@ -128,6 +146,58 @@ func (a AIConfig) ReviewAttempts() int {
 		return defaultReviewAttempts
 	}
 	return a.MaxAttempts
+}
+
+// defaultMaxGuidelinesBytes is the guidelines budget applied when
+// AI.MaxGuidelinesBytes is unset or non-positive. 1 MiB is roughly 256k
+// tokens at ~4 bytes/token, i.e. about a QUARTER of a 1M-token context
+// window, leaving the remaining ~75% for the diff and the rest of the
+// prompt.
+//
+// It is a ceiling, not an allocation: real `CLAUDE.md` files are tens of
+// kilobytes, so for almost every repository this bound never binds and the
+// whole document is sent. The previous 32 KiB ceiling was sized for a 200K
+// window and silently truncated large, well-maintained guidelines files
+// mid-document — the model then judged the diff against a partial copy of
+// the project's conventions, which is worse than a long prompt.
+//
+// SMALL-WINDOW BACKENDS: this default assumes a 1M-token window (Anthropic
+// with `ai.anthropic.context_1m`, on by default, or the Claude CLI).
+// Operators on a 128K-token model (e.g. OpenAI `gpt-4o`) or on Anthropic
+// with the 1M beta disabled (200K) should lower `ai.max_guidelines_bytes`
+// accordingly — a pathologically large guidelines file could otherwise
+// consume the window the diff needs.
+const defaultMaxGuidelinesBytes = 1024 * 1024
+
+// GuidelinesBytes resolves the project-guidelines byte budget. An unset or
+// non-positive MaxGuidelinesBytes falls back to defaultMaxGuidelinesBytes so
+// existing deployments pick up the larger budget automatically; an explicit
+// value wins (lower it for small-window backends).
+func (a AIConfig) GuidelinesBytes() int {
+	if a.MaxGuidelinesBytes <= 0 {
+		return defaultMaxGuidelinesBytes
+	}
+	return a.MaxGuidelinesBytes
+}
+
+// defaultMaxPRDescriptionBytes is the description budget applied when
+// AI.MaxPRDescriptionBytes is unset or non-positive. 64 KiB is roughly 16k
+// tokens — four times the previous 16 KiB ceiling, so a thorough
+// hand-written description survives intact, while still refusing to spend a
+// meaningful share of the window on the release-bot descriptions that paste
+// entire upstream changelogs into the body. Sized deliberately below the
+// guidelines budget: a description is intent context, whereas the
+// guidelines are the standard the diff is judged against.
+const defaultMaxPRDescriptionBytes = 64 * 1024
+
+// PRDescriptionBytes resolves the PR-description byte budget. An unset or
+// non-positive MaxPRDescriptionBytes falls back to
+// defaultMaxPRDescriptionBytes; an explicit value wins.
+func (a AIConfig) PRDescriptionBytes() int {
+	if a.MaxPRDescriptionBytes <= 0 {
+		return defaultMaxPRDescriptionBytes
+	}
+	return a.MaxPRDescriptionBytes
 }
 
 // NativeReviewSubmissionEnabled resolves the tri-state SubmitNativeReview
@@ -342,11 +412,7 @@ func NewSettings(path string) (*Settings, error) {
 	if ids := splitCSV(os.Getenv("CODE_GURU_BOT_IDENTITIES")); len(ids) > 0 {
 		settings.BotIdentities = ids
 	}
-	if raw := strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_ATTEMPTS")); raw != "" {
-		if v, parseErr := strconv.Atoi(raw); parseErr == nil && v > 0 {
-			settings.AI.MaxAttempts = v
-		}
-	}
+	applyNumericAIEnvOverrides(&settings.AI)
 	// Kill switches for the default-ON AI features. Deployments commonly ship a
 	// YAML baseline and flip per-environment behaviour via env (the same
 	// argument as CODE_GURU_AI_MAX_ATTEMPTS above); without these overrides an
@@ -358,6 +424,37 @@ func NewSettings(path string) (*Settings, error) {
 	}
 
 	return &settings, nil
+}
+
+// applyNumericAIEnvOverrides applies the integer AI env overrides onto an
+// AIConfig already populated from YAML: the per-review attempt budget and the
+// two prompt budgets. A deployment commonly ships a YAML baseline and tunes
+// these per environment — a small-context-window backend, for instance, must
+// be able to lower the guidelines budget without re-rendering its YAML.
+//
+// Each override fires only when the value parses to a POSITIVE integer, so a
+// typo'd or empty variable leaves the YAML value untouched rather than zeroing
+// the budget (which the resolvers would then read as "unset" anyway, but the
+// explicit guard keeps the YAML value intact for round-tripping).
+//
+// Extracted from NewSettings so that function stays within the
+// cognitive-complexity budget as the override list grows, mirroring
+// applyTristateAIEnvOverrides below.
+func applyNumericAIEnvOverrides(ai *AIConfig) {
+	overrides := map[string]*int{
+		"CODE_GURU_AI_MAX_ATTEMPTS":             &ai.MaxAttempts,
+		"CODE_GURU_AI_MAX_GUIDELINES_BYTES":     &ai.MaxGuidelinesBytes,
+		"CODE_GURU_AI_MAX_PR_DESCRIPTION_BYTES": &ai.MaxPRDescriptionBytes,
+	}
+	for envVar, target := range overrides {
+		raw := strings.TrimSpace(os.Getenv(envVar))
+		if raw == "" {
+			continue
+		}
+		if v, parseErr := strconv.Atoi(raw); parseErr == nil && v > 0 {
+			*target = v
+		}
+	}
 }
 
 // applyTristateAIEnvOverrides applies the env kill switches for the default-ON
@@ -400,6 +497,8 @@ func parseTrivialAdaptersEnv() []string {
 func NewSettingsFromEnv() (*Settings, error) {
 	maxTurns, _ := strconv.Atoi(envOrDefault("CODE_GURU_CLAUDE_MAX_TURNS", "1"))
 	maxAttempts, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_ATTEMPTS")))
+	maxGuidelines, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_GUIDELINES_BYTES")))
+	maxPRDescription, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_PR_DESCRIPTION_BYTES")))
 	port, _ := strconv.Atoi(envOrDefault("CODE_GURU_PORT", "8080"))
 	appID, _ := strconv.ParseInt(os.Getenv("CODE_GURU_GITHUB_APP_ID"), 10, 64)
 	queueSize, _ := strconv.Atoi(envOrDefault("CODE_GURU_SERVER_QUEUE_SIZE", "100"))
@@ -426,11 +525,13 @@ func NewSettingsFromEnv() (*Settings, error) {
 				Context1M:            parseOptionalBoolEnv("CODE_GURU_ANTHROPIC_CONTEXT_1M"),
 				RefusalFallbackModel: os.Getenv("CODE_GURU_ANTHROPIC_REFUSAL_FALLBACK_MODEL"),
 			},
-			SubmitNativeReview: parseOptionalBoolEnv("CODE_GURU_AI_SUBMIT_NATIVE_REVIEW"),
-			ReviewDrafts:       parseBoolEnv("CODE_GURU_AI_REVIEW_DRAFTS", false),
-			MaxAttempts:        maxAttempts,
-			ProjectGuidelines:  parseOptionalBoolEnv("CODE_GURU_AI_PROJECT_GUIDELINES"),
-			PRMetadata:         parseOptionalBoolEnv("CODE_GURU_AI_PR_METADATA"),
+			SubmitNativeReview:    parseOptionalBoolEnv("CODE_GURU_AI_SUBMIT_NATIVE_REVIEW"),
+			ReviewDrafts:          parseBoolEnv("CODE_GURU_AI_REVIEW_DRAFTS", false),
+			MaxAttempts:           maxAttempts,
+			ProjectGuidelines:     parseOptionalBoolEnv("CODE_GURU_AI_PROJECT_GUIDELINES"),
+			PRMetadata:            parseOptionalBoolEnv("CODE_GURU_AI_PR_METADATA"),
+			MaxGuidelinesBytes:    maxGuidelines,
+			MaxPRDescriptionBytes: maxPRDescription,
 		},
 		Rules: RulesConfig{
 			Path: os.Getenv("CODE_GURU_RULES_PATH"),

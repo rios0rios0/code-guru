@@ -9,6 +9,7 @@ import (
 
 	forgeEntities "github.com/rios0rios0/gitforge/pkg/global/domain/entities"
 
+	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/support"
 )
 
@@ -21,14 +22,13 @@ import (
 // generic ruleset cannot know about.
 const projectGuidelinesFileName = "CLAUDE.md"
 
-// maxProjectGuidelinesBytes bounds how much of the guidelines file is
-// forwarded to the LLM. 32 KiB (~8k tokens) comfortably covers real-world
-// CLAUDE.md files while guaranteeing a pathological or generated file
-// cannot crowd the diff out of the model's context window. The cut is
-// applied at load time (not prompt-build time) so every backend sees the
-// same bounded content; `support.Truncate` appends its sentinel so the
-// model can tell the document was cut rather than silently ending.
-const maxProjectGuidelinesBytes = 32 * 1024
+// The guidelines byte budget is operator-configurable
+// (`ai.max_guidelines_bytes`) and resolved by
+// `entities.AIConfig.GuidelinesBytes()`, which also documents the default
+// and the small-context-window caveat. The cut is applied at load time
+// (not prompt-build time) so every backend sees the same bounded content;
+// `support.Truncate` appends its sentinel so the model can tell the
+// document was cut rather than silently ending.
 
 // projectGuidelinesFetchTimeout caps the provider file-content call. The
 // guidelines are review-quality context, not a correctness gate — a hung
@@ -101,7 +101,22 @@ func (c *ReviewCommand) loadProjectGuidelines(
 		return ""
 	}
 
-	bounded := support.Truncate(trimmed, maxProjectGuidelinesBytes)
+	// A zero budget means the caller never wired one (hand-built commands,
+	// tests): fall back to the shipped default rather than truncating the
+	// document to nothing.
+	budget := opts.MaxGuidelinesBytes
+	if budget <= 0 {
+		budget = entities.AIConfig{}.GuidelinesBytes()
+	}
+
+	bounded := support.Truncate(trimmed, budget)
+	if len(bounded) < len(trimmed) {
+		logger.Warnf(
+			"PR #%d: %s is %d byte(s) but the budget is %d; the model will review against a TRUNCATED "+
+				"copy of the project's conventions — raise `ai.max_guidelines_bytes` if the window allows",
+			prID, projectGuidelinesFileName, len(trimmed), budget,
+		)
+	}
 	logger.Infof(
 		"PR #%d: loaded %d byte(s) of project guidelines from the repository's %s",
 		prID, len(bounded), projectGuidelinesFileName,
