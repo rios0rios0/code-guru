@@ -16,6 +16,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Fixed
+
+- fixed reviews failing with no comments posted on the Claude CLI backend when the model reached for a tool instead of answering: the CLI was invoked with its full built-in toolset in scope, so the model would spend its turns on tool calls (most often after reading a reviewed repository's own guidelines, where a line such as "audit this with `<shell command>` if in doubt" reads as an instruction to execute rather than documentation to apply) and exit with `error_max_turns` before ever emitting the review, leaving only a generic "the AI backend errored" annotation on the pull request; the backend now passes an empty `--tools`, which removes every tool from the model's scope so a review is the one-shot text completion it was always meant to be. Restricting execution alone (`--disallowedTools`) does not fix this — the definitions stay in scope, the model still emits tool calls, and the turns are still consumed
+
 ## [1.11.0] - 2026-07-22
 
 ### Added

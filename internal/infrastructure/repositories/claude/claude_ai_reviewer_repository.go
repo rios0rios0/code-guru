@@ -69,6 +69,27 @@ func (r *AIReviewerRepository) ReviewDiff(
 		"--model", r.model,
 		"--output-format", "json",
 		"--max-turns", strconv.Itoa(r.maxTurns),
+		// `--tools ""` removes every built-in tool from the model's scope.
+		// A review is a ONE-SHOT text completion: the model must read the
+		// prompt and emit JSON, never act. Without this flag the CLI runs
+		// its full agentic loop with tools in scope, and the model reaches
+		// for them — reviewed repositories whose guidelines say things like
+		// "audit the entry length with <shell command> if in doubt" are read
+		// as instructions to execute, not as documentation to apply. Every
+		// such attempt costs a TURN, and the review JSON is the loop's final
+		// text output, so a model that spends its turns on tool calls exits
+		// with `error_max_turns` and produces NO review at all.
+		//
+		// `--disallowedTools` is NOT sufficient and was measured to fail:
+		// it blocks tool EXECUTION but leaves the definitions in scope, so
+		// the model still emits `tool_use` blocks and still burns the turns
+		// (observed `stop_reason: "tool_use"`, `num_turns: 4` against a
+		// 3-turn cap, with an empty `permission_denials` list). Only
+		// `--tools ""` takes the tools out of scope entirely.
+		//
+		// Keep this BEFORE `--system-prompt`: `--tools` is variadic, and a
+		// following `--`-prefixed flag is what terminates its value list.
+		"--tools", "",
 		"--system-prompt", systemPrompt,
 	)
 
