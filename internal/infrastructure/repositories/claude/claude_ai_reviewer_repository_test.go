@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -172,6 +173,74 @@ func TestClaudeReviewer_ReviewDiff_FailureCapturesBothStreams(t *testing.T) {
 		require.Error(t, err)
 		assert.ErrorIs(t, err, support.ErrContextWindowExceeded,
 			"the CLI's prompt-too-long envelope must carry the sentinel so retries are skipped")
+	})
+}
+
+// writeArgvRecordingClaudeBinary drops a `/bin/sh` stub that appends each
+// argument it received (one per line, so an EMPTY argument is recorded as an
+// empty line) to `$FAKE_ARGV_FILE` before replying with `$FAKE_STDOUT`. It is
+// the only way to pin the CLI invocation's argument vector without an actual
+// `claude` install, and the empty-line fidelity matters: the flag under test
+// (`--tools ""`) is asserted precisely by its empty value.
+func writeArgvRecordingClaudeBinary(t *testing.T) (binPath, argvPath string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake binary uses /bin/sh; not portable to Windows")
+	}
+	dir := t.TempDir()
+	binPath = filepath.Join(dir, "fake-claude-argv")
+	argvPath = filepath.Join(dir, "argv.txt")
+	body := `#!/bin/sh
+cat > /dev/null
+for a in "$@"; do printf '%s\n' "$a" >> "$FAKE_ARGV_FILE"; done
+[ -n "$FAKE_STDOUT" ] && printf '%s' "$FAKE_STDOUT"
+exit 0
+`
+	require.NoError(t, os.WriteFile(binPath, []byte(body), 0o755)) //nolint:gosec // executable test fixture
+	return binPath, argvPath
+}
+
+func TestClaudeReviewer_ReviewDiff_DisablesAllTools(t *testing.T) {
+	// `t.Setenv` panics under `t.Parallel`; see writeFakeClaudeBinary's doc.
+
+	t.Run("should pass an empty --tools so no tool is in the model's scope", func(t *testing.T) {
+		// given: a review is a one-shot text completion. With tools in scope
+		// the CLI runs its agentic loop and the model spends TURNS on tool
+		// calls instead of emitting the review, exiting `error_max_turns`
+		// with no review at all. `--disallowedTools` does not prevent this
+		// (it blocks execution, not availability — the model still emits
+		// `tool_use` and still burns the turns); only an empty `--tools`
+		// removes the definitions. This test pins the flag that fixes it.
+		bin, argvPath := writeArgvRecordingClaudeBinary(t)
+		t.Setenv("FAKE_ARGV_FILE", argvPath)
+		t.Setenv("FAKE_STDOUT", `{"result":"{\"summary\":\"ok\",\"comments\":[]}"}`)
+		repo := claude.NewAIReviewerRepository(bin, "sonnet", 1)
+
+		// when
+		result, err := repo.ReviewDiff(context.Background(), minimalReviewRequest())
+
+		// then
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		recorded, readErr := os.ReadFile(argvPath) //nolint:gosec // path is from t.TempDir
+		require.NoError(t, readErr)
+		argv := strings.Split(strings.TrimSuffix(string(recorded), "\n"), "\n")
+
+		toolsIdx := slices.Index(argv, "--tools")
+		require.NotEqual(t, -1, toolsIdx,
+			"the CLI must be invoked with --tools; without it the model keeps tools in scope")
+		require.Less(t, toolsIdx+1, len(argv), "--tools must be followed by its value")
+		assert.Empty(t, argv[toolsIdx+1],
+			`--tools must receive an EMPTY value: that is what disables every built-in tool`)
+
+		// `--tools` is variadic, so only a following `--`-prefixed flag
+		// terminates its value list. If it were placed last it would swallow
+		// nothing and the guarantee would silently vanish.
+		promptIdx := slices.Index(argv, "--system-prompt")
+		require.NotEqual(t, -1, promptIdx, "the system prompt flag must still be passed")
+		assert.Less(t, toolsIdx, promptIdx,
+			"--tools must precede a --flag that terminates its variadic value list")
 	})
 }
 
