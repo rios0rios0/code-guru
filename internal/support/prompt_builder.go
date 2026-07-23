@@ -338,11 +338,12 @@ func BuildUserPromptWithConversation(
 }
 
 // buildUserPrompt is the single renderer behind every user-prompt
-// entry point. Sections appear in fixed order — PR header, PR metadata
-// (description / commit count), project guidelines, prior conversation,
-// file diffs — and each optional section collapses to nothing when its
-// input is empty so the no-metadata / no-guidelines / no-conversation
-// prompt stays byte-for-byte identical to its historical shape.
+// entry point. Sections appear in fixed order — PR header, batch
+// framing, PR metadata (description / commit count), project
+// guidelines, prior conversation, file diffs — and each optional
+// section collapses to nothing when its input is empty so the
+// no-batch / no-metadata / no-guidelines / no-conversation prompt
+// stays byte-for-byte identical to its historical shape.
 func buildUserPrompt(request entities.ReviewRequest) string {
 	title := request.PullRequest.Title
 	sourceBranch := request.PullRequest.SourceBranch
@@ -354,6 +355,7 @@ func buildUserPrompt(request entities.ReviewRequest) string {
 	fmt.Fprintf(&prompt, "Pull request: %s\n", title)
 	fmt.Fprintf(&prompt, "Branch: %s -> %s\n\n", sourceBranch, targetBranch)
 
+	writeReviewBatchSection(&prompt, request.Batch)
 	writePullRequestMetadataSection(&prompt, request.Metadata)
 	writeProjectGuidelinesSection(&prompt, request.ProjectGuidelines)
 
@@ -435,6 +437,42 @@ func buildUserPrompt(request entities.ReviewRequest) string {
 	}
 
 	return prompt.String()
+}
+
+// writeReviewBatchSection renders the "Partial review" framing block for
+// one slice of a pull request that was too large to review in a single
+// pass, immediately after the PR header so the model reads the constraint
+// before anything else. A whole-PR request (`ReviewBatch.IsPartial()` is
+// false, the case for every normal review) renders nothing, keeping the
+// single-pass prompt byte-for-byte identical to its historical shape.
+//
+// The three bullets exist because a model handed a slice of a diff
+// reliably invents the same three findings about the parts it cannot see:
+// that a symbol is unused, that a change is untested / undocumented, and
+// that the change set is incomplete. All three are artefacts of the
+// split, not of the code, and each one costs the author a bogus review
+// thread to dismiss. Telling the model the diff is partial — and that its
+// verdict covers only the slice — is what keeps a batched review as
+// trustworthy as a single-pass one.
+func writeReviewBatchSection(prompt *strings.Builder, batch entities.ReviewBatch) {
+	if !batch.IsPartial() {
+		return
+	}
+	fmt.Fprintf(
+		prompt,
+		"PARTIAL REVIEW: this pull request is too large to review in a single pass, so it is being reviewed in "+
+			"batches. This is batch %d, carrying %d of the %d files changed in the pull request; the remaining "+
+			"files are reviewed in separate batches.\n",
+		batch.Index, batch.Files, batch.TotalFiles,
+	)
+	prompt.WriteString("- Review ONLY the files shown below. Never comment on a file that is not included here.\n")
+	prompt.WriteString(
+		"- Do NOT report a change as unused, untested, undocumented, or incomplete because its callers, tests, " +
+			"documentation, configuration, or migrations are absent — they are almost certainly in another batch.\n",
+	)
+	prompt.WriteString(
+		"- \"verdict\" and \"summary\" describe THIS batch only; they are merged with the other batches afterwards.\n\n",
+	)
 }
 
 // writePullRequestMetadataSection renders the "Pull request context"

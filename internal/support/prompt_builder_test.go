@@ -725,3 +725,61 @@ func TestBuildUserPromptWithPullRequestMetadata(t *testing.T) {
 		assert.Greater(t, diffAt, guidelinesAt, "the diff must come last")
 	})
 }
+
+// TestBuildUserPromptWithReviewBatch pins the framing a batched review
+// hands the model. Without it the model reviews a slice of a diff as if it
+// were the whole change and reports the parts it cannot see as missing —
+// "this function is never called", "the new flag has no tests" — findings
+// that are artefacts of the split, not of the code.
+func TestBuildUserPromptWithReviewBatch(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should tell the model it is looking at one slice of a larger change", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		request := newGuidelinesRequest()
+		request.Batch = entities.ReviewBatch{Index: 2, Files: 12, TotalFiles: 100}
+
+		// when
+		result := support.BuildUserPromptFor(request)
+
+		// then
+		assert.Contains(t, result, "PARTIAL REVIEW:",
+			"the constraint must be stated plainly, before anything else the model reads")
+		assert.Contains(t, result, "batch 2, carrying 12 of the 100 files")
+		assert.Contains(t, result, "Review ONLY the files shown below",
+			"the model must be told not to reach for files it cannot see")
+		assert.Contains(t, result, "unused, untested, undocumented, or incomplete",
+			"the three findings a sliced diff reliably invents must be pre-empted by name")
+		assert.Contains(t, result, "describe THIS batch only",
+			"the model's verdict must be scoped to its slice, since the verdicts are merged afterwards")
+	})
+
+	t.Run("should render nothing when the request covers the whole pull request", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the zero value (a normal single-pass review) and the
+		// degenerate case of a batch that happens to hold every file —
+		// neither has anything to warn the model about.
+		whole := newGuidelinesRequest()
+		single := newGuidelinesRequest()
+		single.Batch = entities.ReviewBatch{Index: 1, Files: 4, TotalFiles: 4}
+
+		// when
+		wholeResult := support.BuildUserPromptFor(whole)
+		singleResult := support.BuildUserPromptFor(single)
+
+		// then
+		want := support.BuildUserPrompt(
+			whole.PullRequest.Title,
+			whole.PullRequest.SourceBranch,
+			whole.PullRequest.TargetBranch,
+			whole.Diffs,
+		)
+		assert.Equal(t, want, wholeResult,
+			"a zero-value batch must leave the prompt byte-for-byte identical to the historical shape")
+		assert.Equal(t, want, singleResult,
+			"a batch holding the whole PR is not partial and must not carry the partial-review framing")
+	})
+}

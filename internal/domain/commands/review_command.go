@@ -19,9 +19,15 @@ import (
 // Verdict strings emitted on the review path. Mirrors the unexported
 // constants in `internal/support/verdict_mapper.go`; defined locally
 // because those are private to that package.
+//
+// `request_changes` belongs to the LLM vocabulary and `reject` to the
+// trivial detectors'; both are listed so `batchVerdictRank` can order the
+// full verdict surface when merging a batched review.
 const (
-	verdictApprove = "approve"
-	verdictComment = "comment"
+	verdictApprove        = "approve"
+	verdictComment        = "comment"
+	verdictRequestChanges = "request_changes"
+	verdictReject         = "reject"
 )
 
 // Review is the interface for the review command.
@@ -150,6 +156,27 @@ type ReviewOptions struct {
 	// `settings.AI.ProjectGuidelinesEnabled()` at each call site, which
 	// resolves the tri-state YAML / env config (default true).
 	LoadProjectGuidelines bool
+
+	// BatchLargeReviews, when true, makes a pull request whose prompt
+	// exceeds the AI model's context window fall back to a BATCHED
+	// review — the files are split into chunks that fit, reviewed one
+	// after another, and merged into a single review — instead of
+	// posting the "this PR is too large, no review was posted" notice
+	// and giving up. Defaults ON: wired from
+	// `settings.AI.BatchLargeReviewsEnabled()` (nil YAML/env → true) at
+	// each call site. Operators opt OUT with
+	// `ai.batch_large_reviews: false` when the extra model calls (one
+	// per batch, on a paid backend) are not worth it.
+	BatchLargeReviews bool
+
+	// MaxReviewBatches caps how many batches a single batched review may
+	// consume, bounding the cost and latency of one oversized pull
+	// request. Zero (the "unset" state, used by hand-built commands and
+	// tests) falls back to `entities.AIConfig.ReviewBatches()`'s default,
+	// on the same argument as MaxGuidelinesBytes. Files left over when
+	// the cap is reached are reported as unreviewed rather than silently
+	// dropped. Wired from `settings.AI.ReviewBatches()` at each call site.
+	MaxReviewBatches int
 
 	// LoadPullRequestMetadata, when true, fetches the PR's author-
 	// supplied metadata — its description and commit count — and
@@ -300,6 +327,17 @@ func (c *ReviewCommand) Execute(
 	}
 
 	result, err := c.aiReviewer.ReviewDiff(ctx, request)
+	// A pull request bigger than the model's context window is not a dead
+	// end — it is simply more than one prompt can hold. Fall back to
+	// reviewing it in batches (announced on the PR, because the run takes
+	// several times as long) instead of abandoning exactly the pull
+	// requests that most need a reviewer. Only a run where NOT ONE batch
+	// succeeded falls through to the failure annotation below.
+	if errors.Is(err, support.ErrContextWindowExceeded) && opts.BatchLargeReviews {
+		result, err = c.reviewLargePullRequest(
+			ctx, provider, repo, pr.ID, request, err, reviewFailureContextFrom(files, diffs), opts,
+		)
+	}
 	if err != nil {
 		// Post a user-visible failure annotation so the PR author
 		// understands the silence after the "reviewing" marker is a

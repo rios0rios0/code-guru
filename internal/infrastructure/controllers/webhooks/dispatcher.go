@@ -363,6 +363,8 @@ func (d *Dispatcher) HandlePR(
 		BotIdentities:             d.settings.BotIdentities,
 		LoadProjectGuidelines:     d.settings.AI.ProjectGuidelinesEnabled(),
 		LoadPullRequestMetadata:   d.settings.AI.PullRequestMetadataEnabled(),
+		BatchLargeReviews:         d.settings.AI.BatchLargeReviewsEnabled(),
+		MaxReviewBatches:          d.settings.AI.ReviewBatches(),
 	})
 	if err != nil {
 		return fmt.Errorf("review failed for PR #%d: %w", pr.ID, err)

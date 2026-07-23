@@ -1212,3 +1212,145 @@ trivial:
 		assert.True(t, settings.Trivial.DeleteSourceBranchEnabled())
 	})
 }
+
+func TestBatchLargeReviewsEnabled(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should default to true when BatchLargeReviews is nil", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the YAML / env "unset" state. Default ON matters here:
+		// before batching, an oversized pull request got no review at all,
+		// so a deployment that never touches the flag must pick up the
+		// fallback automatically.
+		ai := entities.AIConfig{BatchLargeReviews: nil}
+
+		// when / then
+		assert.True(t, ai.BatchLargeReviewsEnabled())
+	})
+
+	t.Run("should return false when the operator explicitly opts out", func(t *testing.T) {
+		t.Parallel()
+
+		// given: `batch_large_reviews: false` restores the old "post a
+		// too-large notice and review nothing" behaviour, typically to cap
+		// spend on a paid backend.
+		v := false
+		ai := entities.AIConfig{BatchLargeReviews: &v}
+
+		// when / then
+		assert.False(t, ai.BatchLargeReviewsEnabled())
+	})
+}
+
+func TestReviewBatches(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		maxBatch int
+		want     int
+	}{
+		{name: "should default to 20 when unset (zero)", maxBatch: 0, want: 20},
+		{name: "should default to 20 when negative", maxBatch: -4, want: 20},
+		{name: "should honour an explicit lower cap", maxBatch: 5, want: 5},
+		{name: "should honour an explicit higher cap", maxBatch: 60, want: 60},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			cfg := entities.AIConfig{MaxReviewBatches: tt.maxBatch}
+
+			// when / then
+			assert.Equal(t, tt.want, cfg.ReviewBatches())
+		})
+	}
+}
+
+func TestNewSettingsBatchingEnvOverrides(t *testing.T) {
+	// Both knobs must be settable per-environment on a YAML-configured pod,
+	// the same contract every other AI kill switch and budget follows.
+
+	t.Run("should override YAML batch_large_reviews and max_review_batches from the env", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+  batch_large_reviews: true
+  max_review_batches: 8
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		t.Setenv("CODE_GURU_AI_BATCH_LARGE_REVIEWS", "false")
+		t.Setenv("CODE_GURU_AI_MAX_REVIEW_BATCHES", "3")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.False(t, settings.AI.BatchLargeReviewsEnabled(),
+			"env must override YAML so an operator can disable batching per-environment")
+		assert.Equal(t, 3, settings.AI.ReviewBatches())
+	})
+
+	t.Run("should keep the YAML values when the env vars are unset", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+  max_review_batches: 8
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, settings.AI.BatchLargeReviewsEnabled(),
+			"an unset kill switch must leave the default-ON resolver in charge")
+		assert.Equal(t, 8, settings.AI.ReviewBatches())
+	})
+}
+
+func TestNewSettingsFromEnvBatching(t *testing.T) {
+	t.Run("should leave the batching flag nil when unset so the default ON path takes over", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "openai")
+		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Nil(t, settings.AI.BatchLargeReviews,
+			"unset CODE_GURU_AI_BATCH_LARGE_REVIEWS must leave the pointer nil so the default-ON resolver fires")
+		assert.True(t, settings.AI.BatchLargeReviewsEnabled())
+		assert.Equal(t, 20, settings.AI.ReviewBatches())
+	})
+
+	t.Run("should read both batching knobs from the environment", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "openai")
+		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+		t.Setenv("CODE_GURU_AI_BATCH_LARGE_REVIEWS", "false")
+		t.Setenv("CODE_GURU_AI_MAX_REVIEW_BATCHES", "6")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.False(t, settings.AI.BatchLargeReviewsEnabled())
+		assert.Equal(t, 6, settings.AI.ReviewBatches())
+	})
+}

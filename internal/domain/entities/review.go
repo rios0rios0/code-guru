@@ -65,12 +65,53 @@ type PullRequestMetadata struct {
 	CommitCount int
 }
 
+// ReviewBatch describes this request's position inside a MULTI-BATCH
+// review of a single pull request. A pull request whose assembled prompt
+// exceeds the model's context window is not abandoned: the command layer
+// splits its files into batches and reviews them one after another (see
+// `commands.batchReviewer`), then merges the per-batch results into one
+// review. Each of those calls carries a populated ReviewBatch so the
+// prompt can tell the model it is looking at a SLICE of the change.
+//
+// Without that framing the model reviews a partial diff as if it were the
+// whole PR and reports false findings — "this function is never called",
+// "the new flag has no tests", "the migration has no rollback" — when the
+// caller, the test, and the rollback are simply in another batch.
+//
+// The zero value means "this request covers the whole pull request", and
+// every prompt section keyed on it collapses to nothing, so a normal
+// single-pass review keeps its historical byte-for-byte prompt shape.
+type ReviewBatch struct {
+	// Index is the 1-based position of this batch in the run. 0 on a
+	// single-pass review.
+	Index int
+	// Files is the number of changed files carried by THIS batch.
+	Files int
+	// TotalFiles is the number of changed files in the whole pull
+	// request, so the prompt can state the slice's proportion.
+	TotalFiles int
+}
+
+// IsPartial reports whether the request carries only a slice of the pull
+// request's changed files — the condition every batch-aware prompt
+// section is gated on. A zero value, or a batch that happens to carry
+// every changed file, is NOT partial: there is nothing the model must be
+// warned about, so the prompt stays in its single-pass shape.
+func (b ReviewBatch) IsPartial() bool {
+	return b.Index > 0 && b.Files > 0 && b.Files < b.TotalFiles
+}
+
 // ReviewRequest encapsulates the input needed to perform a review.
 type ReviewRequest struct {
 	Repository  forgeEntities.Repository
 	PullRequest forgeEntities.PullRequestDetail
 	Diffs       []FileDiff
 	Rules       []Rule
+
+	// Batch marks this request as one slice of a pull request that was
+	// too large to review in a single pass. Zero on the normal path.
+	// See [ReviewBatch] for why the model has to be told.
+	Batch ReviewBatch
 
 	// Metadata carries the PR's author-supplied context (description,
 	// commit count) fetched from the provider at review time. Zero when

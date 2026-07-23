@@ -84,6 +84,11 @@ ai:
   # backend (e.g. a 128K-token model, or Anthropic with context_1m disabled).
   max_guidelines_bytes: 1048576
   max_pr_description_bytes: 65536
+  # When true (the default), a pull request too large for the model's context
+  # window is reviewed in batches instead of being skipped. Costs one model
+  # call per batch; max_review_batches caps how many a single review may use.
+  batch_large_reviews: true
+  max_review_batches: 20
   claude:
     binary_path: 'claude'
     model: 'sonnet'
@@ -423,6 +428,8 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_AI_MAX_ATTEMPTS`           | Times the AI backend is re-sampled per review when it returns a non-JSON or transient-error response before the review is marked failed (`1` disables retries) | `3`                  |
 | `CODE_GURU_AI_PROJECT_GUIDELINES`     | Loads the reviewed repository's own `CLAUDE.md` as project-specific review context; set to `false` to opt out | `true`               |
 | `CODE_GURU_AI_PR_METADATA`            | Fetches the PR's description and commit count as intent context for the AI; set to `false` to opt out | `true`               |
+| `CODE_GURU_AI_BATCH_LARGE_REVIEWS`    | Reviews a PR too large for the model's context window in batches instead of skipping it; set to `false` to get the "too large" notice and no review | `true`               |
+| `CODE_GURU_AI_MAX_REVIEW_BATCHES`     | Caps how many batches one batched review may consume; files left over are reported as unreviewed | `20`                 |
 | `CODE_GURU_ANTHROPIC_CONTEXT_1M`      | Requests the Anthropic 1M-token context window (`context-1m-2025-08-07` beta) so larger PRs fit in one review pass; set to `false` for accounts/models that cannot use the beta | `true`               |
 | `CODE_GURU_ANTHROPIC_REFUSAL_FALLBACK_MODEL` | Anthropic model to re-issue the review against when the primary model declines the content on content-safety grounds (`stop_reason: refusal`); empty disables the fallback | (empty)              |
 | `CODE_GURU_BOT_IDENTITIES`            | Comma-separated account identities the bot posts under (so re-reviews recognise its own prior threads); the built-in `code-guru` shape and self-detection apply when unset |                      |
@@ -476,11 +483,16 @@ Enabled by default; opt out with `ai.pr_metadata: false` or `CODE_GURU_AI_PR_MET
 
 ## Large pull requests
 
-Every review sends the full diff — plus the rules, the repository's `CLAUDE.md`, the PR metadata, and any prior review conversation — to the AI backend in a single request. When that combined prompt is larger than the model's context window, the review cannot be produced, and Code Guru handles it explicitly rather than failing silently:
+Every review sends the full diff — plus the rules, the repository's `CLAUDE.md`, the PR metadata, and any prior review conversation — to the AI backend in a single request. When that combined prompt is larger than the model's context window, one pass cannot produce the review, so Code Guru splits the work instead of giving up:
 
-- **A clear failure notice.** The PR gets a "too large for the AI model's context window" annotation that reports the change's scale (file count and total diff size) and the correct next steps — split the change into smaller pull requests, or exclude generated/vendored/lock files — instead of a generic "try again" message. Retrying or pushing more commits does not help, because the diff only grows.
-- **No wasted retries.** A prompt-too-long failure is deterministic (the prompt is identical on every attempt), so the retry budget is skipped entirely for this class of failure.
-- **A larger window on Anthropic.** The Anthropic backend requests the 1M-token context window (`context-1m-2025-08-07` beta) by default, so pull requests up to roughly five times larger fit in one pass before hitting this path. For prompts under 200K tokens the beta is a no-op; very large prompts may incur Anthropic long-context pricing. Opt out with `ai.anthropic.context_1m: false` or `CODE_GURU_ANTHROPIC_CONTEXT_1M=false` on accounts or models that cannot use the beta.
+- **The change is reviewed in batches.** The files are split into chunks that fit the model, reviewed one after another, and merged into a single review: the union of every batch's findings, and the most severe verdict any batch reported (one blocking finding blocks the pull request). The batch size is discovered from the backend's own overflow report and shrinks until it fits, so it adapts to the model, the beta flags in play, and how much of the window the rules and guidelines already consume.
+- **The pull request is told what is happening.** Before the batches run, the PR gets a "reviewing this PR in batches" notice reporting the change's scale (file count and total diff size) and warning that the review **will** arrive but takes several times longer than usual — so nobody reads the delay as a crashed bot and merges early.
+- **Each batch knows it is only a slice.** Its prompt states which part of the change it holds, so the model does not report the files it cannot see as an unused symbol, a missing test, or an incomplete change — the three findings a partial diff reliably invents.
+- **Gaps are reported, never hidden.** A file too large to review even on its own, a failed batch, or a run that hits the batch cap is named in the final summary, and a review that could not cover the whole change never reports `approve`.
+- **Splitting the pull request is still better.** A batched review is a weaker review: each batch sees only its own files, so a finding that spans two batches is invisible to it. The notice keeps the "split the change / exclude generated, vendored, and lock files" guidance for that reason.
+- **Cost control.** Batching costs one model call per batch. `ai.max_review_batches` (`CODE_GURU_AI_MAX_REVIEW_BATCHES`, default `20`) caps a single review; `ai.batch_large_reviews: false` (`CODE_GURU_AI_BATCH_LARGE_REVIEWS=false`) turns the fallback off entirely, restoring the previous behaviour where an oversized pull request gets a "too large for the AI model's context window" annotation and no review.
+- **No wasted retries.** A prompt-too-long failure is deterministic (the prompt is identical on every attempt), so the retry budget is skipped entirely for this class of failure — the batch split is the remedy, not a re-sample.
+- **A larger window on Anthropic.** The Anthropic backend requests the 1M-token context window (`context-1m-2025-08-07` beta) by default, so pull requests up to roughly five times larger fit in one pass before batching is needed at all. For prompts under 200K tokens the beta is a no-op; very large prompts may incur Anthropic long-context pricing. Opt out with `ai.anthropic.context_1m: false` or `CODE_GURU_ANTHROPIC_CONTEXT_1M=false` on accounts or models that cannot use the beta.
 
 ## Content-safety refusals
 
