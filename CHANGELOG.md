@@ -16,14 +16,16 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-07-23
+
 ### Added
 
 - added operator-configurable prompt budgets for the two documents the reviewer loads alongside the diff: `ai.max_guidelines_bytes` (`CODE_GURU_AI_MAX_GUIDELINES_BYTES`) and `ai.max_pr_description_bytes` (`CODE_GURU_AI_MAX_PR_DESCRIPTION_BYTES`). Lower them when the configured backend has a small context window; leaving them unset keeps the shipped defaults
 
 ### Changed
 
-- changed the project-guidelines budget from 32 KiB to 1 MiB (~256k tokens, about a quarter of a 1M-token context window) and the pull request description budget from 16 KiB to 64 KiB, so a large but entirely legitimate `CLAUDE.md` now reaches the model whole. The old 32 KiB ceiling was sized for a 200K-token window and silently truncated well-maintained guidelines files mid-document, leaving the model to judge the diff against half of the project's conventions — a worse failure than a long prompt, because nothing surfaced that the standard was incomplete. Truncation now also logs a warning naming the file size and the budget. **Deployments on a small-context-window model (for example a 128K-token backend, or Anthropic with `ai.anthropic.context_1m` disabled) should lower `ai.max_guidelines_bytes`**: the new default assumes a 1M-token window, and a pathologically large guidelines file could otherwise claim context the diff needs
 - changed the Go module dependencies to their latest versions
+- changed the project-guidelines budget from 32 KiB to 1 MiB (~256k tokens, about a quarter of a 1M-token context window) and the pull request description budget from 16 KiB to 64 KiB, so a large but entirely legitimate `CLAUDE.md` now reaches the model whole. The old 32 KiB ceiling was sized for a 200K-token window and silently truncated well-maintained guidelines files mid-document, leaving the model to judge the diff against half of the project's conventions — a worse failure than a long prompt, because nothing surfaced that the standard was incomplete. Truncation now also logs a warning naming the file size and the budget. **Deployments on a small-context-window model (for example a 128K-token backend, or Anthropic with `ai.anthropic.context_1m` disabled) should lower `ai.max_guidelines_bytes`**: the new default assumes a 1M-token window, and a pathologically large guidelines file could otherwise claim context the diff needs
 
 ### Fixed
 
