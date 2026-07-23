@@ -16,11 +16,14 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added `trivial.delete_source_branch` (`CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH`, tri-state, default **on**) so a trivial PR that auto-merges also has its source branch deleted once the merge completes. The bot forwards `gitforge`'s new `WithDeleteSourceBranch` merge option — Azure DevOps removes the branch server-side on the completion call, GitHub deletes the head ref afterwards. It only takes effect when `trivial.auto_merge` fires (no merge, no branch to delete), and branch deletion is best-effort in the provider so a failure never fails the merge. Set it to `false` (or `CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH=false`) to keep the branch. Requires the `gitforge` version that ships the option.
+
 ## [1.12.0] - 2026-07-23
 
 ### Added
 
-- added `trivial.delete_source_branch` (`CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH`, tri-state, default **on**) so a trivial PR that auto-merges also has its source branch deleted once the merge completes. The bot forwards `gitforge`'s new `WithDeleteSourceBranch` merge option — Azure DevOps removes the branch server-side on the completion call, GitHub deletes the head ref afterwards. It only takes effect when `trivial.auto_merge` fires (no merge, no branch to delete), and branch deletion is best-effort in the provider so a failure never fails the merge. Set it to `false` (or `CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH=false`) to keep the branch. Requires the `gitforge` version that ships the option
 - added operator-configurable prompt budgets for the two documents the reviewer loads alongside the diff: `ai.max_guidelines_bytes` (`CODE_GURU_AI_MAX_GUIDELINES_BYTES`) and `ai.max_pr_description_bytes` (`CODE_GURU_AI_MAX_PR_DESCRIPTION_BYTES`). Lower them when the configured backend has a small context window; leaving them unset keeps the shipped defaults
 
 ### Changed

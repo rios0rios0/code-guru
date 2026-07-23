@@ -341,8 +341,8 @@ type TrivialConfig struct {
 	// `CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS` (comma-separated).
 	AutoMergeAllowedAuthors []string `yaml:"auto_merge_allowed_authors"`
 	// DeleteSourceBranch, when set, controls whether an auto-merged trivial
-	// PR also has its source branch deleted once the merge completes (the
-	// `git.MergeOption` `WithDeleteSourceBranch`). Tri-state: nil resolves to
+	// PR also has its source branch deleted once the merge completes (gitforge's
+	// `WithDeleteSourceBranch` merge option). Tri-state: nil resolves to
 	// true via DeleteSourceBranchEnabled (default ON) — the common desire is a
 	// clean branch list after the bot merges an automation PR. Only takes
 	// effect when AutoMerge actually fires; without a merge there is no branch
