@@ -340,6 +340,29 @@ type TrivialConfig struct {
 	// force-merges every trivial PR past `Required reviewers`). Honours
 	// `CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS` (comma-separated).
 	AutoMergeAllowedAuthors []string `yaml:"auto_merge_allowed_authors"`
+	// DeleteSourceBranch, when set, controls whether an auto-merged trivial
+	// PR also has its source branch deleted once the merge completes (gitforge's
+	// `WithDeleteSourceBranch` merge option). Tri-state: nil resolves to
+	// true via DeleteSourceBranchEnabled (default ON) — the common desire is a
+	// clean branch list after the bot merges an automation PR. Only takes
+	// effect when AutoMerge actually fires; without a merge there is no branch
+	// to delete. Set `delete_source_branch: false` in YAML or
+	// CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH=false to keep the branch. Branch
+	// deletion is best-effort in gitforge: a failure never fails the merge.
+	DeleteSourceBranch *bool `yaml:"delete_source_branch"`
+}
+
+// DeleteSourceBranchEnabled resolves the tri-state DeleteSourceBranch pointer
+// into a plain bool: an unset value (nil) defaults to true, so a trivial
+// auto-merge deletes the source branch unless an operator explicitly opts out
+// with `delete_source_branch: false` or CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH=false.
+// Callers should always go through this method rather than dereferencing the
+// pointer so the default is applied consistently.
+func (t TrivialConfig) DeleteSourceBranchEnabled() bool {
+	if t.DeleteSourceBranch == nil {
+		return true
+	}
+	return *t.DeleteSourceBranch
 }
 
 // ServerConfig holds settings for the webhook server.
@@ -408,6 +431,12 @@ func NewSettings(path string) (*Settings, error) {
 	}
 	if authors := splitCSV(os.Getenv("CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS")); len(authors) > 0 {
 		settings.Trivial.AutoMergeAllowedAuthors = authors
+	}
+	// Tri-state kill switch for the default-ON source-branch deletion: only an
+	// explicit CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH overrides the YAML value,
+	// so an unset env var leaves whatever the config file said (or nil = ON).
+	if v := parseOptionalBoolEnv("CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH"); v != nil {
+		settings.Trivial.DeleteSourceBranch = v
 	}
 	if ids := splitCSV(os.Getenv("CODE_GURU_BOT_IDENTITIES")); len(ids) > 0 {
 		settings.BotIdentities = ids
@@ -543,6 +572,7 @@ func NewSettingsFromEnv() (*Settings, error) {
 			MergeStrategy:           strings.TrimSpace(os.Getenv("CODE_GURU_TRIVIAL_MERGE_STRATEGY")),
 			BypassPolicy:            parseBoolEnv("CODE_GURU_TRIVIAL_BYPASS_POLICIES", false),
 			AutoMergeAllowedAuthors: splitCSV(os.Getenv("CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS")),
+			DeleteSourceBranch:      parseOptionalBoolEnv("CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH"),
 		},
 		Server: ServerConfig{
 			Port:                 port,

@@ -219,6 +219,7 @@ trivial:
     - 'docs-only'
   auto_merge: false      # opt-in; true completes the PR after a trivial-approve verdict
   merge_strategy: ''     # 'merge' / 'squash' / 'rebase' — empty falls back to platform default
+  delete_source_branch: true   # default on; deletes the source branch after an auto-merge (false keeps it)
   auto_merge_allowed_authors:   # restrict auto-merge to these PR authors; empty = any author
     - 'autobump@example.com'
     - 'autoupdate@example.com'
@@ -230,12 +231,15 @@ Or via environment variables:
 CODE_GURU_TRIVIAL_ADAPTERS=update-go,bump-go,docs-only
 CODE_GURU_TRIVIAL_AUTO_MERGE=true
 CODE_GURU_TRIVIAL_MERGE_STRATEGY=squash
+CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH=false   # keep the source branch after an auto-merge (default deletes it)
 CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS=autobump@example.com,autoupdate@example.com
 ```
 
 `auto_merge` is intentionally off by default — it bypasses human review and merges cross-system, so the gate is "operator must explicitly opt in". A merge failure logs at warn and the trivial-approve verdict still stands; the PR author can complete the merge manually from the platform UI.
 
 `auto_merge_allowed_authors` decides **who** is trusted to merge unattended, separately from triviality (which decides **what** is eligible). When non-empty, only PRs whose author matches an entry (case-insensitive) auto-merge — so a human's docs PR is approved but left for a human to merge, while a trusted automation account's PR (dependency bumps, version bumps, config refresh) merges on its own. Leaving it empty keeps the historical "any author" behaviour; that is **not recommended together with policy bypass**, because it force-merges every trivial PR — including a human's — past `Required reviewers` (the bot logs a warning in that case). A docs-only diff is not inherently safe: prose can carry a malicious install command, a poisoned package name, or a phishing link, and bypass means no human ever reviews it.
+
+`delete_source_branch` is **on by default**: when a trivial PR auto-merges, its source branch is deleted once the merge completes — Azure DevOps removes it as part of completing the PR, GitHub deletes the head ref afterwards. It only has an effect when `auto_merge` actually fires (no merge, no branch to delete), and the deletion is best-effort — a failure is logged and never fails the merge, so the PR still shows as merged. Set it to `false` (or `CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH=false`) to keep merged branches in place.
 
 ## Server / Webhook Mode
 
@@ -413,6 +417,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_TRIVIAL_AUTO_MERGE`        | Opt-in flag that completes the PR after a trivial-approve verdict        | `false`              |
 | `CODE_GURU_TRIVIAL_MERGE_STRATEGY`    | gitforge merge strategy (`merge` / `squash` / `rebase`); empty = default |                      |
 | `CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS` | Comma-separated PR-author identities allowed to auto-merge; empty = any author (not recommended with bypass) |                      |
+| `CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH` | Deletes the source branch after a trivial auto-merge; set `false` to keep it | `true`               |
 | `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW`   | Records a native review (Approved / Changes Requested) on the platform's reviewer panel; set to `false` to opt out | `true`               |
 | `CODE_GURU_AI_REVIEW_DRAFTS`          | When `true`, the bot reviews draft PRs as well — by default drafts are skipped | `false`              |
 | `CODE_GURU_AI_MAX_ATTEMPTS`           | Times the AI backend is re-sampled per review when it returns a non-JSON or transient-error response before the review is marked failed (`1` disables retries) | `3`                  |

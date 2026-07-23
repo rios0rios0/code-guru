@@ -6,7 +6,7 @@ require github.com/rios0rios0/cliforge v0.3.14
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/rios0rios0/gitforge v1.0.1-0.20260605155642-b0af1491fb99
+	github.com/rios0rios0/gitforge v1.0.1-0.20260723193418-4150608363f0
 	github.com/rios0rios0/langforge v0.6.11
 	github.com/rios0rios0/testkit v0.2.6
 	github.com/sashabaranov/go-openai v1.41.2

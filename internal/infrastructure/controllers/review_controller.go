@@ -136,20 +136,21 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 	ciPassed := false
 
 	result, err := reviewCmd.Execute(ctx, reviewProvider, repo, *targetPR, commands.ReviewOptions{
-		DryRun:                  dryRun,
-		Verbose:                 verbose,
-		CIPassed:                ciPassed,
-		SubmitNativeReview:      settings.AI.NativeReviewSubmissionEnabled(),
-		MaxGuidelinesBytes:      settings.AI.GuidelinesBytes(),
-		MaxPRDescriptionBytes:   settings.AI.PRDescriptionBytes(),
-		ReviewDrafts:            settings.AI.ReviewDrafts,
-		TrivialAutoMerge:        settings.Trivial.AutoMerge,
-		TrivialMergeStrategy:    settings.Trivial.MergeStrategy,
-		TrivialBypassPolicy:     settings.Trivial.BypassPolicy,
-		TrivialAutoMergeAuthors: settings.Trivial.AutoMergeAllowedAuthors,
-		BotIdentities:           settings.BotIdentities,
-		LoadProjectGuidelines:   settings.AI.ProjectGuidelinesEnabled(),
-		LoadPullRequestMetadata: settings.AI.PullRequestMetadataEnabled(),
+		DryRun:                    dryRun,
+		Verbose:                   verbose,
+		CIPassed:                  ciPassed,
+		SubmitNativeReview:        settings.AI.NativeReviewSubmissionEnabled(),
+		MaxGuidelinesBytes:        settings.AI.GuidelinesBytes(),
+		MaxPRDescriptionBytes:     settings.AI.PRDescriptionBytes(),
+		ReviewDrafts:              settings.AI.ReviewDrafts,
+		TrivialAutoMerge:          settings.Trivial.AutoMerge,
+		TrivialMergeStrategy:      settings.Trivial.MergeStrategy,
+		TrivialBypassPolicy:       settings.Trivial.BypassPolicy,
+		TrivialAutoMergeAuthors:   settings.Trivial.AutoMergeAllowedAuthors,
+		TrivialDeleteSourceBranch: settings.Trivial.DeleteSourceBranchEnabled(),
+		BotIdentities:             settings.BotIdentities,
+		LoadProjectGuidelines:     settings.AI.ProjectGuidelinesEnabled(),
+		LoadPullRequestMetadata:   settings.AI.PullRequestMetadataEnabled(),
 	})
 	if err != nil {
 		logger.Errorf("review failed: %v", err)

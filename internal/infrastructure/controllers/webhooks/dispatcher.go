@@ -349,19 +349,20 @@ func (d *Dispatcher) HandlePR(
 	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, d.detectorRegistry, d.metadataRepo)
 
 	result, err := reviewCmd.Execute(ctx, provider, repo, pr, commands.ReviewOptions{
-		CIPassed:                ciPassed,
-		SubmitNativeReview:      d.settings.AI.NativeReviewSubmissionEnabled(),
-		MaxGuidelinesBytes:      d.settings.AI.GuidelinesBytes(),
-		MaxPRDescriptionBytes:   d.settings.AI.PRDescriptionBytes(),
-		ReviewDrafts:            d.settings.AI.ReviewDrafts,
-		UserMentioned:           userMentioned,
-		TrivialAutoMerge:        d.settings.Trivial.AutoMerge,
-		TrivialMergeStrategy:    d.settings.Trivial.MergeStrategy,
-		TrivialBypassPolicy:     d.settings.Trivial.BypassPolicy,
-		TrivialAutoMergeAuthors: d.settings.Trivial.AutoMergeAllowedAuthors,
-		BotIdentities:           d.settings.BotIdentities,
-		LoadProjectGuidelines:   d.settings.AI.ProjectGuidelinesEnabled(),
-		LoadPullRequestMetadata: d.settings.AI.PullRequestMetadataEnabled(),
+		CIPassed:                  ciPassed,
+		SubmitNativeReview:        d.settings.AI.NativeReviewSubmissionEnabled(),
+		MaxGuidelinesBytes:        d.settings.AI.GuidelinesBytes(),
+		MaxPRDescriptionBytes:     d.settings.AI.PRDescriptionBytes(),
+		ReviewDrafts:              d.settings.AI.ReviewDrafts,
+		UserMentioned:             userMentioned,
+		TrivialAutoMerge:          d.settings.Trivial.AutoMerge,
+		TrivialMergeStrategy:      d.settings.Trivial.MergeStrategy,
+		TrivialBypassPolicy:       d.settings.Trivial.BypassPolicy,
+		TrivialAutoMergeAuthors:   d.settings.Trivial.AutoMergeAllowedAuthors,
+		TrivialDeleteSourceBranch: d.settings.Trivial.DeleteSourceBranchEnabled(),
+		BotIdentities:             d.settings.BotIdentities,
+		LoadProjectGuidelines:     d.settings.AI.ProjectGuidelinesEnabled(),
+		LoadPullRequestMetadata:   d.settings.AI.PullRequestMetadataEnabled(),
 	})
 	if err != nil {
 		return fmt.Errorf("review failed for PR #%d: %w", pr.ID, err)
