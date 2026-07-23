@@ -38,6 +38,13 @@ type windowedAIReviewer struct {
 	// test can assert coverage (every file reviewed exactly once), the
 	// batch framing, and the conversation partitioning.
 	requests []entities.ReviewRequest
+	// successfulCalls counts only the calls that fit the window, so the
+	// scripted responses below stay pinned to the batches the planner
+	// actually reviewed. Indexing off `len(requests)` instead would shift
+	// every scripted verdict by however many overflow probes the planner
+	// happened to spend finding a size that fits — a test asserting on the
+	// third batch's verdict would silently start asserting on the second.
+	successfulCalls int
 	// verdicts, when set, supplies the verdict for the Nth (1-based)
 	// successful call; calls past the end fall back to `approve`.
 	verdicts []string
@@ -74,7 +81,8 @@ func (r *windowedAIReviewer) ReviewDiff(
 		)
 	}
 
-	call := len(r.requests)
+	r.successfulCalls++
+	call := r.successfulCalls
 	result := &entities.ReviewResult{Verdict: "approve"}
 	if call <= len(r.verdicts) {
 		result.Verdict = r.verdicts[call-1]
@@ -277,6 +285,35 @@ func TestReviewInBatches(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "request_changes", result.Verdict,
 			"a blocking finding in ANY batch blocks the pull request — the merge must not average verdicts away")
+	})
+
+	t.Run("should keep the scripted verdicts pinned to batches, not to overflow probes", func(t *testing.T) {
+		t.Parallel()
+
+		// given: an overflow error with no token figures, so the planner has
+		// to spend a probe before it finds a size that fits. The blocking
+		// verdict is scripted for the FIRST reviewed batch — if the probe
+		// consumed that slot, the run would come back `approve` and every
+		// verdict-sequencing assertion in this file would be testing the
+		// wrong batch.
+		reviewer := &windowedAIReviewer{
+			windowBytes: 250,
+			verdicts:    []string{"request_changes"},
+		}
+		command := commands.NewReviewCommand(reviewer, nil, nil, nil)
+		request := entities.ReviewRequest{Diffs: fileDiffs(6, 100)}
+
+		// when
+		result, err := commands.ReviewInBatches(
+			command, context.Background(), request, errors.New("prompt is too long"), 20,
+		)
+
+		// then
+		require.Greater(t, len(reviewer.requests), reviewer.successfulCalls,
+			"this scenario is only meaningful while the planner spends at least one overflow probe")
+		assert.Equal(t, "request_changes", result.Verdict,
+			"the first REVIEWED batch must receive the first scripted verdict, regardless of how many probes preceded it")
+		require.NoError(t, err)
 	})
 
 	t.Run("should carry every batch's summary into the merged one, bounded", func(t *testing.T) {
