@@ -101,6 +101,8 @@ func (c *ReviewAllController) Execute(cmd *cobra.Command, _ []string) {
 		BotIdentities:           settings.BotIdentities,
 		LoadProjectGuidelines:   settings.AI.ProjectGuidelinesEnabled(),
 		LoadPullRequestMetadata: settings.AI.PullRequestMetadataEnabled(),
+		BatchLargeReviews:       settings.AI.BatchLargeReviewsEnabled(),
+		MaxReviewBatches:        settings.AI.ReviewBatches(),
 	})
 	if err != nil {
 		logger.Warnf("batch review completed with errors: %v", err)

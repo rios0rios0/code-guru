@@ -125,6 +125,40 @@ var (
 	// tests can pin the file-count + diff-byte figures the too-large
 	// annotation reports, without driving the full Execute flow.
 	ReviewFailureContextFrom = reviewFailureContextFrom
+
+	// ReviewInBatches re-exports the context-window fallback so tests can
+	// drive a whole batched run against a scripted backend — the split,
+	// the shrink ladder, the merge, and the unreviewed-file accounting —
+	// without standing up a provider or going through Execute.
+	ReviewInBatches = (*ReviewCommand).reviewInBatches
+
+	// BuildBatchedReviewNoticeBody is the pure renderer for the "⏳
+	// reviewing in batches" notice that replaces the old "too large, no
+	// review posted" annotation. Exposed so tests can pin BOTH the
+	// wording and the marker contract (it must carry the shared
+	// annotation prefix but NOT the review-once marker).
+	BuildBatchedReviewNoticeBody = buildBatchedReviewNoticeBody
+
+	// InitialBatchBudget re-exports the first-batch sizing helper so tests
+	// can pin the token-overage arithmetic and the halving fallback.
+	InitialBatchBudget = initialBatchBudget
+
+	// MergeBatchVerdicts re-exports the severity-ranked verdict merge.
+	MergeBatchVerdicts = mergeBatchVerdicts
+
+	// RemapBatchThreadResolutions re-exports the batch-local -> run-global
+	// thread-id rewrite, the guard against a batch's resolutions being
+	// applied to another batch's threads.
+	RemapBatchThreadResolutions = remapBatchThreadResolutions
+
+	// DiffPromptWeight / TotalDiffPromptWeight re-export the per-file and
+	// aggregate prompt-weight estimates the batch planner sizes against.
+	DiffPromptWeight      = diffPromptWeight
+	TotalDiffPromptWeight = totalDiffPromptWeight
+
+	// ResolveMaxReviewBatches re-exports the zero-falls-back-to-default
+	// batch-cap resolver.
+	ResolveMaxReviewBatches = resolveMaxReviewBatches
 )
 
 // DefaultMaxProjectGuidelinesBytes / DefaultMaxPRDescriptionBytes re-export

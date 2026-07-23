@@ -128,6 +128,30 @@ type AIConfig struct {
 	// unset or non-positive). Honours
 	// CODE_GURU_AI_MAX_PR_DESCRIPTION_BYTES.
 	MaxPRDescriptionBytes int `yaml:"max_pr_description_bytes"`
+
+	// BatchLargeReviews, when set, controls whether a pull request that
+	// does not fit the model's context window is reviewed in BATCHES —
+	// its files split into chunks that fit, reviewed one after another,
+	// and merged into a single review — instead of being abandoned with
+	// a "too large, split your PR" notice. The batched run costs one
+	// model call per batch and takes proportionally longer, which is why
+	// it announces itself on the pull request.
+	//
+	// Tri-state pointer so YAML / env "unset" can mean "use the default":
+	// nil resolves to true via BatchLargeReviewsEnabled (default ON).
+	// Operators that want the old give-up behaviour — typically to cap
+	// spend on a paid backend — explicitly set
+	// `batch_large_reviews: false` in YAML or
+	// CODE_GURU_AI_BATCH_LARGE_REVIEWS=false. Call sites should always
+	// read the resolved value via BatchLargeReviewsEnabled rather than
+	// dereferencing the pointer directly.
+	BatchLargeReviews *bool `yaml:"batch_large_reviews"`
+
+	// MaxReviewBatches caps how many batches a single batched review may
+	// consume. Resolve via ReviewBatches() (defaults to
+	// defaultMaxReviewBatches when unset or non-positive). Honours
+	// CODE_GURU_AI_MAX_REVIEW_BATCHES.
+	MaxReviewBatches int `yaml:"max_review_batches"`
 }
 
 // defaultReviewAttempts is the attempt budget applied when AI.MaxAttempts is
@@ -146,6 +170,44 @@ func (a AIConfig) ReviewAttempts() int {
 		return defaultReviewAttempts
 	}
 	return a.MaxAttempts
+}
+
+// defaultMaxReviewBatches is the batch cap applied when
+// AI.MaxReviewBatches is unset or non-positive.
+//
+// 20 sequential model calls is a deliberately generous ceiling: it covers a
+// ~4 MB diff even on a 128K-token model (the smallest window any supported
+// backend runs), while still bounding a pathological change — a vendored
+// dependency drop, an accidental `node_modules` commit — to a review that
+// finishes rather than one that runs for hours and costs proportionally.
+// Files still queued when the cap is reached are reported as unreviewed in
+// the merged summary, so the author is never told a truncated review was
+// complete.
+const defaultMaxReviewBatches = 20
+
+// ReviewBatches resolves the per-review batch cap. An unset or non-positive
+// MaxReviewBatches falls back to defaultMaxReviewBatches; an explicit value
+// wins (raise it for very large repositories, lower it to cap spend).
+func (a AIConfig) ReviewBatches() int {
+	if a.MaxReviewBatches <= 0 {
+		return defaultMaxReviewBatches
+	}
+	return a.MaxReviewBatches
+}
+
+// BatchLargeReviewsEnabled resolves the tri-state BatchLargeReviews pointer
+// into a single boolean. nil (the YAML / env "unset" state) returns true so
+// deployments that never wire the flag review oversized pull requests in
+// batches automatically instead of skipping them; an explicit
+// `batch_large_reviews: false` in YAML or
+// `CODE_GURU_AI_BATCH_LARGE_REVIEWS=false` returns false, restoring the
+// "post a too-large notice and review nothing" behaviour. Callers should
+// always go through this helper rather than dereferencing the pointer.
+func (a AIConfig) BatchLargeReviewsEnabled() bool {
+	if a.BatchLargeReviews == nil {
+		return true
+	}
+	return *a.BatchLargeReviews
 }
 
 // defaultMaxGuidelinesBytes is the guidelines budget applied when
@@ -474,6 +536,7 @@ func applyNumericAIEnvOverrides(ai *AIConfig) {
 		"CODE_GURU_AI_MAX_ATTEMPTS":             &ai.MaxAttempts,
 		"CODE_GURU_AI_MAX_GUIDELINES_BYTES":     &ai.MaxGuidelinesBytes,
 		"CODE_GURU_AI_MAX_PR_DESCRIPTION_BYTES": &ai.MaxPRDescriptionBytes,
+		"CODE_GURU_AI_MAX_REVIEW_BATCHES":       &ai.MaxReviewBatches,
 	}
 	for envVar, target := range overrides {
 		raw := strings.TrimSpace(os.Getenv(envVar))
@@ -498,6 +561,9 @@ func applyTristateAIEnvOverrides(ai *AIConfig) {
 	}
 	if v := parseOptionalBoolEnv("CODE_GURU_AI_PR_METADATA"); v != nil {
 		ai.PRMetadata = v
+	}
+	if v := parseOptionalBoolEnv("CODE_GURU_AI_BATCH_LARGE_REVIEWS"); v != nil {
+		ai.BatchLargeReviews = v
 	}
 	if v := parseOptionalBoolEnv("CODE_GURU_ANTHROPIC_CONTEXT_1M"); v != nil {
 		ai.Anthropic.Context1M = v
@@ -528,6 +594,7 @@ func NewSettingsFromEnv() (*Settings, error) {
 	maxAttempts, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_ATTEMPTS")))
 	maxGuidelines, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_GUIDELINES_BYTES")))
 	maxPRDescription, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_PR_DESCRIPTION_BYTES")))
+	maxReviewBatches, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_REVIEW_BATCHES")))
 	port, _ := strconv.Atoi(envOrDefault("CODE_GURU_PORT", "8080"))
 	appID, _ := strconv.ParseInt(os.Getenv("CODE_GURU_GITHUB_APP_ID"), 10, 64)
 	queueSize, _ := strconv.Atoi(envOrDefault("CODE_GURU_SERVER_QUEUE_SIZE", "100"))
@@ -561,6 +628,8 @@ func NewSettingsFromEnv() (*Settings, error) {
 			PRMetadata:            parseOptionalBoolEnv("CODE_GURU_AI_PR_METADATA"),
 			MaxGuidelinesBytes:    maxGuidelines,
 			MaxPRDescriptionBytes: maxPRDescription,
+			BatchLargeReviews:     parseOptionalBoolEnv("CODE_GURU_AI_BATCH_LARGE_REVIEWS"),
+			MaxReviewBatches:      maxReviewBatches,
 		},
 		Rules: RulesConfig{
 			Path: os.Getenv("CODE_GURU_RULES_PATH"),

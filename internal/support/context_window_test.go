@@ -20,10 +20,10 @@ func TestLooksLikeContextWindowError(t *testing.T) {
 
 		// given: the real "too large" shapes each backend surfaces
 		cases := map[string]string{
-			"anthropic 400":  "prompt is too long: 258000 tokens > 200000 maximum",
-			"openai message": "This model's maximum context length is 128000 tokens. However, your messages resulted in 210000 tokens",
-			"openai code":    "context_length_exceeded",
-			"generic window": "the request exceeds the model's context window",
+			"anthropic 400":    "prompt is too long: 258000 tokens > 200000 maximum",
+			"openai message":   "This model's maximum context length is 128000 tokens. However, your messages resulted in 210000 tokens",
+			"openai code":      "context_length_exceeded",
+			"generic window":   "the request exceeds the model's context window",
 			"case-insensitive": "PROMPT IS TOO LONG",
 		}
 
@@ -73,5 +73,85 @@ func TestErrContextWindowExceededUnwraps(t *testing.T) {
 
 		// when / then
 		require.ErrorIs(t, wrapped, support.ErrContextWindowExceeded)
+	})
+}
+
+// TestParseContextWindowOverage pins the figures the batching fallback
+// sizes its first batch from. Getting them right is what turns a
+// several-times-oversized pull request into one split step instead of a
+// ladder of failed attempts, each re-uploading the whole prompt.
+func TestParseContextWindowOverage(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should read the used/limit pair from each provider's phrasing", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the real shapes, wrapped the way a backend wraps them
+		cases := map[string]struct {
+			msg   string
+			used  int
+			limit int
+		}{
+			"anthropic": {
+				msg:   "ai prompt exceeds the model context window (anthropic: prompt is too long: 258000 tokens > 200000 maximum)",
+				used:  258000,
+				limit: 200000,
+			},
+			"openai": {
+				msg: "This model's maximum context length is 128000 tokens. " +
+					"However, your messages resulted in 210000 tokens. Please reduce the length of the messages.",
+				used:  210000,
+				limit: 128000,
+			},
+		}
+
+		for name, tc := range cases {
+			// when
+			used, limit, ok := support.ParseContextWindowOverage(tc.msg)
+
+			// then
+			require.Truef(t, ok, "%s: the figures must be recoverable from the error text", name)
+			assert.Equalf(t, tc.used, used, "%s: used tokens", name)
+			assert.Equalf(t, tc.limit, limit, "%s: model limit", name)
+		}
+	})
+
+	t.Run("should ignore numbers that are not token counts", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a dated model id and a status code sit in the same
+		// envelope as the real figures. Scraping every integer would read
+		// `20250514` as the token count and size the batches from nonsense.
+		msg := "status 400 from claude-sonnet-4-20250514: prompt is too long: 258000 tokens > 200000 maximum"
+
+		// when
+		used, limit, ok := support.ParseContextWindowOverage(msg)
+
+		// then
+		require.True(t, ok)
+		assert.Equal(t, 258000, used, "the model id's date must not be mistaken for a token count")
+		assert.Equal(t, 200000, limit)
+	})
+
+	t.Run("should report no figures when the message carries none", func(t *testing.T) {
+		t.Parallel()
+
+		// given: backends that phrase the failure without numbers — the
+		// caller must fall back to halving rather than trust a partial read
+		cases := map[string]string{
+			"no numbers":                  "prompt is too long",
+			"single figure":               "context window of 200000 tokens exceeded",
+			"equal figures":               "prompt is too long: 200000 tokens > 200000 maximum",
+			"figures unrelated to tokens": "request 41235 rejected after 12 retries",
+			"empty":                       "",
+		}
+
+		for name, msg := range cases {
+			// when
+			_, _, ok := support.ParseContextWindowOverage(msg)
+
+			// then
+			assert.Falsef(t, ok, "%q must not yield a usable pair", name)
+		}
 	})
 }

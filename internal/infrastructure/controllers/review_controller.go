@@ -151,6 +151,8 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 		BotIdentities:             settings.BotIdentities,
 		LoadProjectGuidelines:     settings.AI.ProjectGuidelinesEnabled(),
 		LoadPullRequestMetadata:   settings.AI.PullRequestMetadataEnabled(),
+		BatchLargeReviews:         settings.AI.BatchLargeReviewsEnabled(),
+		MaxReviewBatches:          settings.AI.ReviewBatches(),
 	})
 	if err != nil {
 		logger.Errorf("review failed: %v", err)
