@@ -117,6 +117,15 @@ type ReviewOptions struct {
 	// Wired from `Settings.Trivial.AutoMergeAllowedAuthors`.
 	TrivialAutoMergeAuthors []string
 
+	// TrivialDeleteSourceBranch, when true, asks the provider to delete the
+	// PR's source branch after a successful trivial auto-merge (gitforge's
+	// `WithDeleteSourceBranch`). Only has effect when `TrivialAutoMerge` also
+	// fires — without a merge there is no branch to delete. Defaults ON: wired
+	// from `Settings.Trivial.DeleteSourceBranchEnabled()` (nil YAML/env → true)
+	// at each call site. Branch deletion is best-effort in the provider: a
+	// failure is logged there and never fails the merge.
+	TrivialDeleteSourceBranch bool
+
 	// BotIdentities lists the account identities code-guru posts under
 	// (e.g. a service-account login / email on a self-hosted Azure
 	// DevOps deployment). Used on the re-review path so the conversation
@@ -461,7 +470,10 @@ func (c *ReviewCommand) maybeAutoMergeTrivial(
 			pr.ID,
 		)
 	}
-	c.autoMergeTrivial(ctx, provider, repo, pr.ID, opts.TrivialMergeStrategy, opts.TrivialBypassPolicy)
+	c.autoMergeTrivial(
+		ctx, provider, repo, pr.ID,
+		opts.TrivialMergeStrategy, opts.TrivialBypassPolicy, opts.TrivialDeleteSourceBranch,
+	)
 }
 
 // autoMergeAuthorAllowed reports whether a trivial-approved PR may be
@@ -519,6 +531,13 @@ func autoMergeAuthorAllowed(author string, allowed []string) bool {
 // hard 403. On GitHub the option is a no-op — bypass there is
 // governed by the authenticated user's permission model rather than
 // a per-call flag.
+//
+// `deleteSourceBranch` (default ON via `Settings.Trivial.DeleteSourceBranchEnabled`)
+// adds `gitforge.WithDeleteSourceBranch(...)` so the source branch is removed
+// after the merge completes — Azure DevOps deletes it server-side on the
+// completion call, GitHub deletes the head ref afterwards. Deletion is
+// best-effort inside the provider: it never fails the merge, so a leftover
+// branch never turns a successful auto-merge into a reported failure.
 func (c *ReviewCommand) autoMergeTrivial(
 	ctx context.Context,
 	provider forgeEntities.ReviewProvider,
@@ -526,12 +545,19 @@ func (c *ReviewCommand) autoMergeTrivial(
 	prID int,
 	strategy string,
 	bypassPolicy bool,
+	deleteSourceBranch bool,
 ) {
-	logger.Infof("PR #%d: auto-merging (strategy=%q, bypass=%v) per trivial PR policy", prID, strategy, bypassPolicy)
+	logger.Infof(
+		"PR #%d: auto-merging (strategy=%q, bypass=%v, delete-source-branch=%v) per trivial PR policy",
+		prID, strategy, bypassPolicy, deleteSourceBranch,
+	)
 
 	var mergeOpts []forgeEntities.MergeOption
 	if bypassPolicy {
 		mergeOpts = append(mergeOpts, forgeEntities.WithBypassPolicy("auto-merged by code-guru trivial PR policy"))
+	}
+	if deleteSourceBranch {
+		mergeOpts = append(mergeOpts, forgeEntities.WithDeleteSourceBranch())
 	}
 	if err := provider.MergePullRequest(ctx, repo, prID, strategy, mergeOpts...); err != nil {
 		logger.Warnf("PR #%d: auto-merge failed: %v -- the trivial-approve verdict still stands", prID, err)

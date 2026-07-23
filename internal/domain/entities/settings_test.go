@@ -1048,3 +1048,167 @@ func TestNewSettingsPRMetadataEnvOverride(t *testing.T) {
 			"an unset env var must leave the YAML opt-out authoritative")
 	})
 }
+
+func TestDeleteSourceBranchEnabled(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should default to true when DeleteSourceBranch is nil", func(t *testing.T) {
+		t.Parallel()
+
+		// given: nil pointer mirrors the YAML / env "unset" state — pin the
+		// default so an auto-merged trivial PR leaves a clean branch list
+		// without any operator action.
+		trivial := entities.TrivialConfig{DeleteSourceBranch: nil}
+
+		// when
+		got := trivial.DeleteSourceBranchEnabled()
+
+		// then
+		assert.True(t, got, "unset DeleteSourceBranch must resolve to true (the default-ON contract)")
+	})
+
+	t.Run("should return true when DeleteSourceBranch points to true", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		v := true
+		trivial := entities.TrivialConfig{DeleteSourceBranch: &v}
+
+		// when / then
+		assert.True(t, trivial.DeleteSourceBranchEnabled())
+	})
+
+	t.Run("should return false only when operator explicitly opts out via false", func(t *testing.T) {
+		t.Parallel()
+
+		// given: explicit `delete_source_branch: false` in YAML or
+		// CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH=false is the documented
+		// opt-out path (keep the branch after an auto-merge).
+		v := false
+		trivial := entities.TrivialConfig{DeleteSourceBranch: &v}
+
+		// when / then
+		assert.False(t, trivial.DeleteSourceBranchEnabled())
+	})
+}
+
+func TestNewSettingsFromEnvTrivialDeleteSourceBranch(t *testing.T) {
+	t.Run("should leave DeleteSourceBranch nil when the env var is unset so the default ON path takes over", func(t *testing.T) {
+		// given: a minimal env-only configuration with no
+		// CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH setting at all.
+		t.Setenv("CODE_GURU_BACKEND", "openai")
+		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Nil(t, settings.Trivial.DeleteSourceBranch,
+			"unset CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH must leave the pointer nil so the default-ON resolver fires")
+		assert.True(t, settings.Trivial.DeleteSourceBranchEnabled())
+	})
+
+	t.Run("should resolve to false when the operator explicitly sets the env var to false", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "openai")
+		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+		t.Setenv("CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH", "false")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		require.NotNil(t, settings.Trivial.DeleteSourceBranch)
+		assert.False(t, *settings.Trivial.DeleteSourceBranch)
+		assert.False(t, settings.Trivial.DeleteSourceBranchEnabled())
+	})
+
+	t.Run("should leave the pointer nil on an unparseable env value so the default applies", func(t *testing.T) {
+		// given: a typo (anything strconv.ParseBool rejects) must not silently
+		// flip behaviour — we want the default ON, not OFF.
+		t.Setenv("CODE_GURU_BACKEND", "openai")
+		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+		t.Setenv("CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH", "maybe")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.Nil(t, settings.Trivial.DeleteSourceBranch)
+		assert.True(t, settings.Trivial.DeleteSourceBranchEnabled())
+	})
+}
+
+func TestNewSettingsTrivialDeleteSourceBranchEnvOverride(t *testing.T) {
+	// Pins that the delete-source-branch kill switch works on the YAML path
+	// too: deployments ship a YAML baseline and flip per-environment behaviour
+	// via env, so CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH must override the file.
+
+	t.Run("should override YAML delete_source_branch when the env var is set to false", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+trivial:
+  delete_source_branch: true
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		t.Setenv("CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH", "false")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.False(t, settings.Trivial.DeleteSourceBranchEnabled(),
+			"env var must override YAML so an operator can keep the branch per-environment")
+	})
+
+	t.Run("should keep the YAML value when the env var is unset", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+trivial:
+  delete_source_branch: false
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.False(t, settings.Trivial.DeleteSourceBranchEnabled(),
+			"an unset env var must leave the YAML opt-out authoritative")
+	})
+
+	t.Run("should leave the default ON when neither YAML nor env set the flag", func(t *testing.T) {
+		// given
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		const body = `ai:
+  backend: openai
+  openai:
+    api_key: yaml-key
+`
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.Nil(t, settings.Trivial.DeleteSourceBranch)
+		assert.True(t, settings.Trivial.DeleteSourceBranchEnabled())
+	})
+}

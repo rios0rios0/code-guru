@@ -983,10 +983,11 @@ type recordedThreadStatusUpdate struct {
 }
 
 type recordedMerge struct {
-	prID         int
-	strategy     string
-	bypassPolicy bool
-	bypassReason string
+	prID               int
+	strategy           string
+	bypassPolicy       bool
+	bypassReason       string
+	deleteSourceBranch bool
 }
 
 type recordedPRComment struct {
@@ -1046,10 +1047,11 @@ func (r *recordingReviewProvider) MergePullRequest(
 ) error {
 	bypass := forgeEntities.ResolveMergeOptions(opts...)
 	r.merges = append(r.merges, recordedMerge{
-		prID:         prID,
-		strategy:     strategy,
-		bypassPolicy: bypass.Enabled,
-		bypassReason: bypass.Reason,
+		prID:               prID,
+		strategy:           strategy,
+		bypassPolicy:       bypass.Enabled,
+		bypassReason:       bypass.Reason,
+		deleteSourceBranch: bypass.DeleteSourceBranch,
 	})
 	return r.mergeErr
 }
@@ -1882,6 +1884,64 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 			"TrivialBypassPolicy=true MUST forward gitforge.WithBypassPolicy so the merge call carries `bypassPolicy=true` — required for repos with `Required reviewers` policies that the bot itself cannot satisfy")
 		assert.NotEmpty(t, provider.merges[0].bypassReason,
 			"the bypass reason MUST be non-empty so it lands in the ADO audit trail (ADO rejects empty `bypassReason` strings)")
+	})
+
+	t.Run("should call MergePullRequest with delete-source-branch when TrivialAutoMerge and TrivialDeleteSourceBranch are set", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc, provider := newCmd("approve")
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			TrivialAutoMerge:          true,
+			TrivialMergeStrategy:      "squash",
+			TrivialDeleteSourceBranch: true,
+		})
+
+		// then
+		require.NoError(t, err)
+		require.Len(t, provider.merges, 1)
+		assert.True(t, provider.merges[0].deleteSourceBranch,
+			"TrivialDeleteSourceBranch=true MUST forward gitforge.WithDeleteSourceBranch so the source branch is removed after the auto-merge completes")
+	})
+
+	t.Run("should NOT pass delete-source-branch when TrivialDeleteSourceBranch is false even though TrivialAutoMerge fires", func(t *testing.T) {
+		t.Parallel()
+
+		// given: an operator who set `delete_source_branch: false` wants the
+		// branch kept after the merge, so the option must not leak through.
+		rc, provider := newCmd("approve")
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			TrivialAutoMerge:          true,
+			TrivialDeleteSourceBranch: false,
+		})
+
+		// then
+		require.NoError(t, err)
+		require.Len(t, provider.merges, 1, "the merge still fires; only the branch-deletion cleanup is suppressed")
+		assert.False(t, provider.merges[0].deleteSourceBranch,
+			"TrivialDeleteSourceBranch=false MUST NOT forward WithDeleteSourceBranch, so an operator opt-out keeps the source branch")
+	})
+
+	t.Run("should NOT pass delete-source-branch when TrivialDeleteSourceBranch is set without TrivialAutoMerge (the merge call never fires)", func(t *testing.T) {
+		t.Parallel()
+
+		// given: like bypass, delete-source-branch is meaningless without a
+		// merge to attach it to.
+		rc, provider := newCmd("approve")
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			TrivialDeleteSourceBranch: true,
+		})
+
+		// then
+		require.NoError(t, err)
+		assert.Empty(t, provider.merges,
+			"delete-source-branch alone is a no-op — the gate that fires MergePullRequest is TrivialAutoMerge")
 	})
 
 	t.Run("should NOT pass bypass-policy when TrivialBypassPolicy is set without TrivialAutoMerge (the merge call never fires)", func(t *testing.T) {
