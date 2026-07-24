@@ -16,6 +16,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Changed
+
+- changed the Go module dependencies to their latest versions
+
 ### Added
 
 - added batched reviews for pull requests that do not fit the AI model's context window. A change too large for a single prompt used to get no review at all — only a "this pull request is too large, split it up" notice, on exactly the pull requests that most need a reviewer. Code Guru now splits the change into batches that do fit, reviews them one after another, and merges the results into a single review with the union of the findings and the most severe verdict any batch reported. The pull request gets a "reviewing this PR in batches" notice up front explaining that the review is coming but will take several times longer, and each batch's prompt states that it holds only a slice of the change, so the model does not report the files it cannot see as missing tests, missing callers, or an incomplete change. Files that still cannot be read (a single file larger than the window) are named in the final summary, and a review that could not cover everything never approves the pull request. Controlled by `ai.batch_large_reviews` (`CODE_GURU_AI_BATCH_LARGE_REVIEWS`, tri-state, default **on**) and bounded by `ai.max_review_batches` (`CODE_GURU_AI_MAX_REVIEW_BATCHES`, default `20`); set the former to `false` to restore the previous give-up behaviour
