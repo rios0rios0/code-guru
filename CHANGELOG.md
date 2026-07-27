@@ -19,6 +19,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 ### Changed
 
 - changed the Go module dependencies to their latest versions
+- refreshed `.github/copilot-instructions.md` to correct the project-guidelines and PR-description prompt budgets (now `ai.max_guidelines_bytes`, default 1 MiB, and `ai.max_pr_description_bytes`, default 64 KiB), which had drifted from the stale 32 KiB / 16 KiB values predating the 1.12.0 budget change
 
 ### Added
 
