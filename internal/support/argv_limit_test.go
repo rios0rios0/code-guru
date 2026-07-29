@@ -27,18 +27,27 @@ func TestLooksLikeArgumentListTooLong(t *testing.T) {
 		// given: the genuine failure, not a hand-built imitation. The whole
 		// point of this classifier is that it survives however `os/exec` wraps
 		// the kernel's refusal, so the test drives a REAL exec past the
-		// per-argument limit (`MAX_ARG_STRLEN`, 128 KiB on Linux) rather than
-		// asserting against a fabricated `*fs.PathError`.
+		// argument limit rather than asserting against a fabricated
+		// `*fs.PathError`.
+		//
+		// 4 MiB clears every mainstream POSIX limit, because the platforms do
+		// not agree on WHICH limit applies: Linux caps a SINGLE argument at
+		// `MAX_ARG_STRLEN` (128 KiB), while macOS and the BSDs impose no
+		// per-argument cap and instead bound the whole argument block by
+		// `ARG_MAX` (1-2 MiB). Sizing past the largest of them keeps this a
+		// real-exec test on every POSIX platform instead of a Linux-only one
+		// — the classifier only has to recognise `E2BIG`, not care which of
+		// the two limits produced it.
 		if runtime.GOOS == "windows" {
-			t.Skip("relies on a POSIX shell binary and the Linux per-argument limit")
+			t.Skip("relies on a POSIX binary and the POSIX argument-size limits")
 		}
-		oversized := strings.Repeat("x", 256*1024)
+		oversized := strings.Repeat("x", 4*1024*1024)
 
 		// when
 		err := exec.Command("/bin/echo", oversized).Run() //nolint:gosec // fixed, non-user-controlled binary
 
 		// then
-		require.Error(t, err, "a 256 KiB single argument must be refused by the kernel")
+		require.Error(t, err, "a 4 MiB argument must be refused by the kernel on any POSIX platform")
 		assert.True(t, support.LooksLikeArgumentListTooLong(err),
 			"the classifier must recognise the exec failure the OS actually produces")
 	})
