@@ -101,6 +101,22 @@ func (r *RetryingAIReviewer) ReviewDiff(
 
 			return nil, err
 		}
+		// An argument-list overflow is refused by the KERNEL, before the
+		// backend process starts. The prompt is identical on every attempt, so
+		// the refusal is identical too — and it is the operator's rule corpus
+		// that is oversized, not anything a re-sample could change. Return
+		// immediately so the command layer posts the operator-facing guidance.
+		if errors.Is(err, support.ErrArgumentListTooLong) {
+			logger.Warnf(
+				"AI review (%s) failed on attempt %d/%d: "+
+					"the assembled prompt exceeds the OS argument limit; not retrying",
+				r.inner.Name(),
+				attempt,
+				r.attempts,
+			)
+
+			return nil, err
+		}
 		// A content-safety refusal is deterministic on the same content — the
 		// model declines the identical diff the same way — so a re-sample is
 		// futile. Return immediately so the command layer posts the "declined"

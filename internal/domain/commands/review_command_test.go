@@ -425,6 +425,31 @@ func TestBuildReviewFailedBody(t *testing.T) {
 			"the raw sentinel text must not be echoed — only the friendly classification")
 	})
 
+	t.Run("should render operator-facing guidance for an OS argument-limit refusal", func(t *testing.T) {
+		// given: the sentinel wrapped the way the backend wraps it. Nothing
+		// about the diff caused this failure — the oversized argument is the
+		// SYSTEM prompt, assembled from the operator's rule corpus — so the
+		// body must not blame the pull request or ask the author to act.
+		ts := time.Date(2026, 5, 1, 2, 51, 21, 0, time.UTC)
+		err := fmt.Errorf("claude CLI failed: %w", support.ErrArgumentListTooLong)
+
+		// when
+		body := commands.BuildReviewFailedBody(ts, err, commands.ReviewFailureContext{})
+
+		// then
+		assert.Contains(t, body, "**Code Guru review",
+			"the headline must carry the completion marker so the review-once gate stops the re-fail loop")
+		assert.Contains(t, body, "rules.categories",
+			"the body must name the knob the operator actually turns to fix it")
+		assert.Contains(t, body, "not a problem with this pull request",
+			"the author must be told the diff was never read, so they do not go looking for a defect")
+		assert.NotContains(t, body, "push a new commit",
+			"the generic retry advice is actively wrong here — the next exec is refused identically")
+		assert.NotContains(t, body, "Split it into several smaller",
+			"this is not a too-large PR; splitting the diff changes nothing")
+		assert.Contains(t, body, "Failed at 2026-05-01T02:51:21Z.")
+	})
+
 	t.Run("should normalise a non-UTC input to UTC so the printed timestamp ends in Z", func(t *testing.T) {
 		// given: defensive — same contract as `buildReviewingMarkerBody`.
 		// Use `time.FixedZone` rather than `time.LoadLocation` (which reads

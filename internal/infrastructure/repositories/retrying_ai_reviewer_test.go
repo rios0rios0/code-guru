@@ -132,6 +132,30 @@ func TestRetryingAIReviewer(t *testing.T) {
 			"the returned error must still carry the sentinel so the command layer posts the 'split your PR' guidance")
 	})
 
+	t.Run("should NOT retry an OS argument-limit refusal (deterministic — the kernel refuses each exec)", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the first call returns the argument-limit sentinel. The exec is
+		// refused by the kernel before the backend process starts, on an argument
+		// that is byte-for-byte identical every attempt, so a retry cannot do
+		// anything but fail the same way. The later queued errors would only be
+		// consumed by a (wrong) retry.
+		tooLong := fmt.Errorf("claude CLI failed: %w", support.ErrArgumentListTooLong)
+		fake := &fakeAIReviewer{errs: []error{tooLong, support.ErrUnparseableResponse, support.ErrUnparseableResponse}}
+		reviewer := infraRepos.WithRetry(fake, 3)
+
+		// when
+		got, err := reviewer.ReviewDiff(context.Background(), entities.ReviewRequest{})
+
+		// then
+		require.Error(t, err)
+		assert.Nil(t, got)
+		assert.Equal(t, 1, fake.calls,
+			"an argument-limit refusal must stop after the first attempt, never burning the retry budget")
+		assert.ErrorIs(t, err, support.ErrArgumentListTooLong,
+			"the returned error must still carry the sentinel so the command layer posts the operator guidance")
+	})
+
 	t.Run("should NOT retry a content-safety refusal (deterministic — same content declined each attempt)", func(t *testing.T) {
 		t.Parallel()
 
