@@ -754,6 +754,9 @@ func buildReviewFailedBody(now time.Time, reviewErr error, sizeCtx reviewFailure
 	if errors.Is(reviewErr, support.ErrContentSafetyRefusal) {
 		return buildContentSafetyRefusalBody(now, reviewErr)
 	}
+	if errors.Is(reviewErr, support.ErrArgumentListTooLong) {
+		return buildArgumentLimitFailedBody(now)
+	}
 
 	return fmt.Sprintf(
 		"\xe2\x9a\xa0\xef\xb8\x8f **Code Guru review failed.**\n\n"+
@@ -849,6 +852,37 @@ func buildContentSafetyRefusalBody(now time.Time, reviewErr error) string {
 			"varies by model and provider.\n\n"+
 			"_Failed at %s._",
 		flagged,
+		now.UTC().Format(time.RFC3339),
+	)
+}
+
+// buildArgumentLimitFailedBody renders the notice for a failure the PR author
+// can do nothing about: the assembled prompt exceeded the operating system's
+// per-argument limit, so the AI backend process was refused before it ever
+// started. The oversized part is the SYSTEM prompt — built from the operator's
+// rule corpus, not from the diff — which is why this body neither asks the
+// author to split the change (the diff is not the problem) nor to push a
+// commit (the next exec is refused identically). It names the operator as the
+// one who can fix it and points at the knob that does it.
+//
+// Like the other failure bodies the headline carries the `**Code Guru review`
+// substring so the review-once gate is set: without it every push would
+// re-run a review the kernel refuses, flooding the PR with identical notices.
+func buildArgumentLimitFailedBody(now time.Time) string {
+	return fmt.Sprintf(
+		"\xe2\x9a\xa0\xef\xb8\x8f **Code Guru review couldn't run — "+
+			"the reviewer's own configuration exceeded an operating system limit.**\n\n"+
+			"The review instructions Code Guru assembles for this repository grew past the maximum size "+
+			"the operating system allows when starting the AI backend, so the backend was never reached "+
+			"and no review was posted. **This is not a problem with this pull request** — the diff was "+
+			"never read. Retrying or pushing more commits will not change it.\n\n"+
+			"This needs an operator:\n"+
+			"- **Reduce the configured review rules** (`rules.categories`) so fewer rule files load at once. "+
+			"A change touching several languages pulls in every matching language's rules on top of the "+
+			"universal set, which is the usual way this limit is reached.\n"+
+			"- **Upgrade Code Guru and the Claude CLI** — current versions pass the review instructions "+
+			"through a file instead of the command line, which removes this limit entirely.\n\n"+
+			"_Failed at %s._",
 		now.UTC().Format(time.RFC3339),
 	)
 }

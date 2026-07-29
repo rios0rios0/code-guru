@@ -16,6 +16,14 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added a distinct failure classification for a review the operating system refuses to start because the assembled review instructions are too long to pass as a command-line argument. It is no longer retried — the kernel refuses the byte-for-byte identical call every time, so the retry budget was spent for nothing — and the pull request now gets a notice explaining that the reviewer's own configuration is oversized, that the diff was never read, and that an operator can fix it by narrowing `rules.categories`. Previously this surfaced as the generic "the AI backend errored — this is usually transient, push a new commit", advice that could never help
+
+### Fixed
+
+- fixed reviews failing outright on pull requests that touch several languages at once. The Claude CLI backend passed the assembled review instructions — which embed every matching rule file — as a single command-line argument, and Linux caps one argument at 128 KiB no matter how much total argument space the system reports. A change touching, for example, a Go file and a Python file loads both language rule sets on top of the universal ones, which was enough to cross that cap: the operating system refused to start the backend, so the review died before the AI model was ever reached and all three attempts died identically. The review instructions are now handed over in a file (`--system-prompt-file`) instead, which removes the ceiling entirely. A deployment with no writable temporary directory falls back to the previous inline behaviour. Requires a Claude CLI version that supports the flag
+
 ## [1.13.1] - 2026-07-28
 
 ### Changed

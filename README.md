@@ -90,6 +90,10 @@ ai:
   batch_large_reviews: true
   max_review_batches: 20
   claude:
+    # Requires a Claude CLI that supports `--system-prompt-file`. The review
+    # instructions are handed over in a file rather than on the command line,
+    # because the operating system caps how long a single argument may be and
+    # a multi-language rule set can exceed it.
     binary_path: 'claude'
     model: 'sonnet'
     max_turns: 1

@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -63,8 +66,7 @@ func (r *AIReviewerRepository) ReviewDiff(
 
 	logger.Debugf("sending review request to Claude CLI (model: %s, max-turns: %d)", r.model, r.maxTurns)
 
-	//nolint:gosec // binary path is from trusted configuration
-	cmd := exec.CommandContext(ctx, r.binaryPath,
+	args := []string{
 		"--print",
 		"--model", r.model,
 		"--output-format", "json",
@@ -87,11 +89,35 @@ func (r *AIReviewerRepository) ReviewDiff(
 		// 3-turn cap, with an empty `permission_denials` list). Only
 		// `--tools ""` takes the tools out of scope entirely.
 		//
-		// Keep this BEFORE `--system-prompt`: `--tools` is variadic, and a
-		// following `--`-prefixed flag is what terminates its value list.
+		// Keep this BEFORE the system-prompt flag: `--tools` is variadic, and
+		// a following `--`-prefixed flag is what terminates its value list.
 		"--tools", "",
-		"--system-prompt", systemPrompt,
-	)
+	}
+
+	// The system prompt goes through a FILE, never argv. It embeds the whole
+	// operator rule corpus, and Linux caps a single argv string at
+	// `MAX_ARG_STRLEN` (128 KiB) — a limit independent of `ARG_MAX`, so no
+	// amount of container headroom avoids it. Measured in production: a pull
+	// request touching a Go file and a Python file loads both language rule
+	// files on top of the universal set, assembling a 149 KB system prompt
+	// that the kernel refused outright ("argument list too long"). The whole
+	// review died at exec, before the model was ever reached, and every retry
+	// died identically. Writing the prompt to a temp file removes the ceiling.
+	promptFile, cleanupPromptFile, err := writeSystemPromptFile(systemPrompt)
+	if err != nil {
+		// Fall back to the inline flag rather than failing the review: a
+		// deployment with no writable temp dir kept working before this
+		// change and must keep working after it, up to the OS limit. An
+		// oversized prompt on this path is classified below, not retried.
+		logger.Warnf("failed to stage the system prompt in a file (%v); passing it inline instead", err)
+		args = append(args, "--system-prompt", systemPrompt)
+	} else {
+		defer cleanupPromptFile()
+		args = append(args, "--system-prompt-file", promptFile)
+	}
+
+	//nolint:gosec // binary path is from trusted configuration
+	cmd := exec.CommandContext(ctx, r.binaryPath, args...)
 
 	// pass user prompt via stdin to avoid OS argument length limits
 	cmd.Stdin = strings.NewReader(userPrompt)
@@ -100,7 +126,7 @@ func (r *AIReviewerRepository) ReviewDiff(
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	if err = cmd.Run(); err != nil {
 		// `claude --print --output-format json` writes its error envelope
 		// to stdout (the JSON the CLI promises) AND any auxiliary message
 		// to stderr. Discarding stdout on a non-zero exit is what made
@@ -118,6 +144,16 @@ func (r *AIReviewerRepository) ReviewDiff(
 			support.TruncateBytesForLog(stderr.Bytes(), claudeFailureLogLimit),
 			support.TruncateBytesForLog(stdout.Bytes(), claudeFailureLogLimit),
 		)
+		// The OS refused the exec itself because an argument was longer than
+		// its per-argument limit — the process never started, so both streams
+		// are empty and no amount of stream sniffing would classify it. This
+		// is only reachable via the inline fallback above; wrap it with the
+		// sentinel so the retry decorator skips the (kernel-deterministic)
+		// re-sample and the PR gets operator-facing guidance instead of the
+		// generic "usually transient — push a new commit", which cannot help.
+		if support.LooksLikeArgumentListTooLong(err) {
+			return nil, fmt.Errorf("%w (%w)", support.ErrArgumentListTooLong, detail)
+		}
 		// The Claude CLI wraps the Anthropic "prompt is too long" 400 in its
 		// JSON error envelope (printed first, a few hundred bytes). Detect it
 		// on a bounded view of each stream — never the full buffer, which a
@@ -132,6 +168,52 @@ func (r *AIReviewerRepository) ReviewDiff(
 	}
 
 	return ParseClaudeResponse(stdout.Bytes())
+}
+
+// systemPromptFilePattern names the temp file the system prompt is staged in.
+// The `code-guru-` prefix makes an orphaned file (killed process, SIGKILL
+// before the cleanup ran) attributable to this bot rather than anonymous
+// litter in a shared `/tmp`.
+const systemPromptFilePattern = "code-guru-system-prompt-*.txt"
+
+// writeSystemPromptFile stages the system prompt in a temp file and returns
+// its path plus a cleanup closure the caller MUST defer. The file is created
+// by `os.CreateTemp` with mode 0600 and a randomised name, so a co-tenant
+// process on a shared `/tmp` can neither read the operator's rule corpus nor
+// pre-create the path to feed the reviewer a prompt of its own.
+//
+// The cleanup closure is idempotent-friendly: a file already gone is not an
+// error worth logging, since the only way to reach that state is an external
+// tmp reaper, which has done exactly what the closure wanted.
+func writeSystemPromptFile(prompt string) (string, func(), error) {
+	file, err := os.CreateTemp("", systemPromptFilePattern)
+	if err != nil {
+		return "", nil, fmt.Errorf("creating system prompt file: %w", err)
+	}
+
+	path := file.Name()
+	cleanup := func() {
+		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+			logger.Warnf("failed to remove the system prompt file: %v", removeErr)
+		}
+	}
+
+	if _, err = file.WriteString(prompt); err != nil {
+		_ = file.Close()
+		cleanup()
+
+		return "", nil, fmt.Errorf("writing system prompt file: %w", err)
+	}
+	// Close before the CLI reads it: an unflushed write would hand the model a
+	// truncated rule set, which is far worse than a failed review because it
+	// looks like a successful one.
+	if err = file.Close(); err != nil {
+		cleanup()
+
+		return "", nil, fmt.Errorf("closing system prompt file: %w", err)
+	}
+
+	return path, cleanup, nil
 }
 
 // contextWindowDetectLimit bounds how many leading bytes of each captured

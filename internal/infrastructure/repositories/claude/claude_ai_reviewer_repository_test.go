@@ -237,10 +237,109 @@ func TestClaudeReviewer_ReviewDiff_DisablesAllTools(t *testing.T) {
 		// `--tools` is variadic, so only a following `--`-prefixed flag
 		// terminates its value list. If it were placed last it would swallow
 		// nothing and the guarantee would silently vanish.
-		promptIdx := slices.Index(argv, "--system-prompt")
+		promptIdx := slices.Index(argv, "--system-prompt-file")
 		require.NotEqual(t, -1, promptIdx, "the system prompt flag must still be passed")
 		assert.Less(t, toolsIdx, promptIdx,
 			"--tools must precede a --flag that terminates its variadic value list")
+	})
+}
+
+func TestClaudeReviewer_ReviewDiff_PassesSystemPromptThroughAFile(t *testing.T) {
+	// `t.Setenv` panics under `t.Parallel`; see writeFakeClaudeBinary's doc.
+
+	t.Run("should pass the system prompt via --system-prompt-file, never as an argument", func(t *testing.T) {
+		// given: the system prompt embeds the operator's whole rule corpus.
+		// Linux caps a SINGLE argv string at `MAX_ARG_STRLEN` (128 KiB) —
+		// independent of `ARG_MAX` — so passing it inline made every review of
+		// a multi-language pull request die at exec with "argument list too
+		// long", before the model was reached. A rule corpus comfortably over
+		// that cap is the regression this pins: it must review fine.
+		bin, argvPath := writeArgvRecordingClaudeBinary(t)
+		t.Setenv("FAKE_ARGV_FILE", argvPath)
+		t.Setenv("FAKE_STDOUT", `{"result":"{\"summary\":\"ok\",\"comments\":[]}"}`)
+		request := minimalReviewRequest()
+		request.Rules = []entities.Rule{{
+			Name:     "oversized",
+			Category: "oversized",
+			Content:  strings.Repeat("rule body line\n", 16384), // ~240 KB
+		}}
+		repo := claude.NewAIReviewerRepository(bin, "sonnet", 1)
+
+		// when
+		result, err := repo.ReviewDiff(context.Background(), request)
+
+		// then
+		require.NoError(t, err,
+			"a rule corpus past the OS per-argument limit must still review — that is the whole fix")
+		require.NotNil(t, result)
+
+		recorded, readErr := os.ReadFile(argvPath) //nolint:gosec // path is from t.TempDir
+		require.NoError(t, readErr)
+		argv := strings.Split(strings.TrimSuffix(string(recorded), "\n"), "\n")
+
+		assert.Equal(t, -1, slices.Index(argv, "--system-prompt"),
+			"the inline flag must NOT be used: it is what reintroduces the OS argument limit")
+		fileIdx := slices.Index(argv, "--system-prompt-file")
+		require.NotEqual(t, -1, fileIdx, "the system prompt must be handed over as a file path")
+		require.Less(t, fileIdx+1, len(argv), "--system-prompt-file must be followed by its value")
+
+		for _, arg := range argv {
+			assert.Less(t, len(arg), 128*1024,
+				"no single argument may approach the OS per-argument limit")
+		}
+	})
+
+	t.Run("should remove the staged prompt file once the review returns", func(t *testing.T) {
+		// given: the file carries the operator's rule corpus into a shared
+		// `/tmp`. Leaving one behind per review would accumulate unbounded on a
+		// long-running server, so cleanup is part of the contract, not hygiene.
+		bin, argvPath := writeArgvRecordingClaudeBinary(t)
+		t.Setenv("FAKE_ARGV_FILE", argvPath)
+		t.Setenv("FAKE_STDOUT", `{"result":"{\"summary\":\"ok\",\"comments\":[]}"}`)
+		repo := claude.NewAIReviewerRepository(bin, "sonnet", 1)
+
+		// when
+		_, err := repo.ReviewDiff(context.Background(), minimalReviewRequest())
+
+		// then
+		require.NoError(t, err)
+		recorded, readErr := os.ReadFile(argvPath) //nolint:gosec // path is from t.TempDir
+		require.NoError(t, readErr)
+		argv := strings.Split(strings.TrimSuffix(string(recorded), "\n"), "\n")
+		fileIdx := slices.Index(argv, "--system-prompt-file")
+		require.NotEqual(t, -1, fileIdx)
+
+		_, statErr := os.Stat(argv[fileIdx+1])
+		assert.ErrorIs(t, statErr, os.ErrNotExist,
+			"the staged system prompt file must be removed after the CLI call returns")
+	})
+
+	t.Run("should classify an OS argument-limit refusal when the prompt file cannot be staged", func(t *testing.T) {
+		// given: no writable temp dir, so the backend falls back to the inline
+		// flag (preserving pre-fix behaviour for such a deployment), plus a
+		// rule corpus past the OS limit so the fallback is actually refused.
+		// The refusal must carry the sentinel: the kernel rejects the identical
+		// exec every time, so retrying is futile and the PR needs the
+		// operator-facing notice rather than "usually transient".
+		bin := writeFakeClaudeBinary(t)
+		t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
+		t.Setenv("FAKE_EXIT", "0")
+		request := minimalReviewRequest()
+		request.Rules = []entities.Rule{{
+			Name:     "oversized",
+			Category: "oversized",
+			Content:  strings.Repeat("rule body line\n", 16384), // ~240 KB
+		}}
+		repo := claude.NewAIReviewerRepository(bin, "sonnet", 1)
+
+		// when
+		result, err := repo.ReviewDiff(context.Background(), request)
+
+		// then
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.ErrorIs(t, err, support.ErrArgumentListTooLong,
+			"an exec refused for an oversized argument must carry the sentinel so retries are skipped")
 	})
 }
 
