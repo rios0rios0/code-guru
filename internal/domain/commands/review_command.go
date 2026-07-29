@@ -934,8 +934,8 @@ func classifyReviewFailure(reviewErr error) string {
 // the PR author sees an explicit "done" signal that closes out the
 // "reviewing" marker (PR #102). Without this, the marker stays
 // open-ended and the author has to count comments to infer that
-// the bot finished — observed live on `internal-terraform/customer-
-// clusters#NNNN` on `2026-05-01` where the author merged before
+// the bot finished — observed live on `internal-terraform/internal-
+// customer-app#NNNN` on `2026-05-01` where the author merged before
 // realising the bot had finished and missed the 3 review comments.
 //
 // The body surfaces the verdict, the count of inline (`Line > 0`)
