@@ -16,6 +16,8 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-29
+
 ### Added
 
 - added a distinct failure classification for a review the operating system refuses to start because the assembled review instructions are too long to pass as a command-line argument. It is no longer retried — the kernel refuses the byte-for-byte identical call every time, so the retry budget was spent for nothing — and the pull request now gets a notice explaining that the reviewer's own configuration is oversized, that the diff was never read, and that an operator can fix it by narrowing `rules.categories`. Previously this surfaced as the generic "the AI backend errored — this is usually transient, push a new commit", advice that could never help
