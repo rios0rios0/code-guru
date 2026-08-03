@@ -124,10 +124,12 @@ Available subcommands:
 | `review <url>` | Review a single PR by URL (GitHub or Azure DevOps)       |
 | `review-all`   | Batch-review all open PRs across configured providers    |
 | `discover`     | Discover repos and list open PRs without posting reviews |
-| `auth`         | OAuth login/logout/status (login flow WIP)               |
 | `serve`        | Start webhook server for automatic PR review             |
+| `health`       | Probe a running `serve` listener (Docker healthcheck client) |
 | `self-update`  | Update the CLI binary to the latest version              |
 | `version`      | Print the current CLI version                            |
+
+The `auth` controller and its filesystem token store exist in the tree but are **not** DI-registered (login is a TODO), so `auth` is not an available subcommand.
 
 Common flags (all commands):
 
