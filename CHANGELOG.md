@@ -19,6 +19,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 ### Changed
 
 - refreshed `.github/copilot-instructions.md` to fix the CLI subcommands table, which listed the unwired `auth` stub as an available command and omitted the actual `health` probe command
+- changed the Go module dependencies to their latest versions
 
 ## [1.14.1] - 2026-07-30
 
