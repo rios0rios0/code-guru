@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	configEntities "github.com/rios0rios0/gitforge/pkg/config/domain/entities"
@@ -138,9 +139,12 @@ func TestHandleGitHub(t *testing.T) {
 	})
 
 	t.Run("should respond 204 (No Content) when the event type is unsupported", func(t *testing.T) {
-		// given
+		// given: `push` is genuinely unhandled. This row used to send
+		// `issue_comment`, which the dispatcher DOES handle — it passed
+		// only because the payload's action is "opened", so it exercised
+		// the mention handler's action gate rather than the default arm.
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, ghOpenedPayload, "issue_comment")
+		req := githubRequest(t, ghSecret, ghOpenedPayload, "push")
 		w := httptest.NewRecorder()
 
 		// when
@@ -514,6 +518,282 @@ func TestHandleGitHubIssueCommentMention(t *testing.T) {
 
 		// then
 		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should enqueue when the comment mentions a configured bot identity", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the deployment posts as a service account, so users
+		// @-mention THAT name rather than the built-in `@code-guru`.
+		settings := defaultGitHubSettings()
+		settings.BotIdentities = []string{"svc-codeguru@corp.example"}
+		body := ghIssueCommentPayload("@svc-codeguru please re-review")
+		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
+		req := githubRequest(t, ghSecret, body, "issue_comment")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		require.Equal(t, http.StatusAccepted, w.Code)
+		jobs := sub.Jobs()
+		require.Len(t, jobs, 1)
+		assert.True(t, jobs[0].UserMentioned)
+	})
+
+	t.Run("should respond 204 when the mentioned identity is not configured", func(t *testing.T) {
+		t.Parallel()
+
+		// given: same body, but nothing tells the bot it owns that name.
+		body := ghIssueCommentPayload("@svc-codeguru please re-review")
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+		req := githubRequest(t, ghSecret, body, "issue_comment")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 204 when the bot mentions its own configured identity", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the account name is now BOTH a trigger token and the
+		// self-author identity, so the bot quoting its own name must
+		// still be skipped or it feeds itself forever. "felipe" is the
+		// payload's comment author.
+		settings := defaultGitHubSettings()
+		settings.BotIdentities = []string{"felipe"}
+		body := ghIssueCommentPayload("@felipe re-review")
+		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
+		req := githubRequest(t, ghSecret, body, "issue_comment")
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs(), "the bot must not re-review its own comment")
+	})
+}
+
+func ghReviewCommentPayload(commentBody string, draft bool) string {
+	return `{
+  "action": "created",
+  "comment": {
+    "body": ` + jsonString(commentBody) + `,
+    "user": {"login": "felipe"}
+  },
+  "pull_request": {
+    "number": 12,
+    "title": "Add feature X",
+    "html_url": "https://github.com/rios0rios0/demo/pull/12",
+    "state": "open",
+    "draft": ` + strconv.FormatBool(draft) + `,
+    "head": {"ref": "feat/x"},
+    "base": {"ref": "main"},
+    "user": {"login": "octocat"}
+  },
+  "repository": {
+    "name": "demo",
+    "full_name": "rios0rios0/demo",
+    "html_url": "https://github.com/rios0rios0/demo",
+    "owner": {"login": "rios0rios0"}
+  },
+  "installation": {"id": 1234}
+}`
+}
+
+// TestHandleGitHubReviewCommentMention covers the inline review-thread
+// mention path. GitHub routes only PR-wide comments through
+// `issue_comment`, so before this event was handled a mention typed as a
+// reply inside a review thread reached nothing at all.
+func TestHandleGitHubReviewCommentMention(t *testing.T) {
+	t.Parallel()
+
+	const eventType = "pull_request_review_comment"
+
+	t.Run("should enqueue a UserMentioned job when an inline comment contains @code-guru", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		body := ghReviewCommentPayload("@code-guru please re-review this thread", false)
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+		req := githubRequest(t, ghSecret, body, eventType)
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		require.Equal(t, http.StatusAccepted, w.Code)
+		jobs := sub.Jobs()
+		require.Len(t, jobs, 1)
+		assert.True(t, jobs[0].UserMentioned, "mention payload must set Job.UserMentioned=true")
+		assert.Equal(t, 12, jobs[0].PR.ID)
+		assert.Equal(t, "octocat", jobs[0].PR.Author, "PR author comes from pull_request.user.login")
+	})
+
+	t.Run("should enqueue when an inline comment mentions a configured bot identity", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		settings := defaultGitHubSettings()
+		settings.BotIdentities = []string{"svc-codeguru@corp.example"}
+		body := ghReviewCommentPayload("@svc-codeguru please re-review", false)
+		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
+		req := githubRequest(t, ghSecret, body, eventType)
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		require.Equal(t, http.StatusAccepted, w.Code)
+		assert.Len(t, sub.Jobs(), 1)
+	})
+
+	t.Run("should leave PR.IsDraft false even when pull_request.draft is true", func(t *testing.T) {
+		t.Parallel()
+
+		// given: unlike `issue_comment`, this payload carries `draft`.
+		// Propagating it would trip the draft gate in
+		// `ReviewCommand.shouldSkip`, which runs BEFORE the
+		// UserMentioned check — an explicit mention would silently do
+		// nothing on a draft PR. Deliberate; pinned so a future "fix"
+		// does not reverse it.
+		body := ghReviewCommentPayload("@code-guru please re-review", true)
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+		req := githubRequest(t, ghSecret, body, eventType)
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		require.Equal(t, http.StatusAccepted, w.Code)
+		jobs := sub.Jobs()
+		require.Len(t, jobs, 1)
+		assert.False(t, jobs[0].PR.IsDraft, "an explicit mention overrides the draft-skip gate")
+	})
+
+	t.Run("should collapse a burst of inline mentions into one job", func(t *testing.T) {
+		t.Parallel()
+
+		// given: one review submission carrying the mention in three
+		// inline comments fires three separate `created` deliveries.
+		// Without the dedup gate that is three concurrent LLM reviews of
+		// the same PR.
+		body := ghReviewCommentPayload("@code-guru please re-review", false)
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+
+		// when
+		for range 3 {
+			d.HandleGitHub(httptest.NewRecorder(), githubRequest(t, ghSecret, body, eventType))
+		}
+
+		// then
+		assert.Len(t, sub.Jobs(), 1, "a burst of inline mentions must enqueue exactly one review")
+	})
+
+	t.Run("should respond 204 when the inline comment is authored by the bot itself", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a re-review posts one inline reply per prior thread, and
+		// each of those is another delivery on THIS event — the
+		// self-author guard is the only thing stopping the loop.
+		settings := defaultGitHubSettings()
+		settings.BotIdentities = []string{"felipe"}
+		body := ghReviewCommentPayload("@code-guru re-review", false)
+		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
+		req := githubRequest(t, ghSecret, body, eventType)
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs(), "the bot must not re-review its own inline reply")
+	})
+
+	t.Run("should respond 204 when the inline comment has no mention", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		body := ghReviewCommentPayload("nit: rename this variable", false)
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+		req := githubRequest(t, ghSecret, body, eventType)
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 204 when the action is not 'created'", func(t *testing.T) {
+		t.Parallel()
+
+		for _, action := range []string{"edited", "deleted"} {
+			// given: editing or deleting an old inline comment must NOT
+			// re-trigger the review even when it contains the mention.
+			body := `{"action":"` + action +
+				`","comment":{"body":"@code-guru re-review","user":{"login":"felipe"}},` +
+				`"pull_request":{"number":12},"repository":{"full_name":"rios0rios0/demo"},"installation":{"id":1}}`
+			d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+			req := githubRequest(t, ghSecret, body, eventType)
+			w := httptest.NewRecorder()
+
+			// when
+			d.HandleGitHub(w, req)
+
+			// then
+			assert.Equal(t, http.StatusNoContent, w.Code, action)
+			assert.Empty(t, sub.Jobs(), action)
+		}
+	})
+
+	t.Run("should respond 403 when the org is not on the allowlist", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		settings := defaultGitHubSettings()
+		settings.Server.AllowedOrganizations = []string{"someone-else"}
+		body := ghReviewCommentPayload("@code-guru please re-review", false)
+		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
+		req := githubRequest(t, ghSecret, body, eventType)
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 400 when the JSON is malformed", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
+		req := githubRequest(t, ghSecret, `{not json`, eventType)
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleGitHub(w, req)
+
+		// then
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Empty(t, sub.Jobs())
 	})
 }

@@ -42,7 +42,7 @@ Legend: ✅ supported · ⚠️ partial / opt-in · ❌ not supported · — not
 |---------|:---------:|:-------------:|:------------------:|
 | Manual review on PR open | ✅ (CLI / `review-all`) | ✅ (assign reviewer) | ⚠️ (workflow trigger) |
 | Auto-review every push | ✅ (webhook) | ⚠️ (configurable per repo/org) | ⚠️ (workflow trigger) |
-| `@<bot>` mention in PR comment | ✅ (`@code-guru`) | ❌ (Copilot does not respond to user replies) | ✅ (`@claude`) |
+| `@<bot>` mention in PR comment | ✅ (`@code-guru` or the bot's own account name via `bot_identities`) | ❌ (Copilot does not respond to user replies) | ✅ (`@claude`) |
 | Issue assignment trigger | ❌ | — | ✅ |
 | Scheduled / cron trigger | ❌ | ❌ | ✅ |
 | Skip drafts by default | ✅ (configurable) | ⚠️ (configurable) | ❌ (workflow-defined) |
@@ -236,7 +236,7 @@ Each gap below names the missing capability, the peer that has it, and a suggest
 
 **Where peers stand**: Claude Code Action stays in the thread once invoked. Copilot does not engage at all.
 
-**Code Guru today**: Only `@code-guru` (with word-boundary check) re-triggers a review. Replies on bot threads are silently ignored.
+**Code Guru today**: Only an explicit mention (`@code-guru`, or the bot's own account name when listed in `bot_identities`) re-triggers a review, with a word-boundary check. Replies on bot threads are silently ignored unless they carry a mention.
 
 **Suggested implementation**:
 - Add a per-thread "ongoing dialogue" mode: if the most recent comment on a bot-rooted thread is from a non-bot user AND was posted in the last `Settings.ReplyDialogueWindow` (default 30 min), treat it as an implicit `@code-guru` for that single thread.
