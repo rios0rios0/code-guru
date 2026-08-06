@@ -125,26 +125,80 @@ func looksLikeBotAnnotation(body string) bool {
 	return true
 }
 
-// MentionToken is the literal the bot looks for in a user's PR comment
-// to treat the comment as a re-review request. Case-insensitive match
-// is performed by HasMention; word-boundary checks prevent a substring
-// match against unrelated `@code-guru-foo` mentions.
+// MentionToken is the built-in literal the bot looks for in a user's PR
+// comment to treat the comment as a re-review request. Case-insensitive
+// match is performed by HasMention; word-boundary checks prevent a
+// substring match against unrelated `@code-guru-foo` mentions.
+//
+// This is the FLOOR, not the whole trigger set: HasMention additionally
+// accepts mentions of the account the deployment actually posts under,
+// derived from `Settings.BotIdentities` (see mentionTokensFor).
 const MentionToken = "@code-guru"
 
-// HasMention returns true when the comment body contains a `@code-guru`
-// mention. Case-insensitive; rejects substrings that continue past the
-// token (e.g. `@code-guru-bot` is NOT a match because the next byte is
-// not whitespace / punctuation / EOF). A future refactor that needs to
-// distinguish between "mention" and "mention-with-instructions" can
-// extend this without touching the call sites.
-func HasMention(body string) bool {
+// minMentionNameLength is the shortest account name a derived mention
+// token may carry (excluding the leading `@`). Derivation is automatic —
+// an operator writing `x@corp.example` in `bot_identities` is naming the
+// account, not asking for `@x` to summon the bot — so single-character
+// names are dropped rather than turned into a trigger that would fire on
+// almost any comment.
+const minMentionNameLength = 2
+
+// botLoginSuffix is the suffix GitHub appends to a GitHub App's login
+// (`code-guru[bot]`). Mentions never carry it: a user types
+// `@code-guru`, never `@code-guru[bot]`, so it is stripped when deriving
+// a mention token from a configured identity.
+const botLoginSuffix = "[bot]"
+
+// HasMention returns true when the comment body mentions the bot. Two
+// kinds of mention count:
+//
+//  1. the built-in `@code-guru` token (always accepted, so a deployment
+//     with no configuration keeps working exactly as before); and
+//  2. any account the deployment posts under, supplied by the caller
+//     from `Settings.BotIdentities` and normalised by mentionTokensFor.
+//
+// The second form exists because a deployment posting under a GitHub App
+// (`code-guru[bot]`) or an organisation service account
+// (`svc-codeguru@corp.example`) is @-mentioned by the name users see on
+// the PR — which used to match nothing at all, leaving the bot silent.
+//
+// Case-insensitive; rejects substrings that continue past the token
+// (e.g. `@code-guru-bot` is NOT a match because the next byte is not
+// whitespace / punctuation / EOF).
+func HasMention(body string, identities ...string) bool {
 	lower := strings.ToLower(body)
+	if containsMentionToken(lower, MentionToken) {
+		return true
+	}
+	for _, token := range mentionTokensFor(identities) {
+		if containsMentionToken(lower, token) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsMentionToken reports whether token appears in lower as a
+// standalone mention rather than as the head of a longer handle.
+//
+// `lower` MUST already be lower-cased by the caller (HasMention does it
+// once for every token); isMentionWordChar has no `A`-`Z` branch, so a
+// raw body would silently lose case-insensitivity with no compile error.
+//
+// The empty token is rejected up front: `strings.Index` returns 0 for it,
+// the slice below would never advance, and the loop would spin forever.
+// The minimum-length filter that makes this unreachable today lives in
+// deriveMentionNames — a different function — so the guard stays here.
+func containsMentionToken(lower, token string) bool {
+	if token == "" {
+		return false
+	}
 	for {
-		idx := strings.Index(lower, MentionToken)
+		idx := strings.Index(lower, token)
 		if idx == -1 {
 			return false
 		}
-		end := idx + len(MentionToken)
+		end := idx + len(token)
 		// Word-boundary check on the right side: the next byte must be
 		// whitespace, punctuation, or end-of-string. Letters / digits /
 		// `-` / `_` mean the match is part of a longer identifier (e.g.
@@ -156,10 +210,86 @@ func HasMention(body string) bool {
 	}
 }
 
+// mentionTokensFor turns the configured bot identities into the extra
+// `@`-prefixed tokens HasMention scans for, in stable input order with
+// duplicates (and anything equal to MentionToken) collapsed.
+//
+// Returns nil for an empty input so the no-configuration path — every
+// webhook comment on a default deployment — allocates nothing.
+func mentionTokensFor(identities []string) []string {
+	if len(identities) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{MentionToken: {}}
+	var tokens []string
+	for _, identity := range identities {
+		for _, name := range deriveMentionNames(identity) {
+			token := "@" + name
+			if _, ok := seen[token]; ok {
+				continue
+			}
+			seen[token] = struct{}{}
+			tokens = append(tokens, token)
+		}
+	}
+	return tokens
+}
+
+// deriveMentionNames expands one configured account identity into every
+// name a user might plausibly type to mention it, lower-cased and
+// without the leading `@`.
+//
+// An identity is an ACCOUNT (`code-guru[bot]`, `svc-codeguru@corp.example`)
+// while a mention is what a human types (`@code-guru`, `@svc-codeguru`),
+// and the two differ on both platforms — hence four candidates:
+//
+//   - the identity verbatim;
+//   - the identity wrapped in angle brackets, the markup Azure DevOps
+//     substitutes for an @-autocompleted mention (`@<identity-guid>`), so
+//     an operator can paste the bot's ADO identity GUID straight into
+//     `bot_identities` and have the comment box's own form match;
+//   - without a trailing `[bot]`, the GitHub App shape; and
+//   - the part before `@`, the Azure DevOps UPN / service-account shape.
+//
+// `strings.ToLower` runs BEFORE the `[bot]` strip so a `Code-Guru[BOT]`
+// identity still collapses onto the built-in token; reordering the two
+// silently breaks that.
+//
+// The verbatim candidate is usually redundant — isMentionWordChar treats
+// `[` and `@` as boundaries, so the shorter candidates already match
+// inside the longer form — and the bracketed one is meaningless for a
+// non-GUID identity. Both are kept unconditionally rather than guessing
+// at an identity's format: each costs one extra scan of the comment
+// body, and neither can match text a human would plausibly type.
+func deriveMentionNames(identity string) []string {
+	base := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(identity)), "@")
+	if base == "" {
+		return nil
+	}
+	candidates := []string{base, "<" + base + ">"}
+	if short, ok := strings.CutSuffix(base, botLoginSuffix); ok {
+		candidates = append(candidates, short)
+		base = short
+	}
+	if idx := strings.IndexByte(base, '@'); idx > 0 {
+		candidates = append(candidates, base[:idx])
+	}
+	names := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if len(candidate) >= minMentionNameLength {
+			names = append(names, candidate)
+		}
+	}
+	return names
+}
+
 // isMentionWordChar reports whether b is a character that would be part
 // of a longer mention identifier. The set matches GitHub / Azure DevOps
 // mention rules: alphanumerics, `-`, `_`. Anything else is a word
-// boundary and the preceding `@code-guru` counts as a real mention.
+// boundary and the preceding token counts as a real mention.
+//
+// There is no `A`-`Z` branch because every caller lower-cases the body
+// first — see containsMentionToken.
 func isMentionWordChar(b byte) bool {
 	switch {
 	case b >= 'a' && b <= 'z':

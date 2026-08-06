@@ -929,4 +929,114 @@ func TestHandleAzureDevOpsCommentMention(t *testing.T) {
 		assert.Equal(t, http.StatusNoContent, w.Code)
 		assert.Empty(t, sub.Jobs(), "the bot must not re-review its own comment")
 	})
+
+	t.Run("should enqueue when the comment mentions a configured bot identity", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the motivating case — a self-hosted ADO deployment posts
+		// under an org service account, so users @-mention THAT name and
+		// never the built-in `@code-guru`.
+		settings := defaultADOSettings()
+		settings.BotIdentities = []string{"svc-codeguru@corp.example"}
+		body := adoCommentEventPayload("@svc-codeguru please re-review")
+		d, sub := newDispatcherWithSettings(t, settings)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		require.Equal(t, http.StatusAccepted, w.Code)
+		jobs := sub.Jobs()
+		require.Len(t, jobs, 1)
+		assert.True(t, jobs[0].UserMentioned)
+	})
+
+	t.Run("should respond 204 when the mentioned identity is not configured", func(t *testing.T) {
+		t.Parallel()
+
+		// given: same body, but nothing tells the bot it owns that name.
+		body := adoCommentEventPayload("@svc-codeguru please re-review")
+		d, sub := newDispatcherWithSettings(t, defaultADOSettings())
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should respond 204 when the bot mentions its own configured identity", func(t *testing.T) {
+		t.Parallel()
+
+		// given: `felipe@example` is the payload's comment author AND
+		// derives to exactly `@felipe` — the precise shape where the
+		// account name is simultaneously a trigger token and the
+		// self-author identity. The guard must still win.
+		settings := defaultADOSettings()
+		settings.BotIdentities = []string{"felipe@example"}
+		body := adoCommentEventPayload("@felipe re-review")
+		d, sub := newDispatcherWithSettings(t, settings)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs(), "the bot must not re-review its own comment")
+	})
+
+	t.Run("should respond 204 for an unconfigured GUID-form ADO mention", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the ADO comment box rewrites an @-autocomplete into
+		// `@<identity-guid>` markup, so the typed account name never
+		// reaches the payload and a name-shaped identity cannot match it.
+		settings := defaultADOSettings()
+		settings.BotIdentities = []string{"svc-codeguru@corp.example"}
+		body := adoCommentEventPayload("@<8f3a1e2b-0000-0000-0000-000000000000> please re-review")
+		d, sub := newDispatcherWithSettings(t, settings)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, sub.Jobs())
+	})
+
+	t.Run("should enqueue a GUID-form ADO mention when the GUID is configured", func(t *testing.T) {
+		t.Parallel()
+
+		// given: pasting the bot's ADO identity GUID into
+		// `bot_identities` makes the comment box's own markup match, so
+		// users can @-autocomplete the bot instead of typing its name.
+		const guid = "8f3a1e2b-0000-0000-0000-000000000000"
+		settings := defaultADOSettings()
+		settings.BotIdentities = []string{guid}
+		body := adoCommentEventPayload("@<" + guid + "> please re-review")
+		d, sub := newDispatcherWithSettings(t, settings)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/azuredevops", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", adoBasicAuth(adoSecret))
+		w := httptest.NewRecorder()
+
+		// when
+		d.HandleAzureDevOps(w, req)
+
+		// then
+		require.Equal(t, http.StatusAccepted, w.Code)
+		assert.Len(t, sub.Jobs(), 1)
+	})
 }

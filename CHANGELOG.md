@@ -16,9 +16,21 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added the bot's own account name as a re-review trigger, so mentioning the account users actually see on the pull request works alongside `@code-guru`. Every `bot_identities` entry is normalised into the mention a human would type: `code-guru[bot]` accepts `@code-guru`, `svc-codeguru@corp.example` accepts `@svc-codeguru`, and an Azure DevOps identity GUID accepts the `@<guid>` markup the Azure DevOps comment box substitutes for an auto-completed mention
+- added handling of the GitHub `pull_request_review_comment` event, so a mention typed as a reply inside an inline review thread requests a re-review. GitHub routes only pull-request-wide comments through `issue_comment`, so those mentions were previously dropped entirely — Azure DevOps has always covered both. **The GitHub App must subscribe to `Pull request review comments`** or the new handler never receives a delivery
+- added a "Mentioning the bot" section to `README.md` documenting both trigger forms, where each works, and the Azure DevOps auto-complete caveat
+
 ### Changed
 
+- changed `bot_identities` from a self-recognition-only list into a list that also drives mention triggers; entries are now live re-review triggers, so only accounts this bot posts under belong there (third-party automation accounts belong in `trivial.auto_merge_allowed_authors`)
 - changed the Go module dependencies to their latest versions
+
+### Fixed
+
+- fixed a burst of GitHub inline mentions enqueuing one review per comment: a single review submission carrying the mention in several inline comments fires one webhook delivery each, which would have started that many concurrent reviews of the same pull request. The inline path now takes the duplicate-delivery gate under its own `gh-mention:` key, leaving the pull-request-wide path's always-goes-through behaviour untouched
+- fixed a test that claimed to cover the unsupported-webhook-event branch while sending a supported event (`issue_comment`), passing only because the payload's action did not match
 
 ## [1.14.2] - 2026-08-04
 

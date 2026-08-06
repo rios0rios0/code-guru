@@ -409,11 +409,12 @@ type adoCommentEvent struct {
 }
 
 // handleADOComment processes the ADO comment event so a user can
-// request a re-review by mentioning `@code-guru` in a PR comment. The
-// handler:
+// request a re-review by mentioning the bot in a PR comment — either as
+// `@code-guru` or as the account the deployment posts under (any
+// `bot_identities` entry, see `support.HasMention`). The handler:
 //
 //   - returns 400 on malformed JSON;
-//   - returns 204 when the comment body does not contain `@code-guru`
+//   - returns 204 when the comment body mentions neither
 //     (preserves the operator's signal-to-noise ratio in pod logs);
 //   - returns 403 when the org / project is off-allowlist;
 //   - enqueues the matched comment as a job with `UserMentioned=true`
@@ -428,9 +429,9 @@ func (d *Dispatcher) handleADOComment(w http.ResponseWriter, _ *http.Request, bo
 		writeError(w, http.StatusBadRequest, "malformed JSON")
 		return
 	}
-	if !support.HasMention(event.Resource.Comment.Content) {
+	if !support.HasMention(event.Resource.Comment.Content, d.settings.BotIdentities...) {
 		logger.Debugf(
-			"ADO webhook: comment on PR #%d has no @code-guru mention; skipping",
+			"ADO webhook: comment on PR #%d mentions neither @code-guru nor a configured bot identity; skipping",
 			event.Resource.PullRequest.PullRequestID,
 		)
 		w.WriteHeader(http.StatusNoContent)

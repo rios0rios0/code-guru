@@ -90,7 +90,12 @@ func TestHasMention(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
-		want bool
+		// identities mirrors `Settings.BotIdentities` — the accounts the
+		// deployment posts under. A nil slice expands to zero variadic
+		// args, so the built-in-token rows below behave exactly as they
+		// did before mention matching became settings-aware.
+		identities []string
+		want       bool
 	}{
 		{
 			name: "should match a plain @code-guru mention",
@@ -137,6 +142,131 @@ func TestHasMention(t *testing.T) {
 			body: "",
 			want: false,
 		},
+		// --- configured bot identities ---
+		//
+		// Note these rows deliberately avoid `code-guru[bot]`: `[` is a
+		// word boundary, so the built-in token already matches inside
+		// `@code-guru[bot]` on the pre-change code and such a row would
+		// pass without proving anything. Every row below uses an identity
+		// whose name does NOT start with `code-guru`.
+		{
+			name:       "should still match the built-in @code-guru when identities are configured",
+			body:       "@code-guru please re-review",
+			identities: []string{"svc-codeguru@corp.example"},
+			want:       true,
+		},
+		{
+			name:       "should match a configured identity by its short name",
+			body:       "@svc-codeguru please re-review",
+			identities: []string{"svc-codeguru@corp.example"},
+			want:       true,
+		},
+		{
+			name:       "should match a configured identity verbatim including its domain",
+			body:       "@svc-codeguru@corp.example please re-review",
+			identities: []string{"svc-codeguru@corp.example"},
+			want:       true,
+		},
+		{
+			name:       "should match a [bot]-suffixed identity by its short name",
+			body:       "@deploybot please re-review",
+			identities: []string{"deploybot[bot]"},
+			want:       true,
+		},
+		{
+			name:       "should lower-case the identity before matching",
+			body:       "@svc-codeguru please re-review",
+			identities: []string{"SVC-CodeGuru@Corp.EXAMPLE"},
+			want:       true,
+		},
+		{
+			name:       "should lower-case the identity before stripping the [bot] suffix",
+			body:       "@deploybot please re-review",
+			identities: []string{"DeployBot[BOT]"},
+			want:       true,
+		},
+		{
+			name:       "should strip one leading @ from the configured identity",
+			body:       "@deploybot please re-review",
+			identities: []string{"@deploybot"},
+			want:       true,
+		},
+		{
+			name:       "should match any one of several configured identities",
+			body:       "@svc-b please re-review",
+			identities: []string{"svc-a@corp.example", "svc-b@corp.example"},
+			want:       true,
+		},
+		{
+			name:       "should NOT match a derived token extended into a longer handle",
+			body:       "@svc-codeguru-staging deployed",
+			identities: []string{"svc-codeguru@corp.example"},
+			want:       false,
+		},
+		{
+			name:       "should NOT match when the configured identity is absent from the body",
+			body:       "LGTM, thanks!",
+			identities: []string{"svc-codeguru@corp.example"},
+			want:       false,
+		},
+		{
+			name:       "should NOT match an identity that is not configured",
+			body:       "@svc-codeguru please re-review",
+			identities: nil,
+			want:       false,
+		},
+		{
+			name:       "should ignore identities that are empty, blank, or only an @",
+			body:       "@@ hello",
+			identities: []string{"", "   ", "@"},
+			want:       false,
+		},
+		{
+			name:       "should drop a derived name shorter than the minimum length",
+			body:       "reach me at x@a today",
+			identities: []string{"a@b"},
+			want:       false,
+		},
+		{
+			name:       "should keep the verbatim identity when its short name is too short",
+			body:       "@a@b please re-review",
+			identities: []string{"a@b"},
+			want:       true,
+		},
+		{
+			name:       "should tolerate an identity that is only the [bot] suffix",
+			body:       "nothing to see here",
+			identities: []string{"[bot]"},
+			want:       false,
+		},
+		{
+			// Azure DevOps rewrites an @-autocompleted mention into
+			// `@<identity-guid>` markup, so the typed name never reaches
+			// the webhook payload. Pasting the GUID into `bot_identities`
+			// makes the comment box's own form work.
+			name:       "should match the Azure DevOps @<guid> markup when the GUID is configured",
+			body:       "@<8f3a1e2b-0000-0000-0000-000000000000> please re-review",
+			identities: []string{"8f3a1e2b-0000-0000-0000-000000000000"},
+			want:       true,
+		},
+		{
+			name:       "should NOT match an Azure DevOps @<guid> markup for an unconfigured identity",
+			body:       "@<8f3a1e2b-0000-0000-0000-000000000000> please re-review",
+			identities: []string{"svc-codeguru@corp.example"},
+			want:       false,
+		},
+		{
+			// Accepted trade-off, pinned deliberately: the scan has no
+			// LEFT word-boundary check, so a derived short name also
+			// matches inside an email host. Pre-existing behaviour
+			// (`alice@code-guru.com` false-positives on the built-in
+			// token today); fixing it would change `@code-guru`
+			// semantics too and is out of scope here.
+			name:       "should match a derived short name inside an email host (accepted false positive)",
+			body:       "cc alice@svc-codeguru.corp.example",
+			identities: []string{"svc-codeguru@corp.example"},
+			want:       true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -144,12 +274,126 @@ func TestHasMention(t *testing.T) {
 			t.Parallel()
 
 			// given / when
-			got := support.HasMention(tt.body)
+			got := support.HasMention(tt.body, tt.identities...)
 
 			// then
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestMentionTokensFor(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		identities []string
+		want       []string
+	}{
+		{
+			name:       "should return nil when no identities are configured",
+			identities: nil,
+			want:       nil,
+		},
+		{
+			name:       "should derive the [bot]-stripped and domain-stripped forms alongside the verbatim one",
+			identities: []string{"code-guru[bot]", "svc-codeguru@corp.example"},
+			// `@code-guru` is absent: it collapses onto the built-in
+			// MentionToken, which HasMention always checks anyway.
+			want: []string{
+				"@code-guru[bot]", "@<code-guru[bot]>",
+				"@svc-codeguru@corp.example", "@<svc-codeguru@corp.example>", "@svc-codeguru",
+			},
+		},
+		{
+			name:       "should derive the angle-bracket form Azure DevOps uses for an @-autocompleted mention",
+			identities: []string{"8f3a1e2b-0000-0000-0000-000000000000"},
+			want: []string{
+				"@8f3a1e2b-0000-0000-0000-000000000000",
+				"@<8f3a1e2b-0000-0000-0000-000000000000>",
+			},
+		},
+		{
+			name:       "should drop an identity that is exactly the built-in token",
+			identities: []string{"code-guru"},
+			want:       []string{"@<code-guru>"},
+		},
+		{
+			name:       "should drop the built-in token regardless of case or a leading @",
+			identities: []string{"@CODE-GURU"},
+			want:       []string{"@<code-guru>"},
+		},
+		{
+			name:       "should collapse duplicate identities into one token set",
+			identities: []string{"svc@corp.example", "svc@corp.example"},
+			want:       []string{"@svc@corp.example", "@<svc@corp.example>", "@svc"},
+		},
+		{
+			name:       "should drop derived names shorter than the minimum length",
+			identities: []string{"a@b"},
+			want:       []string{"@a@b", "@<a@b>"},
+		},
+		{
+			name:       "should skip identities that carry no usable name",
+			identities: []string{"", "   ", "@"},
+			want:       nil,
+		},
+		{
+			name:       "should preserve input order across several identities",
+			identities: []string{"svc-a@corp.example", "svc-b@corp.example"},
+			want: []string{
+				"@svc-a@corp.example", "@<svc-a@corp.example>", "@svc-a",
+				"@svc-b@corp.example", "@<svc-b@corp.example>", "@svc-b",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given / when
+			got := support.MentionTokensFor(tt.identities)
+
+			// then
+			assert.Equal(t, tt.want, got)
+			assert.NotContains(t, got, "", "an empty token would hang the mention scan")
+		})
+	}
+}
+
+func TestContainsMentionToken(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should return false for an empty token instead of looping forever", func(t *testing.T) {
+		t.Parallel()
+
+		// given: `strings.Index` returns 0 for the empty token, so without
+		// the guard the scan slices `body[0:]` on every iteration and
+		// never advances — the handler goroutine would spin at 100% CPU.
+		// `mentionTokensFor` cannot emit an empty token today, but that
+		// filter lives in another function, so the guard is pinned here.
+		// A regression makes this test hang rather than fail.
+		const body = "@code-guru please re-review"
+
+		// when
+		got := support.ContainsMentionToken(body, "")
+
+		// then
+		assert.False(t, got)
+	})
+
+	t.Run("should require a right-side word boundary", func(t *testing.T) {
+		t.Parallel()
+
+		// given / when
+		matched := support.ContainsMentionToken("ping @svc-bot now", "@svc-bot")
+		extended := support.ContainsMentionToken("ping @svc-botnet now", "@svc-bot")
+
+		// then
+		assert.True(t, matched)
+		assert.False(t, extended)
+	})
 }
 
 func TestDetectBotAuthors(t *testing.T) {

@@ -23,15 +23,37 @@ type Settings struct {
 	GitHubApp GitHubAppConfig  `yaml:"github_app"`
 
 	// BotIdentities lists the account identities code-guru posts review
-	// comments under (a service-account login / email). On the re-review
-	// path the bot uses these to recognise its OWN prior comments so it
-	// can read the dialogue (its earlier findings plus the author's
-	// replies) and resolve each thread instead of re-posting the same
-	// findings. The built-in GitHub App shape (`code-guru[bot]`) is
-	// always recognised, and the bot also self-detects its identity from
-	// the author of its own PR-wide status annotations — so this is only
-	// required when neither of those covers the deployment. Honours
-	// `CODE_GURU_BOT_IDENTITIES` (comma-separated).
+	// comments under (a service-account login / email). It drives TWO
+	// behaviours, so read both before adding an entry:
+	//
+	//  1. Self-recognition. On the re-review path the bot uses these to
+	//     recognise its OWN prior comments so it can read the dialogue
+	//     (its earlier findings plus the author's replies) and resolve
+	//     each thread instead of re-posting the same findings; the
+	//     webhook handlers also use them to skip comments the bot itself
+	//     authored, which would otherwise loop forever. The built-in
+	//     GitHub App shape (`code-guru[bot]`) is always recognised, and
+	//     the bot self-detects its identity from the author of its own
+	//     PR-wide status annotations — so this is only required when
+	//     neither of those covers the deployment.
+	//
+	//  2. Mention triggers. Each entry is also normalised into the
+	//     `@`-mentions that request a re-review (see
+	//     `support.HasMention`), because users @-mention the account they
+	//     see on the PR rather than the built-in `@code-guru` — which
+	//     stays accepted regardless. `code-guru[bot]` accepts
+	//     `@code-guru`; `svc-codeguru@corp.example` accepts
+	//     `@svc-codeguru`; an Azure DevOps identity GUID accepts the
+	//     `@<guid>` markup the ADO comment box substitutes for an
+	//     @-autocompleted mention.
+	//
+	// Because of (2), list ONLY accounts this bot posts under. A shared
+	// automation account added here to quieten (1) becomes a live
+	// re-review trigger: anyone typing its name in a PR comment starts a
+	// full review. Use `Trivial.AutoMergeAllowedAuthors` for third-party
+	// automation accounts instead.
+	//
+	// Honours `CODE_GURU_BOT_IDENTITIES` (comma-separated).
 	BotIdentities []string `yaml:"bot_identities"`
 }
 

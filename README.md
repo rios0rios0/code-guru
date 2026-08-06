@@ -26,7 +26,7 @@ A CLI tool that leverages AI (Claude Code CLI or OpenAI API) to automatically re
 - Intent-aware reviews: the PR's title, branch names, description, and commit count are forwarded to the AI so it can judge whether the diff actually does what the author claims and flag undocumented scope creep — see [Pull Request Context](#pull-request-context-intent-aware-reviews)
 - Inline and general PR comments posted back via gitforge
 - Three modes: single PR review, batch review-all, and discover (list open PRs)
-- Reviews each PR exactly once — subsequent pushes are no-ops. To request a re-review, post a PR comment that mentions `@code-guru` (case-insensitive). On a re-review the bot acts as a reviewer who reads the existing conversation: it loads every prior bot inline thread plus every reply, classifies each as `resolved` / `outstanding` / `outdated`, posts one short reply **nested inside each prior thread** (via the provider's `ReplyToThread`, so the answer lands below the author's reply like a human reviewer rather than as a separate same-line comment), and auto-closes the threads it considers resolved (Azure DevOps thread state `fixed`). Net-new findings only land if the diff genuinely warrants one and it does NOT overlap a thread the bot already addressed — replacing the pre-existing failure mode where every re-review flooded the PR with reworded duplicates of every prior comment. The bot recognises its own prior comments by the built-in `code-guru` login shape, by self-detecting the account that posted its PR-wide review annotations on the PR, and by any identity listed in `bot_identities` (env `CODE_GURU_BOT_IDENTITIES`) — so re-reviews still read and resolve prior threads when the deployment posts under a service account
+- Reviews each PR exactly once — subsequent pushes are no-ops. To request a re-review, post a PR comment that mentions `@code-guru` (case-insensitive) or the account the bot itself posts under, when that account is listed in `bot_identities` — see [Mentioning the bot](#mentioning-the-bot). On GitHub the mention works both in a PR-wide comment and inside an inline review thread. On a re-review the bot acts as a reviewer who reads the existing conversation: it loads every prior bot inline thread plus every reply, classifies each as `resolved` / `outstanding` / `outdated`, posts one short reply **nested inside each prior thread** (via the provider's `ReplyToThread`, so the answer lands below the author's reply like a human reviewer rather than as a separate same-line comment), and auto-closes the threads it considers resolved (Azure DevOps thread state `fixed`). Net-new findings only land if the diff genuinely warrants one and it does NOT overlap a thread the bot already addressed — replacing the pre-existing failure mode where every re-review flooded the PR with reworded duplicates of every prior comment. The bot recognises its own prior comments by the built-in `code-guru` login shape, by self-detecting the account that posted its PR-wide review annotations on the PR, and by any identity listed in `bot_identities` (env `CODE_GURU_BOT_IDENTITIES`) — so re-reviews still read and resolve prior threads when the deployment posts under a service account
 
 ## Installation
 
@@ -107,10 +107,13 @@ rules:
 
 # Account identities the bot posts review comments under. Only needed when the
 # deployment posts under a service account whose login does not start with
-# `code-guru` (common on self-hosted Azure DevOps) — on a re-review the bot uses
-# these to recognise its own prior threads and resolve them instead of
-# re-posting. The bot also self-detects this from its own PR-wide review
-# annotations, so this is optional. Override via CODE_GURU_BOT_IDENTITIES.
+# `code-guru` (common on self-hosted Azure DevOps). Used for two things:
+# (1) on a re-review the bot recognises its own prior threads and resolves them
+# instead of re-posting; (2) each entry also becomes an @-mention that requests a
+# re-review, so users can summon the bot by the name they see on the PR.
+# Because of (2), list ONLY accounts this bot posts under — see
+# "Mentioning the bot" below. The bot also self-detects (1) from its own PR-wide
+# review annotations, so this is optional. Override via CODE_GURU_BOT_IDENTITIES.
 bot_identities:
   - 'svc-codeguru@example.com'
 ```
@@ -180,6 +183,43 @@ Each review returns a verdict alongside comments:
 | `comment`          | Informational feedback only, not blocking      |
 
 The verdict is printed as `VERDICT:<value>` for machine parsing.
+
+## Mentioning the bot
+
+A PR is reviewed once; later pushes are no-ops. To ask for a re-review, mention
+the bot in a PR comment. Two things count as a mention:
+
+1. **`@code-guru`** — always accepted, on every deployment, with no configuration.
+2. **The account the bot posts under** — every entry in `bot_identities`
+   (env `CODE_GURU_BOT_IDENTITIES`) is normalised into the `@`-mention a user
+   would actually type, because on the PR they see the service account, not
+   `code-guru`:
+
+   | `bot_identities` entry                   | Also accepted as                                     |
+   |------------------------------------------|------------------------------------------------------|
+   | `code-guru[bot]`                         | `@code-guru`                                         |
+   | `svc-codeguru@corp.example`              | `@svc-codeguru`, `@svc-codeguru@corp.example`        |
+   | `8f3a1e2b-…` (Azure DevOps identity GUID) | `@<8f3a1e2b-…>`                                     |
+
+Matching is case-insensitive and stops at a word boundary, so
+`@svc-codeguru-staging` does **not** count as a mention of `@svc-codeguru`.
+
+> **List only accounts this bot posts under.** Entries in `bot_identities` are
+> live re-review triggers, so adding a shared automation account there means
+> anyone typing its name starts a full review. Third-party automation accounts
+> belong in `trivial.auto_merge_allowed_authors` instead.
+
+**Where the mention works.** On Azure DevOps, any PR comment. On GitHub, both a
+PR-wide comment and a reply inside an inline review thread — the latter requires
+the App to subscribe to `Pull request review comments` (see
+[Endpoints](#endpoints)). A single GitHub review submission carrying the mention
+in several inline comments is de-duplicated into one review.
+
+**Azure DevOps `@`-autocomplete.** The ADO comment box replaces an autocompleted
+mention with `@<identity-guid>` markup, so the account name never reaches the
+webhook and a name-shaped entry cannot match it. Either type the name as plain
+text, or add the bot's ADO identity GUID to `bot_identities` — then the
+autocompleted form works too.
 
 ## Trivial PR Detection
 
@@ -266,8 +306,13 @@ code-guru serve --port 8080
 | Endpoint                | Method | Auth                           | Notes                                                                                                                       |
 |-------------------------|--------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------------|
 | `/health`               | GET    | none                           | Liveness probe                                                                                                              |
-| `/webhooks/github`      | POST   | HMAC-SHA256                    | Validates the `X-Hub-Signature-256` header against `server.webhook_secret`. Acts on `pull_request` `opened`/`synchronize`/`reopened`. |
-| `/webhooks/azuredevops` | POST   | HTTP Basic                     | Username must be `code-guru`; password must equal `server.webhook_secret`. Acts on `git.pullrequest.created`/`git.pullrequest.updated` for active PRs. |
+| `/webhooks/github`      | POST   | HMAC-SHA256                    | Validates the `X-Hub-Signature-256` header against `server.webhook_secret`. Acts on `pull_request` `opened`/`synchronize`/`reopened`, plus `issue_comment` and `pull_request_review_comment` (both `created` only) for mentions. |
+| `/webhooks/azuredevops` | POST   | HTTP Basic                     | Username must be `code-guru`; password must equal `server.webhook_secret`. Acts on `git.pullrequest.created`/`git.pullrequest.updated` for active PRs, plus `ms.vss-code.git-pullrequest-comment-event` for mentions. |
+
+**Required GitHub App event subscriptions:** `Pull requests`, `Issue comments`,
+and `Pull request review comments`. The last two are separate checkboxes in the
+App settings — without them the mention handlers never receive a delivery, and
+`@`-mentions silently do nothing.
 
 ### Authentication Models
 
@@ -436,7 +481,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_AI_MAX_REVIEW_BATCHES`     | Caps how many batches one batched review may consume; files left over are reported as unreviewed | `20`                 |
 | `CODE_GURU_ANTHROPIC_CONTEXT_1M`      | Requests the Anthropic 1M-token context window (`context-1m-2025-08-07` beta) so larger PRs fit in one review pass; set to `false` for accounts/models that cannot use the beta | `true`               |
 | `CODE_GURU_ANTHROPIC_REFUSAL_FALLBACK_MODEL` | Anthropic model to re-issue the review against when the primary model declines the content on content-safety grounds (`stop_reason: refusal`); empty disables the fallback | (empty)              |
-| `CODE_GURU_BOT_IDENTITIES`            | Comma-separated account identities the bot posts under (so re-reviews recognise its own prior threads); the built-in `code-guru` shape and self-detection apply when unset |                      |
+| `CODE_GURU_BOT_IDENTITIES`            | Comma-separated account identities the bot posts under — used both so re-reviews recognise its own prior threads and as extra `@`-mention triggers; the built-in `code-guru` shape and self-detection apply when unset |                      |
 
 ## Rules
 
