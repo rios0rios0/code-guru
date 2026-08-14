@@ -501,6 +501,21 @@ Use `gofmt` for formatting...
 
 Universal categories (always included): `architecture`, `ci-cd`, `code-style`, `design-patterns`, `documentation`, `git-flow`, `security`, `testing`.
 
+Language categories are selected purely from the **extensions** of the files the PR touches — extensionless names such as `Dockerfile` are not classified:
+
+| Category     | Extensions                                    |
+|--------------|-----------------------------------------------|
+| `golang`     | `.go`                                         |
+| `javascript` | `.js`, `.ts`, `.jsx`, `.tsx`, `.mjs`, `.cjs`  |
+| `python`     | `.py`                                         |
+| `dart`       | `.dart`                                       |
+| `java`       | `.java`                                       |
+| `csharp`     | `.cs`                                         |
+| `terraform`  | `.tf`, `.hcl`                                 |
+| `yaml`       | `.yaml`, `.yml`                               |
+
+A category with no matching `.md` file in the rules directory simply contributes nothing — only the universal rules and the matched languages are sent to the model.
+
 ### Project Guidelines (CLAUDE.md)
 
 On top of the operator-configured rules, Code Guru reads the **reviewed repository's own root `CLAUDE.md`** — the file projects use to document conventions for AI tooling — and forwards it to the AI as project-specific review context. This works on every supported provider (GitHub and Azure DevOps) through the same file-access API the trivial detectors use, and it means the review honours conventions the generic ruleset cannot know about (naming, layering, testing patterns, intentional trade-offs).

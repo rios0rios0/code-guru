@@ -16,9 +16,15 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added Dart to the languages the reviewer recognises: a pull request touching `.dart` files now selects the `dart` rule category and labels those hunks as Dart in the prompt, where before they classified as unknown and contributed no language rules. Operators who keep a `dart.md` in their `rules.path` get it enforced automatically; those who do not are unaffected, since an unmatched category simply loads nothing
+- added `README.md` documentation of the language rule categories the classifier can produce, so an operator can tell which filename a language-specific rule file needs
+
 ### Changed
 
 - changed the Go version to `1.26.6` and updated all module dependencies
+- changed `langforge` from `v0.6.11` to `v1.0.0`. The major release removed the nine per-ecosystem `Provider` structs (replaced by `repositories.CompositeProvider`) and the `javagradle`/`javamaven` `RuntimeManager` types (replaced by a shared `java.RuntimeManager`); Code Guru names none of those symbols, consuming only `pkg/domain/entities` for extension-based classification, so the breaking changes pass it by
 
 ## [1.15.3] - 2026-08-13
 
