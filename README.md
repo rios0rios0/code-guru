@@ -501,7 +501,20 @@ Use `gofmt` for formatting...
 
 Universal categories (always included): `architecture`, `ci-cd`, `code-style`, `design-patterns`, `documentation`, `git-flow`, `security`, `testing`.
 
-Language categories are selected from the extensions of the files the PR touches: `golang`, `javascript`, `python`, `java`, `ruby`, `dart`, `csharp`, `terraform`, `yaml`, `ci-cd`, `dockerfile`. A category with no matching file in the rules directory simply contributes nothing — only the universal rules and the matched languages are sent to the model.
+Language categories are selected purely from the **extensions** of the files the PR touches — extensionless names such as `Dockerfile` are not classified:
+
+| Category     | Extensions                                    |
+|--------------|-----------------------------------------------|
+| `golang`     | `.go`                                         |
+| `javascript` | `.js`, `.ts`, `.jsx`, `.tsx`, `.mjs`, `.cjs`  |
+| `python`     | `.py`                                         |
+| `dart`       | `.dart`                                       |
+| `java`       | `.java`                                       |
+| `csharp`     | `.cs`                                         |
+| `terraform`  | `.tf`, `.hcl`                                 |
+| `yaml`       | `.yaml`, `.yml`                               |
+
+A category with no matching `.md` file in the rules directory simply contributes nothing — only the universal rules and the matched languages are sent to the model.
 
 ### Project Guidelines (CLAUDE.md)
 
