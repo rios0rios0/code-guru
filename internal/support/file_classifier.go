@@ -17,6 +17,7 @@ var languageToRuleCategory = map[entities.Language]string{
 	entities.LanguageJavaGradle: langJava,
 	entities.LanguageJavaMaven:  langJava,
 	entities.LanguageRuby:       "ruby",
+	entities.LanguageDart:       "dart",
 	entities.LanguageCSharp:     "csharp",
 	entities.LanguageTerraform:  "terraform",
 	entities.LanguageYAML:       "yaml",

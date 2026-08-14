@@ -501,6 +501,8 @@ Use `gofmt` for formatting...
 
 Universal categories (always included): `architecture`, `ci-cd`, `code-style`, `design-patterns`, `documentation`, `git-flow`, `security`, `testing`.
 
+Language categories are selected from the extensions of the files the PR touches: `golang`, `javascript`, `python`, `java`, `ruby`, `dart`, `csharp`, `terraform`, `yaml`, `ci-cd`, `dockerfile`. A category with no matching file in the rules directory simply contributes nothing — only the universal rules and the matched languages are sent to the model.
+
 ### Project Guidelines (CLAUDE.md)
 
 On top of the operator-configured rules, Code Guru reads the **reviewed repository's own root `CLAUDE.md`** — the file projects use to document conventions for AI tooling — and forwards it to the AI as project-specific review context. This works on every supported provider (GitHub and Azure DevOps) through the same file-access API the trivial detectors use, and it means the review honours conventions the generic ruleset cannot know about (naming, layering, testing patterns, intentional trade-offs).

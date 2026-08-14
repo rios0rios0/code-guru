@@ -46,6 +46,17 @@ func TestClassifyFile(t *testing.T) {
 		assert.Equal(t, "python", result)
 	})
 
+	t.Run("should classify Dart files", func(t *testing.T) {
+		// given
+		path := "lib/main.dart"
+
+		// when
+		result := support.ClassifyFile(path)
+
+		// then
+		assert.Equal(t, "dart", result)
+	})
+
 	t.Run("should classify YAML files", func(t *testing.T) {
 		// given
 		path := "config.yaml"
