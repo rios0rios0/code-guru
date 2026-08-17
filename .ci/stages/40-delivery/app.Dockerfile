@@ -1,6 +1,11 @@
 # syntax=docker/dockerfile:1.7
 
-FROM golang:1.26.5-alpine AS builder
+# The builder tag must track the `go` directive in `go.mod` and be bumped in
+# the same commit. The official golang images set `GOTOOLCHAIN=local`, so a
+# builder older than that directive does not quietly download a newer
+# toolchain -- it fails the build outright with
+# `go.mod requires go >= X (running go Y; GOTOOLCHAIN=local)`.
+FROM golang:1.26.6-alpine AS builder
 WORKDIR /src
 
 RUN apk add --no-cache git ca-certificates
