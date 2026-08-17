@@ -362,7 +362,7 @@ github_app:
 ### Running with Docker
 
 ```bash
-docker build -t code-guru:latest .
+docker build -f .ci/stages/40-delivery/app.Dockerfile -t code-guru:latest .
 docker run --rm -p 8080:8080 \
   -e CODE_GURU_BACKEND=anthropic \
   -e CODE_GURU_ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
@@ -372,9 +372,11 @@ docker run --rm -p 8080:8080 \
   code-guru:latest
 ```
 
-The Dockerfile uses a multi-stage build (`golang:1.26-alpine` builder,
-`gcr.io/distroless/static-debian12:nonroot` runtime) and runs as the
-non-root user.
+The Dockerfile lives at `.ci/stages/40-delivery/app.Dockerfile` and uses a
+multi-stage build (`golang:1.26.6-alpine` builder, `debian:12-slim` runtime
+pinned by digest, with the Claude Code CLI installed) running as the
+non-root user `65532`. The builder tag tracks the `go` directive in
+`go.mod` and must be bumped together with it.
 
 The image ships with a `HEALTHCHECK` directive that calls `code-guru
 health` against the local listener every 30 seconds. The `health`

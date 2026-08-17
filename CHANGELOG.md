@@ -20,6 +20,11 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 - changed the Go module dependencies to their latest versions
 
+### Fixed
+
+- fixed the Docker delivery stage failing with `go.mod requires go >= 1.26.6 (running go 1.26.5; GOTOOLCHAIN=local)`: the builder image stayed on `golang:1.26.5-alpine` when `go.mod` moved to Go `1.26.6`, and because the official `golang` images pin `GOTOOLCHAIN=local` the build aborted at `go mod download`, so no container image was published for `1.16.0` or `1.16.1`
+- fixed the `README.md` Docker instructions, which pointed `docker build` at the repository root (the `Dockerfile` moved to `.ci/stages/40-delivery/app.Dockerfile`) and described a `gcr.io/distroless/static-debian12:nonroot` runtime the image no longer uses
+
 ## [1.16.1] - 2026-08-16
 
 ### Changed
