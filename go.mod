@@ -2,17 +2,17 @@ module github.com/rios0rios0/codeguru
 
 go 1.26.6
 
-require github.com/rios0rios0/cliforge v0.3.15
+require github.com/rios0rios0/cliforge v0.3.16
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/rios0rios0/gitforge v1.0.1-0.20260723193418-4150608363f0
-	github.com/rios0rios0/langforge v1.0.0
+	github.com/rios0rios0/langforge v1.0.1
 	github.com/rios0rios0/testkit v0.2.7
 	github.com/sashabaranov/go-openai v1.42.0
 	github.com/sirupsen/logrus v1.10.0
 	github.com/spf13/cobra v1.10.2
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.0
 	go.uber.org/dig v1.19.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.36.3
@@ -63,7 +63,6 @@ require (
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pjbgf/sha1cd v0.6.0 // indirect
-	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/skeema/knownhosts v1.3.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
