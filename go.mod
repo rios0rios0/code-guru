@@ -2,12 +2,12 @@ module github.com/rios0rios0/codeguru
 
 go 1.26.6
 
-require github.com/rios0rios0/cliforge v0.3.16
+require github.com/rios0rios0/cliforge v0.3.17
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/rios0rios0/gitforge v1.0.1-0.20260723193418-4150608363f0
-	github.com/rios0rios0/langforge v1.0.1
+	github.com/rios0rios0/langforge v1.0.2
 	github.com/rios0rios0/testkit v0.2.7
 	github.com/sashabaranov/go-openai v1.42.0
 	github.com/sirupsen/logrus v1.10.0
@@ -30,7 +30,7 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.3 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.9.1 // indirect
 	github.com/go-git/go-git/v5 v5.19.2 // indirect
