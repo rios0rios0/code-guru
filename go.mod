@@ -10,7 +10,7 @@ require (
 	github.com/rios0rios0/langforge v1.0.2
 	github.com/rios0rios0/testkit v0.2.7
 	github.com/sashabaranov/go-openai v1.42.0
-	github.com/sirupsen/logrus v1.10.0
+	github.com/sirupsen/logrus v1.10.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.0
 	go.uber.org/dig v1.19.0
