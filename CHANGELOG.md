@@ -16,6 +16,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added `cmd/code-guru/dockerfile_test.go`, a unit test asserting the delivery `Dockerfile` builder image is never older than the `go` directive in `go.mod`, so the drift that broke the Docker stage twice now fails in the test job instead of at the end of the pipeline
+
 ### Changed
 
 - changed the Go module dependencies to their latest versions
@@ -26,6 +30,8 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Fixed
 
+- fixed the Docker delivery stage failing with `go.mod requires go >= 1.27.0 (running go 1.26.6; GOTOOLCHAIN=local)`: the builder image stayed on `golang:1.26.6-alpine` when `go.mod` moved to Go `1.27.0`, so the build aborted at `go mod download` and no container image was published
+- fixed the `README.md`, `CONTRIBUTING.md`, and `.github/copilot-instructions.md` Go version references, which still pointed at Go `1.26`
 - fixed `make test` and `make sast` leaving generated reports (`coverage.txt`, `coverage.xml`, `cobertura.xml`, `junit.xml`) as untracked files by adding them to `.gitignore`
 
 ## [1.16.2] - 2026-08-17

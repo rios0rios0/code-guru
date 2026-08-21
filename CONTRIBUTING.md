@@ -7,7 +7,7 @@ development practices, refer to the **[Development Guide](https://github.com/rio
 
 ## Prerequisites
 
-- [Go](https://go.dev/dl/) 1.26+
+- [Go](https://go.dev/dl/) 1.27+
 
 ## Development Workflow
 

@@ -44,7 +44,7 @@ Controllers are automatically registered as subcommands via the DI container.
 
 ## Go Conventions
 
-- **Go version**: 1.26+ (see `go.mod`).
+- **Go version**: 1.27+ (see `go.mod`).
 - **Formatting**: Use `gofmt`; tabs for indentation (see `.editorconfig`).
 - **Imports**: Group into standard library, external dependencies, and internal packages (separated by blank lines). Alias the `logrus` logger as `logger` and `gitforge` packages with `forge` prefixes.
 - **Error handling**: Always return errors explicitly. Wrap errors with `fmt.Errorf("context: %w", err)` for context propagation.
