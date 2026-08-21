@@ -21,6 +21,12 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 - changed the Go module dependencies to their latest versions
 - changed the Go module dependencies to their latest versions
 - changed the Go version to `1.27.0` and updated all module dependencies
+- changed struct literals and `errors.As` calls to the Go 1.27 forms required by the `modernize` linter
+- changed `AuthController` to depend on the new `commands.Auth` contract instead of the concrete command, matching every other controller
+
+### Fixed
+
+- fixed `make test` and `make sast` leaving generated reports (`coverage.txt`, `coverage.xml`, `cobertura.xml`, `junit.xml`) as untracked files by adding them to `.gitignore`
 
 ## [1.16.2] - 2026-08-17
 

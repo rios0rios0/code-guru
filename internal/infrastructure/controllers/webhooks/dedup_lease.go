@@ -337,7 +337,7 @@ func (d *K8sLeaseDedup) buildLease(name string) *coordinationv1.Lease {
 	now := metav1.NewMicroTime(time.Now())
 	holder := d.holderIdentity
 	return &coordinationv1.Lease{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Name: name,
 		Spec: coordinationv1.LeaseSpec{
 			HolderIdentity:       &holder,
 			LeaseDurationSeconds: &duration,
