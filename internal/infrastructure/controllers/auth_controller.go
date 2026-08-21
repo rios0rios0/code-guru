@@ -10,11 +10,11 @@ import (
 
 // AuthController handles the "auth" subcommand group.
 type AuthController struct {
-	authCommand *commands.AuthCommand
+	authCommand commands.Auth
 }
 
 // NewAuthController creates a new AuthController.
-func NewAuthController(authCommand *commands.AuthCommand) *AuthController {
+func NewAuthController(authCommand commands.Auth) *AuthController {
 	return &AuthController{authCommand: authCommand}
 }
 

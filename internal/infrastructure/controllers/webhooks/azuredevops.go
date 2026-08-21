@@ -196,12 +196,10 @@ func (d *Dispatcher) HandleAzureDevOps(w http.ResponseWriter, r *http.Request) {
 		RemoteURL:    event.Resource.Repository.RemoteURL,
 	}
 	pr := forgeEntities.PullRequestDetail{
-		PullRequest: forgeEntities.PullRequest{
-			ID:     event.Resource.PullRequestID,
-			Title:  event.Resource.Title,
-			URL:    event.Resource.URL,
-			Status: event.Resource.Status,
-		},
+		ID:           event.Resource.PullRequestID,
+		Title:        event.Resource.Title,
+		URL:          event.Resource.URL,
+		Status:       event.Resource.Status,
 		SourceBranch: refToBranch(event.Resource.SourceRefName),
 		TargetBranch: refToBranch(event.Resource.TargetRefName),
 		IsDraft:      event.Resource.IsDraft,

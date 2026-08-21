@@ -831,9 +831,8 @@ func buildContentSafetyRefusalBody(now time.Time, reviewErr error) string {
 		"bio":   "flagged this change as biology-related content",
 	}
 	flagged := "flagged this change"
-	var refusal *support.ContentSafetyRefusalError
-	if errors.As(reviewErr, &refusal) {
-		if phrase, ok := categoryPhrase[refusal.Category]; ok {
+	if refusal, ok := errors.AsType[*support.ContentSafetyRefusalError](reviewErr); ok {
+		if phrase, found := categoryPhrase[refusal.Category]; found {
 			flagged = phrase
 		}
 	}
