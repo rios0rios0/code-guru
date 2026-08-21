@@ -373,7 +373,7 @@ docker run --rm -p 8080:8080 \
 ```
 
 The Dockerfile lives at `.ci/stages/40-delivery/app.Dockerfile` and uses a
-multi-stage build (`golang:1.26.6-alpine` builder, `debian:12-slim` runtime
+multi-stage build (`golang:1.27.0-alpine` builder, `debian:12-slim` runtime
 pinned by digest, with the Claude Code CLI installed) running as the
 non-root user `65532`. The builder tag tracks the `go` directive in
 `go.mod` and must be bumped together with it.
