@@ -8,6 +8,7 @@ development practices, refer to the **[Development Guide](https://github.com/rio
 ## Prerequisites
 
 - [Go](https://go.dev/dl/) 1.27+
+- [chlog](https://github.com/luizjhonata/chlog) (`go install github.com/luizjhonata/chlog@latest`)
 
 ## Development Workflow
 
@@ -62,4 +63,7 @@ Trivial adapters detect PRs that can be auto-approved without calling the LLM (e
    }
    ```
 4. Add unit tests following BDD structure (`// given`, `// when`, `// then`) with `t.Parallel()` and `t.Run()`
-5. Update `CHANGELOG.md` under `[Unreleased] > Added`
+5. Add a changelog fragment — never edit `CHANGELOG.md`, which is generated from them:
+   ```bash
+   chlog new --kind Added --body "added the thing that was not there before"
+   ```
