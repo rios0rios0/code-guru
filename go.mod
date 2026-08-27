@@ -4,19 +4,19 @@ go 1.27.0
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/rios0rios0/cliforge v0.3.19
+	github.com/rios0rios0/cliforge v0.4.0
 	github.com/rios0rios0/gitforge v1.0.1-0.20260723193418-4150608363f0
-	github.com/rios0rios0/langforge v1.0.4
-	github.com/rios0rios0/testkit v0.2.8
+	github.com/rios0rios0/langforge v1.1.0
+	github.com/rios0rios0/testkit v0.3.0
 	github.com/sashabaranov/go-openai v1.42.0
 	github.com/sirupsen/logrus v1.10.2
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/dig v1.19.0
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.36.4
-	k8s.io/apimachinery v0.36.4
-	k8s.io/client-go v0.36.4
+	k8s.io/api v0.37.0
+	k8s.io/apimachinery v0.37.0
+	k8s.io/client-go v0.37.0
 )
 
 require (
