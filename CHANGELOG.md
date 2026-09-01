@@ -22,6 +22,13 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.18.3] - 2026-09-01
+
+### Changed
+
+- changed the Go module dependencies to their latest versions
+- refreshed `CLAUDE.md` to reference the renamed Claude workflows `claude-review.yaml` and `claude-mention.yaml` instead of the stale `claude-code-review.yaml` and `claude.yaml`
+
 ## [1.18.2] - 2026-08-29
 
 ### Changed
