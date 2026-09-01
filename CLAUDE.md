@@ -21,7 +21,7 @@ go test -tags unit ./...                        # Run unit tests directly
 go test -tags unit -run TestFunctionName ./internal/support/  # Run a single test
 ```
 
-The Makefile imports targets from `~/Development/github.com/rios0rios0/pipelines` (`SCRIPTS_DIR`). There is no local `.golangci.yaml` — lint config comes from the pipelines repo (79 linters, including `funlen` at 100 lines, `golines` at 120 chars). CI runs `.github/workflows/default.yaml` via the reusable `rios0rios0/pipelines` Go workflow (lint, CodeQL, SonarCloud, Docker delivery to `ghcr.io/rios0rios0/code-guru`). `claude-code-review.yaml` auto-reviews PRs; `claude.yaml` answers `@claude` mentions.
+The Makefile imports targets from `~/Development/github.com/rios0rios0/pipelines` (`SCRIPTS_DIR`). There is no local `.golangci.yaml` — lint config comes from the pipelines repo (79 linters, including `funlen` at 100 lines, `golines` at 120 chars). CI runs `.github/workflows/default.yaml` via the reusable `rios0rios0/pipelines` Go workflow (lint, CodeQL, SonarCloud, Docker delivery to `ghcr.io/rios0rios0/code-guru`). `claude-review.yaml` auto-reviews PRs; `claude-mention.yaml` answers `@claude` mentions.
 
 ## Feature Catalog
 
