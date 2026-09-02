@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'changed the Docker base image `golang` from `1.27.0-alpine` to `1.27.1-alpine`'
-time: '2026-09-02T09:08:26.75446528Z'
