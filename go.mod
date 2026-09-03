@@ -4,10 +4,10 @@ go 1.27.1
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/rios0rios0/cliforge v0.4.2
+	github.com/rios0rios0/cliforge v0.4.3
 	github.com/rios0rios0/gitforge v1.0.1-0.20260723193418-4150608363f0
-	github.com/rios0rios0/langforge v1.1.2
-	github.com/rios0rios0/testkit v0.3.2
+	github.com/rios0rios0/langforge v1.1.3
+	github.com/rios0rios0/testkit v0.3.3
 	github.com/sashabaranov/go-openai v1.42.0
 	github.com/sirupsen/logrus v1.10.2
 	github.com/spf13/cobra v1.10.2
@@ -69,7 +69,7 @@ require (
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/mod v0.40.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
