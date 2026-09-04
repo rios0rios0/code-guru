@@ -4,9 +4,9 @@ go 1.27.1
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/rios0rios0/cliforge v0.4.3
+	github.com/rios0rios0/cliforge v0.4.4
 	github.com/rios0rios0/gitforge v1.0.1-0.20260723193418-4150608363f0
-	github.com/rios0rios0/langforge v1.1.3
+	github.com/rios0rios0/langforge v1.1.4
 	github.com/rios0rios0/testkit v0.3.3
 	github.com/sashabaranov/go-openai v1.42.0
 	github.com/sirupsen/logrus v1.10.2
@@ -34,8 +34,8 @@ require (
 	github.com/go-git/go-billy/v5 v5.9.1 // indirect
 	github.com/go-git/go-git/v5 v5.19.2 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
-	github.com/go-openapi/jsonpointer v1.0.0 // indirect
-	github.com/go-openapi/jsonreference v1.0.1 // indirect
+	github.com/go-openapi/jsonpointer v1.0.1 // indirect
+	github.com/go-openapi/jsonreference v1.0.2 // indirect
 	github.com/go-openapi/swag v0.29.1 // indirect
 	github.com/go-openapi/swag/cmdutils v0.29.1 // indirect
 	github.com/go-openapi/swag/conv v0.29.1 // indirect
