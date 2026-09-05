@@ -26,7 +26,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # resolution is reproducible and unaffected by mutable-tag drift. Bump the
 # digest deliberately when refreshing the base; the `:12-slim` tag itself
 # is left in the reference for human readability.
-FROM debian:12-slim@sha256:f9c6a2fd2ddbc23e336b6257a5245e31f996953ef06cd13a59fa0a1df2d5c252
+FROM debian:13-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
 # Use bash for RUN steps with `pipefail` enabled at the shell level so any
 # pipe (e.g. `claude --version | tee /etc/claude-version` below) propagates
