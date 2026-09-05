@@ -22,9 +22,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o /out/code-guru \
     ./cmd/code-guru
 
-# Pinned to the digest of the `debian:12-slim` tag at build time so layer
+# Pinned to the digest of the `debian:13-slim` tag at build time so layer
 # resolution is reproducible and unaffected by mutable-tag drift. Bump the
-# digest deliberately when refreshing the base; the `:12-slim` tag itself
+# digest deliberately when refreshing the base; the `:13-slim` tag itself
 # is left in the reference for human readability.
 FROM debian:13-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
