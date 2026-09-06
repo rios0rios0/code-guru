@@ -192,17 +192,9 @@ func (c *ReviewCommand) postBatchedReviewNotice(
 // worse review — each batch sees only its own slice, so cross-file findings
 // that span batches are invisible to it.
 func buildBatchedReviewNoticeBody(now time.Time, sizeCtx reviewFailureContext) string {
-	lead := "This pull request is larger than the AI reviewer can read in a single pass"
-	if sizeCtx.FileCount > 0 {
-		scale := fmt.Sprintf("**%d %s**", sizeCtx.FileCount, pluralizeFiles(sizeCtx.FileCount))
-		if sizeCtx.DiffBytes > 0 {
-			scale += fmt.Sprintf(" (~%s of diff)", humanizeBytes(sizeCtx.DiffBytes))
-		}
-		lead = fmt.Sprintf(
-			"It changes %s, which is more than the AI reviewer can read in a single pass",
-			scale,
-		)
-	}
+	lead := sizeCtx.leadSentence(
+		"This pull request is larger than the AI reviewer can read in a single pass",
+	)
 
 	return fmt.Sprintf(
 		"\xe2\x8f\xb3 **Code Guru is reviewing this PR in batches.**\n\n"+

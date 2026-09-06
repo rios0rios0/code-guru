@@ -606,6 +606,61 @@ func TestBuildReviewFailedBody(t *testing.T) {
 	})
 }
 
+// TestReviewFailureContextLeadSentence pins the scale sentence that opens
+// both too-large notices (the "review failed" annotation and the "reviewing
+// in batches" notice), so the two cannot drift apart in how they quantify
+// the change.
+func TestReviewFailureContextLeadSentence(t *testing.T) {
+	t.Parallel()
+
+	const unknownScale = "It is larger than the AI reviewer can read in a single pass"
+
+	t.Run("should quantify the file count and the diff size when both are known", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		sizeCtx := commands.ReviewFailureContext{FileCount: 180, DiffBytes: 1887436}
+
+		// when
+		lead := commands.LeadSentence(sizeCtx, unknownScale)
+
+		// then
+		assert.Equal(t,
+			"It changes **180 files** (~1.8 MB of diff), "+
+				"which is more than the AI reviewer can read in a single pass",
+			lead)
+	})
+
+	t.Run("should omit the diff size when only the file count is known", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		sizeCtx := commands.ReviewFailureContext{FileCount: 1}
+
+		// when
+		lead := commands.LeadSentence(sizeCtx, unknownScale)
+
+		// then
+		assert.Equal(t,
+			"It changes **1 file**, which is more than the AI reviewer can read in a single pass",
+			lead)
+	})
+
+	t.Run("should return the caller's wording verbatim when the scale is unknown", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		batched := "This pull request is larger than the AI reviewer can read in a single pass"
+
+		// when
+		lead := commands.LeadSentence(commands.ReviewFailureContext{}, batched)
+
+		// then
+		assert.Equal(t, batched, lead)
+		assert.NotContains(t, lead, "**", "no scale figures may be emitted for an unmeasured change")
+	})
+}
+
 func TestReviewFailedBodyAlwaysSetsReviewOnceMarker(t *testing.T) {
 	t.Parallel()
 

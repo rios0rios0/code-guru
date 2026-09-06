@@ -52,6 +52,14 @@ SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
 # being masked. `set -euxo pipefail` is added as defense in depth in case
 # future edits reintroduce a pipe.
 #
+# `https://claude.ai/install.sh` answers with a redirect to the release CDN
+# (`downloads.claude.ai`), so `-L` is required. `--proto`/`--proto-redir`
+# pin the initial request AND every redirect to HTTPS: without them a
+# redirect could downgrade the download to plain HTTP and an on-path
+# attacker could swap the installer (Sonar S6506). No `--max-redirs` cap on
+# purpose -- the hop count is the installer's to change, and a second HTTPS
+# hop is harmless.
+#
 # The resolved version is written to /etc/claude-version (and emitted in the
 # build log) so operators can correlate runtime behavior with the exact CLI
 # version installed at build time -- otherwise the floating channel makes
@@ -63,7 +71,8 @@ RUN set -euxo pipefail; \
     useradd --system --gid nonroot --uid 65532 --create-home \
         --home-dir /home/nonroot --shell /sbin/nologin nonroot; \
     mkdir -p /opt/claude-install; \
-    curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh; \
+    curl -fsSL --proto "=https" --proto-redir "=https" \
+        https://claude.ai/install.sh -o /tmp/claude-install.sh; \
     HOME=/opt/claude-install bash /tmp/claude-install.sh stable; \
     install -m 0755 /opt/claude-install/.local/bin/claude /usr/local/bin/claude; \
     /usr/local/bin/claude --version | tee /etc/claude-version; \

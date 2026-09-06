@@ -126,6 +126,12 @@ var (
 	// annotation reports, without driving the full Execute flow.
 	ReviewFailureContextFrom = reviewFailureContextFrom
 
+	// LeadSentence re-exports, as a method expression, the scale sentence
+	// shared by the too-large annotation and the "reviewing in batches"
+	// notice, so tests pin its three renderings (file count + diff size,
+	// file count only, scale unknown) once instead of through each caller.
+	LeadSentence = reviewFailureContext.leadSentence
+
 	// ReviewInBatches re-exports the context-window fallback so tests can
 	// drive a whole batched run against a scripted backend — the split,
 	// the shrink ladder, the merge, and the unreviewed-file accounting —

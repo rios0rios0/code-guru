@@ -729,6 +729,31 @@ func reviewFailureContextFrom(
 	return reviewFailureContext{FileCount: len(files), DiffBytes: total}
 }
 
+// leadSentence renders the sentence that opens both too-large notices — the
+// "review failed" annotation (`buildContextWindowFailedBody`) and the
+// "reviewing in batches" notice (`buildBatchedReviewNoticeBody`). When the
+// scale is known it is stated ("It changes **N files** (~X of diff), which is
+// more than the AI reviewer can read in a single pass"); the diff size is
+// dropped when only the file count was measured. When the scale is unknown
+// the caller's `unknownScale` phrasing is returned verbatim, so each notice
+// keeps its own wording for that case. Shared so the two notices quantify the
+// change identically and a wording fix lands in both at once.
+func (fc reviewFailureContext) leadSentence(unknownScale string) string {
+	if fc.FileCount <= 0 {
+		return unknownScale
+	}
+
+	scale := fmt.Sprintf("**%d %s**", fc.FileCount, pluralizeFiles(fc.FileCount))
+	if fc.DiffBytes > 0 {
+		scale += fmt.Sprintf(" (~%s of diff)", humanizeBytes(fc.DiffBytes))
+	}
+
+	return fmt.Sprintf(
+		"It changes %s, which is more than the AI reviewer can read in a single pass",
+		scale,
+	)
+}
+
 // buildReviewFailedBody renders the PR-wide failure notice, posted only
 // after the AI backend has failed every retry attempt (see the
 // `RetryingAIReviewer` decorator). Pure function — exposed via
@@ -778,17 +803,7 @@ func buildReviewFailedBody(now time.Time, reviewErr error, sizeCtx reviewFailure
 // exactly how much is too much; a zero-value context omits the figures. Like
 // the other annotation bodies it forces UTC and never echoes raw model output.
 func buildContextWindowFailedBody(now time.Time, sizeCtx reviewFailureContext) string {
-	lead := "It is larger than the AI reviewer can read in a single pass"
-	if sizeCtx.FileCount > 0 {
-		scale := fmt.Sprintf("**%d %s**", sizeCtx.FileCount, pluralizeFiles(sizeCtx.FileCount))
-		if sizeCtx.DiffBytes > 0 {
-			scale += fmt.Sprintf(" (~%s of diff)", humanizeBytes(sizeCtx.DiffBytes))
-		}
-		lead = fmt.Sprintf(
-			"It changes %s, which is more than the AI reviewer can read in a single pass",
-			scale,
-		)
-	}
+	lead := sizeCtx.leadSentence("It is larger than the AI reviewer can read in a single pass")
 
 	// The headline MUST carry the `**Code Guru review` substring
 	// (`support.botReviewCompleteMarker`) so this notice sets the
