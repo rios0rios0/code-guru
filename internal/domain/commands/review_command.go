@@ -738,14 +738,14 @@ func reviewFailureContextFrom(
 // the caller's `unknownScale` phrasing is returned verbatim, so each notice
 // keeps its own wording for that case. Shared so the two notices quantify the
 // change identically and a wording fix lands in both at once.
-func (sizeCtx reviewFailureContext) leadSentence(unknownScale string) string {
-	if sizeCtx.FileCount <= 0 {
+func (fc reviewFailureContext) leadSentence(unknownScale string) string {
+	if fc.FileCount <= 0 {
 		return unknownScale
 	}
 
-	scale := fmt.Sprintf("**%d %s**", sizeCtx.FileCount, pluralizeFiles(sizeCtx.FileCount))
-	if sizeCtx.DiffBytes > 0 {
-		scale += fmt.Sprintf(" (~%s of diff)", humanizeBytes(sizeCtx.DiffBytes))
+	scale := fmt.Sprintf("**%d %s**", fc.FileCount, pluralizeFiles(fc.FileCount))
+	if fc.DiffBytes > 0 {
+		scale += fmt.Sprintf(" (~%s of diff)", humanizeBytes(fc.DiffBytes))
 	}
 
 	return fmt.Sprintf(
