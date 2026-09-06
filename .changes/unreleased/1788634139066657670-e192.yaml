@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'pinned `k8s.io/kube-openapi` to the revision `k8s.io/apimachinery` v0.37.0 builds against, since newer revisions moved to `sigs.k8s.io/structured-merge-diff/v7` and no longer compiled'
-time: '2026-09-05T18:48:59.066579389Z'

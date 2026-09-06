@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'extracted the scale sentence shared by the "review failed" and "reviewing in batches" notices into one `reviewFailureContext` helper, so the two notices quantify a too-large change identically'
-time: '2026-09-05T20:26:21.183641535Z'
