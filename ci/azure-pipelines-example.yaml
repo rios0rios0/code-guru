@@ -26,7 +26,10 @@ stages:
         displayName: 'Review PR'
         steps:
           - script: |
-              curl -sSL "https://github.com/rios0rios0/code-guru/releases/download/$(CODE_GURU_VERSION)/code-guru_linux_amd64" -o code-guru
+              # GitHub serves release assets through an HTTPS redirect, so `-L` is required;
+              # `--proto`/`--proto-redir` keep every hop on HTTPS (Sonar S6506).
+              curl -sSL --proto "=https" --proto-redir "=https" \
+                "https://github.com/rios0rios0/code-guru/releases/download/$(CODE_GURU_VERSION)/code-guru_linux_amd64" -o code-guru
               chmod +x code-guru
               sudo mv code-guru /usr/local/bin/
             displayName: 'Download code-guru'

@@ -24,7 +24,10 @@ jobs:
       - name: 'Download code-guru'
         run: |
           VERSION="0.1.0" # pin to a specific version
-          curl -sSL "https://github.com/rios0rios0/code-guru/releases/download/${VERSION}/code-guru_linux_amd64" -o code-guru
+          # GitHub serves release assets through an HTTPS redirect, so `-L` is required;
+          # `--proto`/`--proto-redir` keep every hop on HTTPS (Sonar S6506).
+          curl -sSL --proto "=https" --proto-redir "=https" \
+            "https://github.com/rios0rios0/code-guru/releases/download/${VERSION}/code-guru_linux_amd64" -o code-guru
           chmod +x code-guru
           sudo mv code-guru /usr/local/bin/
 
