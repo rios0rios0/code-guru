@@ -1,3 +1,0 @@
-kind: 'Security'
-body: 'restricted the `curl` downloads in the delivery Dockerfile (Claude Code installer) and in the Azure Pipelines and GitHub Actions examples to HTTPS-only redirects with `--proto "=https" --proto-redir "=https"`, so a redirect can no longer downgrade the download to plain HTTP (Sonar S6506)'
-time: '2026-09-05T20:26:21.170808723Z'
