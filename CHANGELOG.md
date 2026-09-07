@@ -22,6 +22,23 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.18.7] - 2026-09-07
+
+### Changed
+
+- changed the Docker base image `debian` from `12-slim` to `13-slim`
+- changed the Go module dependencies to their latest versions
+- extracted the scale sentence shared by the "review failed" and "reviewing in batches" notices into one `reviewFailureContext` helper, so the two notices quantify a too-large change identically
+- pinned `k8s.io/kube-openapi` to the revision `k8s.io/apimachinery` v0.37.0 builds against, since newer revisions moved to `sigs.k8s.io/structured-merge-diff/v7` and no longer compiled
+
+### Fixed
+
+- declared test files as test sources for SonarCloud Automatic Analysis so duplicated test setup no longer fails the quality gate
+
+### Security
+
+- restricted the `curl` downloads in the delivery Dockerfile (Claude Code installer) and in the Azure Pipelines and GitHub Actions examples to HTTPS-only redirects with `--proto "=https" --proto-redir "=https"`, so a redirect can no longer downgrade the download to plain HTTP (Sonar S6506)
+
 ## [1.18.6] - 2026-09-04
 
 ### Changed
