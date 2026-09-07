@@ -65,5 +65,5 @@ Trivial adapters detect PRs that can be auto-approved without calling the LLM (e
 4. Add unit tests following BDD structure (`// given`, `// when`, `// then`) with `t.Parallel()` and `t.Run()`
 5. Add a changelog fragment — never edit `CHANGELOG.md`, which is generated from them:
    ```bash
-   chlog new --kind Added --body "added the thing that was not there before"
+   chlog new --kind Added --body 'added the thing that was not there before'
    ```
