@@ -331,7 +331,7 @@ const identityIDLength = 36
 // the overwhelmingly common case, so the scan allocates nothing on the
 // hot path.
 //
-// Only well-formed GUIDs are returned (see isIdentityGUID): the
+// Only well-formed GUIDs are returned (see IsIdentityID): the
 // caller uses a non-empty result BOTH as the trigger for an outbound
 // identity lookup and as operator-facing log content, and neither
 // should be reachable by arbitrary text a commenter can type.
@@ -349,8 +349,15 @@ func ExtractMentionedIdentityIDs(body string) []string {
 		if end == -1 {
 			return ids
 		}
-		candidate := strings.ToLower(rest[:end])
+		candidate := rest[:end]
 		rest = rest[end+1:]
+		// Length first: `@<` also opens autolinked URLs and other markup,
+		// and lower-casing those before the shape check would copy every
+		// one of them on the webhook path for nothing.
+		if len(candidate) != identityIDLength {
+			continue
+		}
+		candidate = strings.ToLower(candidate)
 		if !IsIdentityID(candidate) {
 			continue
 		}

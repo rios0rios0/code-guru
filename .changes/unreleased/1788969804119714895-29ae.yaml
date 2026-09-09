@@ -1,0 +1,3 @@
+kind: 'Changed'
+body: 'surfaced the Azure DevOps webhook''s one remaining silent drop at `Info` — a comment carrying `@<identity-guid>` markup on an allow-listed organization whose own bot identity could not be resolved, the state in which a mention of the bot itself is dropped unseen; a GUID that resolves to another account and an off-allowlist delivery both stay at `Debug`, so one human @-mentioning another never reaches the operator log'
+time: '2026-09-09T16:03:24.119594531Z'

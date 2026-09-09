@@ -530,11 +530,14 @@ func (d *Dispatcher) handleADOComment(w http.ResponseWriter, r *http.Request, bo
 // well-formed `@<guid>` that scan already failed on, so an ordinary
 // comment costs no REST round-trip and no log line.
 //
-// A GUID mention that resolves to somebody else (a human reviewer
-// @-mentioned on the thread) is logged at Info rather than Debug: it is
-// the exact shape of the silent failure this path exists to close, and
-// an operator staring at a bot that "did nothing" needs that line to
-// appear at the default log level.
+// Exactly one outcome logs at Info: a `@<guid>` mention arrived on an
+// allow-listed organisation and the bot could NOT determine its own
+// identity — meaning a mention of the bot itself would be dropped right
+// there, which is the silent failure this path exists to end. Every
+// other miss is Debug: a GUID that resolves to somebody else is one
+// human @-mentioning another (the common use of this markup, not a
+// failure), and an off-allowlist delivery never attempted a lookup at
+// all. Pinned per review on PR #329.
 func (d *Dispatcher) adoCommentMentionsBot(ctx context.Context, event *adoCommentEvent) bool {
 	content := event.Resource.Comment.Content
 	prID := event.Resource.PullRequest.PullRequestID
@@ -565,13 +568,38 @@ func (d *Dispatcher) adoCommentMentionsBot(ctx context.Context, event *adoCommen
 		}
 	}
 
-	logger.Infof(
-		"ADO webhook: comment on PR #%d carries @-autocompleted mention(s) %v matching neither this bot's own identity (%q) "+
-			"nor any `bot_identities` entry; skipping",
-		prID,
-		mentionedIDs,
-		selfID,
-	)
+	switch {
+	case selfID != "":
+		// We compared and these ids belong to somebody else. One human
+		// @-mentioning another is the COMMON use of this markup, not a
+		// failure, so it stays out of the operator's default log view.
+		logger.Debugf(
+			"ADO webhook: comment on PR #%d @-mentions %v, none of which is this bot (%q); skipping",
+			prID,
+			mentionedIDs,
+			selfID,
+		)
+	case d.allowedOrganization(org):
+		// We should have been able to name ourselves and could not, so an
+		// autocompleted mention OF THIS BOT would be dropped right here
+		// with nothing to show for it. That is the silent failure this
+		// path exists to end, and it is the only branch that earns Info.
+		logger.Infof(
+			"ADO webhook: comment on PR #%d carries @-autocompleted mention(s) %v but this bot's own Azure DevOps "+
+				"identity could not be resolved, so a mention of it cannot be recognised — check the azuredevops PAT "+
+				"and the preceding log line, or list the account in `bot_identities`; skipping",
+			prID,
+			mentionedIDs,
+		)
+	default:
+		// Off-allowlist: no lookup was attempted (see resolveADOSelfIdentity),
+		// so there is nothing here an operator asked to hear about.
+		logger.Debugf(
+			"ADO webhook: comment on PR #%d is for off-allowlist org %q; no identity lookup was attempted; skipping",
+			prID,
+			org,
+		)
+	}
 	return false
 }
 
