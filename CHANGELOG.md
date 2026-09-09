@@ -22,6 +22,21 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-09-09
+
+### Added
+
+- added zero-configuration recognition of an Azure DevOps `@`-autocompleted mention: a comment carrying the comment box's `@<identity-guid>` markup is now matched against the identity the bot's own PAT authenticates as, resolved once per organization from `_apis/connectionData`, so picking the bot out of the autocomplete requests a re-review without listing its identity GUID in `bot_identities`
+
+### Changed
+
+- ignored the `.codeql-db/` directory that `make sast` builds in place, so a CodeQL run no longer leaves an untracked database in the working tree
+- surfaced the Azure DevOps webhook's one remaining silent drop at `Info` — a comment carrying `@<identity-guid>` markup on an allow-listed organization whose own bot identity could not be resolved, the state in which a mention of the bot itself is dropped unseen; a GUID that resolves to another account and an off-allowlist delivery both stay at `Debug`, so one human @-mentioning another never reaches the operator log
+
+### Removed
+
+- removed the `unit` build tag from every test file so `go test ./...`, IDE runs and the linter all see the unit suite (`make test` still passes `-tags test,unit`), and fixed the lint findings the newly-visible files surfaced — `t.Parallel()` on every subtest, `require` for error assertions, and a checked type assertion in the entity builders
+
 ## [1.18.8] - 2026-09-08
 
 ### Changed

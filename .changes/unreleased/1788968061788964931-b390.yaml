@@ -1,3 +1,0 @@
-kind: 'Added'
-body: 'added zero-configuration recognition of an Azure DevOps `@`-autocompleted mention: a comment carrying the comment box''s `@<identity-guid>` markup is now matched against the identity the bot''s own PAT authenticates as, resolved once per organization from `_apis/connectionData`, so picking the bot out of the autocomplete requests a re-review without listing its identity GUID in `bot_identities`'
-time: '2026-09-09T15:34:21.788908279Z'
