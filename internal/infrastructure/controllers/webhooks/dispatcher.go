@@ -47,6 +47,7 @@ type Dispatcher struct {
 	submitter             Submitter
 	githubTokenizer       GitHubTokenizer
 	adoHydrator           ADOResourceHydrator
+	adoIdentityResolver   ADOIdentityResolver
 	dedup                 WebhookDedup
 	allowedSourcePrefixes []netip.Prefix
 
@@ -86,6 +87,7 @@ func NewDispatcher(
 		settings:              settings,
 		providerRegistry:      providerRegistry,
 		adoHydrator:           NewHTTPADOHydrator(nil),
+		adoIdentityResolver:   NewHTTPADOIdentityResolver(nil),
 		dedup:                 newInMemoryDedup(webhookDedupTTL),
 		allowedSourcePrefixes: parseAllowedCIDRs(settings.Server.AllowedSourceCIDRs),
 		inFlight:              map[string]struct{}{},
@@ -288,6 +290,18 @@ func (d *Dispatcher) SetDedup(dedup WebhookDedup) {
 // during DI bootstrap and never touched again.
 func (d *Dispatcher) SetADOHydrator(h ADOResourceHydrator) {
 	d.adoHydrator = h
+}
+
+// SetADOIdentityResolver overrides the default HTTP-based resolver of
+// the bot's own Azure DevOps identity. Tests substitute a hand-rolled
+// resolver that answers from memory; production code does not need to
+// call this.
+//
+// **Concurrency contract:** identical to `SetADOHydrator` — must be
+// called during initialisation, before the HTTP server starts handling
+// webhook requests.
+func (d *Dispatcher) SetADOIdentityResolver(r ADOIdentityResolver) {
+	d.adoIdentityResolver = r
 }
 
 // parseAllowedCIDRs validates and parses each CIDR entry once at startup so

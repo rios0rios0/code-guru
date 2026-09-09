@@ -1,5 +1,3 @@
-//go:build unit
-
 package support_test
 
 import (
@@ -14,6 +12,8 @@ func TestClassifyFile(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should classify Go files", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		path := "internal/main.go"
 
@@ -25,6 +25,8 @@ func TestClassifyFile(t *testing.T) {
 	})
 
 	t.Run("should classify JavaScript files", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		path := "src/index.ts"
 
@@ -36,6 +38,8 @@ func TestClassifyFile(t *testing.T) {
 	})
 
 	t.Run("should classify Python files", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		path := "app.py"
 
@@ -47,6 +51,8 @@ func TestClassifyFile(t *testing.T) {
 	})
 
 	t.Run("should classify Dart files", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		path := "lib/main.dart"
 
@@ -58,6 +64,8 @@ func TestClassifyFile(t *testing.T) {
 	})
 
 	t.Run("should classify YAML files", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		path := "config.yaml"
 
@@ -69,6 +77,8 @@ func TestClassifyFile(t *testing.T) {
 	})
 
 	t.Run("should return empty for unknown extensions", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		path := "notes.txt"
 
@@ -76,7 +86,7 @@ func TestClassifyFile(t *testing.T) {
 		result := support.ClassifyFile(path)
 
 		// then
-		assert.Equal(t, "", result)
+		assert.Empty(t, result)
 	})
 }
 
@@ -84,6 +94,8 @@ func TestClassifyFiles(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should return unique languages", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		paths := []string{"a.go", "b.go", "c.py", "d.ts"}
 
@@ -98,6 +110,8 @@ func TestClassifyFiles(t *testing.T) {
 	})
 
 	t.Run("should skip unknown files", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		paths := []string{"a.txt", "b.md"}
 

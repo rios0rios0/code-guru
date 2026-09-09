@@ -26,7 +26,7 @@ A CLI tool that leverages AI (Claude Code CLI or OpenAI API) to automatically re
 - Intent-aware reviews: the PR's title, branch names, description, and commit count are forwarded to the AI so it can judge whether the diff actually does what the author claims and flag undocumented scope creep — see [Pull Request Context](#pull-request-context-intent-aware-reviews)
 - Inline and general PR comments posted back via gitforge
 - Three modes: single PR review, batch review-all, and discover (list open PRs)
-- Reviews each PR exactly once — subsequent pushes are no-ops. To request a re-review, post a PR comment that mentions `@code-guru` (case-insensitive) or the account the bot itself posts under, when that account is listed in `bot_identities` — see [Mentioning the bot](#mentioning-the-bot). On GitHub the mention works both in a PR-wide comment and inside an inline review thread. On a re-review the bot acts as a reviewer who reads the existing conversation: it loads every prior bot inline thread plus every reply, classifies each as `resolved` / `outstanding` / `outdated`, posts one short reply **nested inside each prior thread** (via the provider's `ReplyToThread`, so the answer lands below the author's reply like a human reviewer rather than as a separate same-line comment), and auto-closes the threads it considers resolved (Azure DevOps thread state `fixed`). Net-new findings only land if the diff genuinely warrants one and it does NOT overlap a thread the bot already addressed — replacing the pre-existing failure mode where every re-review flooded the PR with reworded duplicates of every prior comment. The bot recognises its own prior comments by the built-in `code-guru` login shape, by self-detecting the account that posted its PR-wide review annotations on the PR, and by any identity listed in `bot_identities` (env `CODE_GURU_BOT_IDENTITIES`) — so re-reviews still read and resolve prior threads when the deployment posts under a service account
+- Reviews each PR exactly once — subsequent pushes are no-ops. To request a re-review, post a PR comment that mentions `@code-guru` (case-insensitive), the account the bot itself posts under when that account is listed in `bot_identities`, or — on Azure DevOps, with no configuration — the bot picked straight out of the comment box's `@`-autocomplete — see [Mentioning the bot](#mentioning-the-bot). On GitHub the mention works both in a PR-wide comment and inside an inline review thread. On a re-review the bot acts as a reviewer who reads the existing conversation: it loads every prior bot inline thread plus every reply, classifies each as `resolved` / `outstanding` / `outdated`, posts one short reply **nested inside each prior thread** (via the provider's `ReplyToThread`, so the answer lands below the author's reply like a human reviewer rather than as a separate same-line comment), and auto-closes the threads it considers resolved (Azure DevOps thread state `fixed`). Net-new findings only land if the diff genuinely warrants one and it does NOT overlap a thread the bot already addressed — replacing the pre-existing failure mode where every re-review flooded the PR with reworded duplicates of every prior comment. The bot recognises its own prior comments by the built-in `code-guru` login shape, by self-detecting the account that posted its PR-wide review annotations on the PR, and by any identity listed in `bot_identities` (env `CODE_GURU_BOT_IDENTITIES`) — so re-reviews still read and resolve prior threads when the deployment posts under a service account
 
 ## Installation
 
@@ -187,7 +187,7 @@ The verdict is printed as `VERDICT:<value>` for machine parsing.
 ## Mentioning the bot
 
 A PR is reviewed once; later pushes are no-ops. To ask for a re-review, mention
-the bot in a PR comment. Two things count as a mention:
+the bot in a PR comment. Three things count as a mention:
 
 1. **`@code-guru`** — always accepted, on every deployment, with no configuration.
 2. **The account the bot posts under** — every entry in `bot_identities`
@@ -200,6 +200,9 @@ the bot in a PR comment. Two things count as a mention:
    | `code-guru[bot]`                         | `@code-guru`                                         |
    | `svc-codeguru@corp.example`              | `@svc-codeguru`, `@svc-codeguru@corp.example`        |
    | `8f3a1e2b-…` (Azure DevOps identity GUID) | `@<8f3a1e2b-…>`                                     |
+
+3. **Itself, picked from the Azure DevOps `@`-autocomplete** — no configuration
+   at all. See [Azure DevOps `@`-autocomplete](#azure-devops--autocomplete) below.
 
 Matching is case-insensitive and stops at a word boundary, so
 `@svc-codeguru-staging` does **not** count as a mention of `@svc-codeguru`.
@@ -215,11 +218,26 @@ the App to subscribe to `Pull request review comments` (see
 [Endpoints](#endpoints)). A single GitHub review submission carrying the mention
 in several inline comments is de-duplicated into one review.
 
-**Azure DevOps `@`-autocomplete.** The ADO comment box replaces an autocompleted
-mention with `@<identity-guid>` markup, so the account name never reaches the
-webhook and a name-shaped entry cannot match it. Either type the name as plain
-text, or add the bot's ADO identity GUID to `bot_identities` — then the
-autocompleted form works too.
+### Azure DevOps `@`-autocomplete
+
+The ADO comment box replaces an autocompleted mention with `@<identity-guid>`
+markup, so the account name a user picked never reaches the webhook and a
+name-shaped `bot_identities` entry cannot match it.
+
+That form is recognised anyway: when a comment carries `@<…>` markup that
+nothing else matched, the bot asks Azure DevOps which identity its own PAT
+authenticates as (`_apis/connectionData`, cached per organisation for the life
+of the process) and compares the two. **Picking the bot out of the autocomplete
+therefore works with no configuration.** Ordinary comments never pay for the
+lookup — it only runs when the body carries a well-formed `@<guid>` that the
+plain-text scan already failed on, and never for an organisation outside
+`server.allowed_organizations`.
+
+If the lookup cannot run (no PAT, the API is unreachable), the bot logs a
+warning and falls back to the two configured forms above — typing `@code-guru`
+as plain text always works. An `@<…>` mention that resolves to somebody else is
+logged at `Info` naming the ids it saw, so a mention that summoned nobody is
+visible in the pod log at the default level instead of being dropped silently.
 
 ## Trivial PR Detection
 

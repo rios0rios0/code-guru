@@ -1,5 +1,3 @@
-//go:build unit
-
 package rules_test
 
 import (
@@ -17,9 +15,14 @@ func TestLoadAll(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should load markdown rules from directory", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		dir := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "security.md"), []byte("# Security\nDo not expose secrets."), 0o644))
+		require.NoError(
+			t,
+			os.WriteFile(filepath.Join(dir, "security.md"), []byte("# Security\nDo not expose secrets."), 0o644),
+		)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "golang.md"), []byte("# Go\nUse gofmt."), 0o644))
 		repo := rules.NewFilesystemRulesRepository(dir, nil)
 
@@ -32,6 +35,8 @@ func TestLoadAll(t *testing.T) {
 	})
 
 	t.Run("should strip YAML frontmatter", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		dir := t.TempDir()
 		content := "---\npaths:\n  - \"**/*.go\"\n---\n# Go Rules\nUse gofmt."
@@ -49,6 +54,8 @@ func TestLoadAll(t *testing.T) {
 	})
 
 	t.Run("should skip non-markdown files", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("not a rule"), 0o644))
@@ -65,6 +72,8 @@ func TestLoadAll(t *testing.T) {
 	})
 
 	t.Run("should return nil for empty path", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		repo := rules.NewFilesystemRulesRepository("", nil)
 
@@ -77,6 +86,8 @@ func TestLoadAll(t *testing.T) {
 	})
 
 	t.Run("should filter by categories when configured", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "security.md"), []byte("sec rules"), 0o644))
@@ -97,6 +108,8 @@ func TestLoadForLanguages(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should include universal and language-specific rules", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "security.md"), []byte("sec"), 0o644))
@@ -113,12 +126,14 @@ func TestLoadForLanguages(t *testing.T) {
 		for i, r := range result {
 			names[i] = r.Name
 		}
-		assert.Contains(t, names, "security") // universal
-		assert.Contains(t, names, "golang")   // language match
+		assert.Contains(t, names, "security")  // universal
+		assert.Contains(t, names, "golang")    // language match
 		assert.NotContains(t, names, "python") // not requested
 	})
 
 	t.Run("should include rules matching file globs", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		dir := t.TempDir()
 		content := "---\npaths:\n  - \"**/*.go\"\n---\ncustom go rules"

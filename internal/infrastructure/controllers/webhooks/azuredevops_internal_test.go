@@ -1,5 +1,3 @@
-//go:build unit
-
 package webhooks_test
 
 import (
@@ -89,6 +87,8 @@ func TestExtractADOOrganization(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			// when
 			got := webhooks.ExtractADOOrganization(tc.remoteURL)
 
@@ -128,6 +128,8 @@ func TestIsClosedADOPullRequestStatus(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			// when
 			got := webhooks.IsClosedADOPullRequestStatus(tc.status)
 
@@ -148,10 +150,14 @@ func TestIsSupportedADOEvent(t *testing.T) {
 		{name: "should accept git.pullrequest.created", eventType: "git.pullrequest.created", want: true},
 		{name: "should accept git.pullrequest.updated", eventType: "git.pullrequest.updated", want: true},
 		{name: "should reject git.push (we filter at the subscription level too)", eventType: "git.push", want: false},
-		{name: "should reject the comment event (no value to the bot today)", eventType: "ms.vss-code.git-pullrequest-comment-event", want: false},
+		{
+			name:      "should reject the comment event (no value to the bot today)",
+			eventType: "ms.vss-code.git-pullrequest-comment-event",
+			want:      false,
+		},
 		{name: "should reject empty string", eventType: "", want: false},
 		{
-			name: "should be case-sensitive — ADO ships lower-case event types and a normalisation here would mask a real malformed payload",
+			name:      "should be case-sensitive — ADO ships lower-case event types and a normalisation here would mask a real malformed payload",
 			eventType: "Git.PullRequest.Created",
 			want:      false,
 		},
@@ -159,6 +165,8 @@ func TestIsSupportedADOEvent(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			// when
 			got := webhooks.IsSupportedADOEvent(tc.eventType)
 
@@ -177,8 +185,16 @@ func TestRefToBranch(t *testing.T) {
 		want string
 	}{
 		{name: "should strip refs/heads/ prefix", ref: "refs/heads/main", want: "main"},
-		{name: "should preserve nested branch names", ref: "refs/heads/feat/vault-rbac-migration-shim", want: "feat/vault-rbac-migration-shim"},
-		{name: "should leave a non-prefixed value alone (defensive — ADO occasionally sends bare branch names)", ref: "main", want: "main"},
+		{
+			name: "should preserve nested branch names",
+			ref:  "refs/heads/feat/vault-rbac-migration-shim",
+			want: "feat/vault-rbac-migration-shim",
+		},
+		{
+			name: "should leave a non-prefixed value alone (defensive — ADO occasionally sends bare branch names)",
+			ref:  "main",
+			want: "main",
+		},
 		{name: "should return empty string for empty input", ref: "", want: ""},
 		{
 			name: "should NOT strip refs/tags/ — that prefix is for tag refs, not branches",
@@ -194,6 +210,8 @@ func TestRefToBranch(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			// when
 			got := webhooks.RefToBranch(tc.ref)
 

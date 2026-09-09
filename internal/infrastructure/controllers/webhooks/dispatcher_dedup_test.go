@@ -1,5 +1,3 @@
-//go:build unit
-
 package webhooks_test
 
 import (
@@ -164,7 +162,11 @@ func TestRenewIntervalInvariantPreCheck(t *testing.T) {
 		leaseDuration := time.Duration(webhooks.LeaseDurationSecondsForTest) * time.Second
 
 		// then
-		assert.Less(t, dispatcherInterval, leaseDuration,
-			"dedupRenewInterval must be < leaseDurationSeconds so a successful renewal lands inside the freshness window")
+		assert.Less(
+			t,
+			dispatcherInterval,
+			leaseDuration,
+			"dedupRenewInterval must be < leaseDurationSeconds so a successful renewal lands inside the freshness window",
+		)
 	})
 }

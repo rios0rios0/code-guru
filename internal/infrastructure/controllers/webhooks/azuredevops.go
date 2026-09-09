@@ -1,6 +1,7 @@
 package webhooks
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -407,12 +408,14 @@ type adoCommentEvent struct {
 }
 
 // handleADOComment processes the ADO comment event so a user can
-// request a re-review by mentioning the bot in a PR comment — either as
-// `@code-guru` or as the account the deployment posts under (any
-// `bot_identities` entry, see `support.HasMention`). The handler:
+// request a re-review by mentioning the bot in a PR comment — as
+// `@code-guru`, as the account the deployment posts under (any
+// `bot_identities` entry, see `support.HasMention`), or by picking the
+// bot out of the ADO comment box's @-autocomplete (see
+// `adoCommentMentionsBot`). The handler:
 //
 //   - returns 400 on malformed JSON;
-//   - returns 204 when the comment body mentions neither
+//   - returns 204 when the comment body mentions none of them
 //     (preserves the operator's signal-to-noise ratio in pod logs);
 //   - returns 403 when the org / project is off-allowlist;
 //   - enqueues the matched comment as a job with `UserMentioned=true`
@@ -421,17 +424,13 @@ type adoCommentEvent struct {
 // The dedup gate is intentionally NOT applied to mention deliveries:
 // a user posting `@code-guru` is an explicit re-review request and
 // should always go through.
-func (d *Dispatcher) handleADOComment(w http.ResponseWriter, _ *http.Request, body []byte) {
+func (d *Dispatcher) handleADOComment(w http.ResponseWriter, r *http.Request, body []byte) {
 	var event adoCommentEvent
 	if err := json.Unmarshal(body, &event); err != nil {
 		writeError(w, http.StatusBadRequest, "malformed JSON")
 		return
 	}
-	if !support.HasMention(event.Resource.Comment.Content, d.settings.BotIdentities...) {
-		logger.Debugf(
-			"ADO webhook: comment on PR #%d mentions neither @code-guru nor a configured bot identity; skipping",
-			event.Resource.PullRequest.PullRequestID,
-		)
+	if !d.adoCommentMentionsBot(r.Context(), &event) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -510,4 +509,105 @@ func (d *Dispatcher) handleADOComment(w http.ResponseWriter, _ *http.Request, bo
 		pr.PullRequestID, repo.Project, repo.Name, commenter)
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = fmt.Fprint(w, "accepted")
+}
+
+// adoCommentMentionsBot reports whether an Azure DevOps PR comment asks
+// this bot for a re-review. Three forms count:
+//
+//  1. the literal `@code-guru` token;
+//  2. any mention derived from `bot_identities` — the account the
+//     deployment posts under;
+//  3. an @-autocompleted mention of the bot itself. The ADO comment box
+//     replaces the account a user picked with `@<identity-guid>`
+//     markup, so the name they selected never reaches the webhook and
+//     forms (1) and (2) cannot match it. The GUID is compared against
+//     the identity the bot's own PAT authenticates as, which makes the
+//     autocompleted mention work with no configuration at all.
+//
+// Forms (1) and (2) are one plain string scan (`support.HasMention`) —
+// the only branch the overwhelming majority of comments ever reach. The
+// identity lookup behind (3) runs only when the body carries a
+// well-formed `@<guid>` that scan already failed on, so an ordinary
+// comment costs no REST round-trip and no log line.
+//
+// A GUID mention that resolves to somebody else (a human reviewer
+// @-mentioned on the thread) is logged at Info rather than Debug: it is
+// the exact shape of the silent failure this path exists to close, and
+// an operator staring at a bot that "did nothing" needs that line to
+// appear at the default log level.
+func (d *Dispatcher) adoCommentMentionsBot(ctx context.Context, event *adoCommentEvent) bool {
+	content := event.Resource.Comment.Content
+	prID := event.Resource.PullRequest.PullRequestID
+
+	if support.HasMention(content, d.settings.BotIdentities...) {
+		return true
+	}
+
+	mentionedIDs := support.ExtractMentionedIdentityIDs(content)
+	if len(mentionedIDs) == 0 {
+		logger.Debugf(
+			"ADO webhook: comment on PR #%d mentions neither @code-guru nor a configured bot identity; skipping",
+			prID,
+		)
+		return false
+	}
+
+	org := extractADOOrganization(event.Resource.PullRequest.Repository.RemoteURL)
+	selfID := d.resolveADOSelfIdentity(ctx, org)
+	for _, id := range mentionedIDs {
+		if support.EqualIdentityID(selfID, id) {
+			logger.Infof(
+				"ADO webhook: comment on PR #%d @-mentions this bot's own Azure DevOps identity (%q); treating as a re-review request",
+				prID,
+				selfID,
+			)
+			return true
+		}
+	}
+
+	logger.Infof(
+		"ADO webhook: comment on PR #%d carries @-autocompleted mention(s) %v matching neither this bot's own identity (%q) "+
+			"nor any `bot_identities` entry; skipping",
+		prID,
+		mentionedIDs,
+		selfID,
+	)
+	return false
+}
+
+// resolveADOSelfIdentity returns the identity id this bot's PAT
+// authenticates as in `organization`, or "" when it cannot be
+// determined. Never fails the delivery: an unresolvable identity just
+// means the autocompleted-mention form does not match, exactly as
+// before this path existed.
+//
+// The organisation allowlist is enforced BEFORE the lookup even though
+// the caller checks it again later. The slug comes from the webhook
+// payload, and this is the one place on the mention path that spends
+// the bot's PAT on an outbound request — so an org the operator never
+// allow-listed must not be able to make the bot authenticate anywhere
+// on its behalf, however constrained the resulting URL is.
+func (d *Dispatcher) resolveADOSelfIdentity(ctx context.Context, organization string) string {
+	if d.adoIdentityResolver == nil || organization == "" {
+		return ""
+	}
+	if !d.allowedOrganization(organization) {
+		return ""
+	}
+	token := d.findToken("azuredevops")
+	if token == "" {
+		logger.Debugf("ADO webhook: no azuredevops PAT configured; cannot resolve this bot's own identity")
+		return ""
+	}
+
+	selfID, err := d.adoIdentityResolver.ResolveSelfID(ctx, organization, token)
+	if err != nil {
+		logger.Warnf(
+			"ADO webhook: could not resolve this bot's own Azure DevOps identity in org %q "+
+				"(@-autocompleted mentions of it will not be recognised): %v",
+			organization, err,
+		)
+		return ""
+	}
+	return selfID
 }

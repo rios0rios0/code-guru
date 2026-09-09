@@ -1,5 +1,3 @@
-//go:build integration || unit || test
-
 package entitybuilders
 
 import (
@@ -9,6 +7,7 @@ import (
 
 type ReviewCommentBuilder struct {
 	*testkit.BaseBuilder
+
 	filePath   string
 	line       int
 	endLine    int
@@ -20,7 +19,7 @@ type ReviewCommentBuilder struct {
 func NewReviewCommentBuilder() *ReviewCommentBuilder {
 	return &ReviewCommentBuilder{
 		BaseBuilder: testkit.NewBaseBuilder(),
-		filePath:    "test.go",
+		filePath:    defaultFilePath,
 		line:        1,
 		endLine:     0,
 		body:        "test comment",
@@ -59,7 +58,7 @@ func (b *ReviewCommentBuilder) WithSuggestion(suggestion string) *ReviewCommentB
 	return b
 }
 
-func (b *ReviewCommentBuilder) Build() interface{} {
+func (b *ReviewCommentBuilder) Build() any {
 	return b.BuildReviewComment()
 }
 
@@ -76,7 +75,7 @@ func (b *ReviewCommentBuilder) BuildReviewComment() entities.ReviewComment {
 
 func (b *ReviewCommentBuilder) Reset() testkit.Builder {
 	b.BaseBuilder.Reset()
-	b.filePath = "test.go"
+	b.filePath = defaultFilePath
 	b.line = 1
 	b.endLine = 0
 	b.body = "test comment"
@@ -87,7 +86,7 @@ func (b *ReviewCommentBuilder) Reset() testkit.Builder {
 
 func (b *ReviewCommentBuilder) Clone() testkit.Builder {
 	clone := &ReviewCommentBuilder{
-		BaseBuilder: b.BaseBuilder.Clone().(*testkit.BaseBuilder),
+		BaseBuilder: cloneBase(b.BaseBuilder),
 		filePath:    b.filePath,
 		line:        b.line,
 		endLine:     b.endLine,

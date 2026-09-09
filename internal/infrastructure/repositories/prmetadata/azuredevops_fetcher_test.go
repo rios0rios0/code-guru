@@ -1,5 +1,3 @@
-//go:build unit
-
 package prmetadata_test
 
 import (

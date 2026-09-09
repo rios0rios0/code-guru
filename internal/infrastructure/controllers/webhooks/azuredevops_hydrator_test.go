@@ -1,5 +1,3 @@
-//go:build unit
-
 package webhooks_test
 
 import (
@@ -71,6 +69,8 @@ func TestIsSkinnyADOResource(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			// when
 			got := webhooks.IsSkinnyADOResource(tc.resource)
 
@@ -84,6 +84,8 @@ func TestAppendAPIVersion(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should append api-version on a URL without query", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		raw := "https://dev.azure.com/ExampleOrg/_apis/git/repositories/abc/pullRequests/1"
 
@@ -96,6 +98,8 @@ func TestAppendAPIVersion(t *testing.T) {
 	})
 
 	t.Run("should override an existing api-version query param", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		raw := "https://dev.azure.com/ExampleOrg/_apis/git/pullRequests/1?api-version=5.0&foo=bar"
 
@@ -110,6 +114,8 @@ func TestAppendAPIVersion(t *testing.T) {
 	})
 
 	t.Run("should reject a relative URL (only an absolute one identifies the org)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a path-only input (no scheme/host). CLAUDE.md
 		// requires the BDD `given/when/then` triplet on every
 		// subtest; the input here is the precondition under test.
@@ -123,6 +129,8 @@ func TestAppendAPIVersion(t *testing.T) {
 	})
 
 	t.Run("should reject a URL with a control character that fails url.Parse", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a URL ending in `\x7f` (DEL). `url.Parse` is
 		// otherwise lenient — most strings parse — so a control
 		// character is the canonical "make Go's parser actually
@@ -142,6 +150,8 @@ func TestMergeHydratedADOResource(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should prefer hydrated fields when both sides supply them", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		original := webhooks.ADOResource{PullRequestID: 99999, URL: "https://orig"}
 		hydrated := webhooks.ADOResource{
@@ -168,6 +178,8 @@ func TestMergeHydratedADOResource(t *testing.T) {
 	})
 
 	t.Run("should fall back to original pullRequestId when hydrated body omitted it", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		original := webhooks.ADOResource{PullRequestID: 99999, URL: "https://orig"}
 		hydrated := webhooks.ADOResource{Status: "active"}
@@ -191,6 +203,8 @@ func TestHTTPADOHydrator(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should fetch and decode a full PR resource", func(t *testing.T) {
+		t.Parallel()
+
 		// given: the Authorization-header assertion runs inside the
 		// handler goroutine so the test stays race-free under `-race`.
 		// Capturing the header into a local variable for read in the test
@@ -233,6 +247,8 @@ func TestHTTPADOHydrator(t *testing.T) {
 	})
 
 	t.Run("should surface a non-2xx response as an error", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "forbidden", http.StatusForbidden)
@@ -250,6 +266,8 @@ func TestHTTPADOHydrator(t *testing.T) {
 	})
 
 	t.Run("should reject an empty token", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		hydrator := webhooks.NewHTTPADOHydrator(nil)
 
@@ -262,6 +280,8 @@ func TestHTTPADOHydrator(t *testing.T) {
 	})
 
 	t.Run("should reject an empty resource URL", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		hydrator := webhooks.NewHTTPADOHydrator(nil)
 
@@ -274,6 +294,8 @@ func TestHTTPADOHydrator(t *testing.T) {
 	})
 
 	t.Run("should reject a malformed (relative) URL before issuing a request", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		hydrator := webhooks.NewHTTPADOHydrator(nil)
 
@@ -286,6 +308,8 @@ func TestHTTPADOHydrator(t *testing.T) {
 	})
 
 	t.Run("should refuse to hydrate a non-ADO host (SSRF defence)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: the production hydrator must reject any URL whose host
 		// is not `dev.azure.com` or `*.visualstudio.com`. Without this
 		// guard, an attacker who could forge a webhook delivery past the
@@ -295,7 +319,11 @@ func TestHTTPADOHydrator(t *testing.T) {
 		hydrator := webhooks.NewHTTPADOHydrator(nil)
 
 		// when
-		_, err := hydrator.Hydrate(context.Background(), "https://attacker.example.com/_apis/git/pullRequests/1", "test-pat")
+		_, err := hydrator.Hydrate(
+			context.Background(),
+			"https://attacker.example.com/_apis/git/pullRequests/1",
+			"test-pat",
+		)
 
 		// then
 		require.Error(t, err)
@@ -311,20 +339,54 @@ func TestIsADOAPIHost(t *testing.T) {
 		url  string
 		want bool
 	}{
-		{name: "should accept canonical https://dev.azure.com URL", url: "https://dev.azure.com/Org/_apis/git/pullRequests/1", want: true},
-		{name: "should accept legacy *.visualstudio.com host", url: "https://org.visualstudio.com/_apis/git/pullRequests/1", want: true},
-		{name: "should accept regional sub-domain on visualstudio.com", url: "https://org.eu.visualstudio.com/_apis/git/pullRequests/1", want: true},
-		{name: "should accept dev.azure.com regardless of casing", url: "https://DEV.AZURE.COM/Org/_apis/git/pullRequests/1", want: true},
-		{name: "should reject http (must be https)", url: "http://dev.azure.com/Org/_apis/git/pullRequests/1", want: false},
-		{name: "should reject 127.0.0.1 (httptest.NewServer host)", url: "http://127.0.0.1:42/_apis/git/pullRequests/1", want: false},
-		{name: "should reject an arbitrary attacker host", url: "https://attacker.example.com/_apis/git/pullRequests/1", want: false},
+		{
+			name: "should accept canonical https://dev.azure.com URL",
+			url:  "https://dev.azure.com/Org/_apis/git/pullRequests/1",
+			want: true,
+		},
+		{
+			name: "should accept legacy *.visualstudio.com host",
+			url:  "https://org.visualstudio.com/_apis/git/pullRequests/1",
+			want: true,
+		},
+		{
+			name: "should accept regional sub-domain on visualstudio.com",
+			url:  "https://org.eu.visualstudio.com/_apis/git/pullRequests/1",
+			want: true,
+		},
+		{
+			name: "should accept dev.azure.com regardless of casing",
+			url:  "https://DEV.AZURE.COM/Org/_apis/git/pullRequests/1",
+			want: true,
+		},
+		{
+			name: "should reject http (must be https)",
+			url:  "http://dev.azure.com/Org/_apis/git/pullRequests/1",
+			want: false,
+		},
+		{
+			name: "should reject 127.0.0.1 (httptest.NewServer host)",
+			url:  "http://127.0.0.1:42/_apis/git/pullRequests/1",
+			want: false,
+		},
+		{
+			name: "should reject an arbitrary attacker host",
+			url:  "https://attacker.example.com/_apis/git/pullRequests/1",
+			want: false,
+		},
 		{name: "should reject empty input", url: "", want: false},
 		{name: "should reject a URL parse error (control character)", url: "https://dev.azure.com/\x7f", want: false},
-		{name: "should reject github.com (would otherwise fail open if we check by suffix only)", url: "https://github.com/_apis/git/pullRequests/1", want: false},
+		{
+			name: "should reject github.com (would otherwise fail open if we check by suffix only)",
+			url:  "https://github.com/_apis/git/pullRequests/1",
+			want: false,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			// when
 			got := webhooks.IsADOAPIHost(tc.url)
 

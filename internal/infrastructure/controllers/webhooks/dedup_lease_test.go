@@ -1,5 +1,3 @@
-//go:build unit
-
 package webhooks_test
 
 import (
@@ -54,7 +52,11 @@ func newFakeLeaseClient() *fakeLeaseClient {
 	return &fakeLeaseClient{leases: map[string]*coordinationv1.Lease{}}
 }
 
-func (f *fakeLeaseClient) Create(_ context.Context, lease *coordinationv1.Lease, _ metav1.CreateOptions) (*coordinationv1.Lease, error) {
+func (f *fakeLeaseClient) Create(
+	_ context.Context,
+	lease *coordinationv1.Lease,
+	_ metav1.CreateOptions,
+) (*coordinationv1.Lease, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.createCalls++
@@ -117,14 +119,18 @@ func (f *fakeLeaseClient) Delete(_ context.Context, name string, opts metav1.Del
 		return apierrors.NewConflict(
 			schema.GroupResource{Group: "coordination.k8s.io", Resource: "leases"},
 			name,
-			fmt.Errorf("uid mismatch"),
+			errors.New("uid mismatch"),
 		)
 	}
 	delete(f.leases, name)
 	return nil
 }
 
-func (f *fakeLeaseClient) Update(_ context.Context, lease *coordinationv1.Lease, _ metav1.UpdateOptions) (*coordinationv1.Lease, error) {
+func (f *fakeLeaseClient) Update(
+	_ context.Context,
+	lease *coordinationv1.Lease,
+	_ metav1.UpdateOptions,
+) (*coordinationv1.Lease, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.updateCalls++
@@ -199,6 +205,8 @@ func TestK8sLeaseDedup(t *testing.T) {
 	const key = "ado:abc-uuid:12345"
 
 	t.Run("should return false when Create succeeds (this pod acquires the lease)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a fresh fake with no pre-existing leases — the very
 		// first webhook delivery for a PR; nobody else holds the lock.
 		client := newFakeLeaseClient()
@@ -209,30 +217,47 @@ func TestK8sLeaseDedup(t *testing.T) {
 
 		// then
 		assert.False(t, seen, "first delivery must observe `not seen` and proceed to the worker")
-		assert.Equal(t, 1, client.createCalls, "the production path must hit the API server exactly once on the first call")
+		assert.Equal(
+			t,
+			1,
+			client.createCalls,
+			"the production path must hit the API server exactly once on the first call",
+		)
 		assert.Equal(t, 1, client.StoredCount(), "the lease must be persisted so a concurrent pod sees AlreadyExists")
 	})
 
-	t.Run("should return true when Create returns AlreadyExists and the holding lease is fresh (real cross-pod duplicate)", func(t *testing.T) {
-		// given: pod-a already grabbed the lease; pod-b's webhook
-		// delivery races in second — exactly the cross-pod
-		// duplicate the K8s Lease backend exists to suppress.
-		client := newFakeLeaseClient()
-		podA := webhooks.NewK8sLeaseDedup(client, "pod-a")
-		podB := webhooks.NewK8sLeaseDedup(client, "pod-b")
-		require.False(t, podA.SeenRecently(context.Background(), key), "precondition: pod-a acquires first")
+	t.Run(
+		"should return true when Create returns AlreadyExists and the holding lease is fresh (real cross-pod duplicate)",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// when
-		dup := podB.SeenRecently(context.Background(), key)
+			// given: pod-a already grabbed the lease; pod-b's webhook
+			// delivery races in second — exactly the cross-pod
+			// duplicate the K8s Lease backend exists to suppress.
+			client := newFakeLeaseClient()
+			podA := webhooks.NewK8sLeaseDedup(client, "pod-a")
+			podB := webhooks.NewK8sLeaseDedup(client, "pod-b")
+			require.False(t, podA.SeenRecently(context.Background(), key), "precondition: pod-a acquires first")
 
-		// then
-		assert.True(t, dup, "second delivery (different pod) must observe `seen` and short-circuit")
-		assert.Equal(t, 2, client.createCalls, "both pods must hit the API server (the dedup IS the API call)")
-		assert.Equal(t, 1, client.getCalls, "the takeover path must Get the holding lease once to check freshness")
-		assert.Equal(t, 0, client.deleteCalls, "a fresh lease must NOT be deleted — only stale leases trigger takeover")
-	})
+			// when
+			dup := podB.SeenRecently(context.Background(), key)
+
+			// then
+			assert.True(t, dup, "second delivery (different pod) must observe `seen` and short-circuit")
+			assert.Equal(t, 2, client.createCalls, "both pods must hit the API server (the dedup IS the API call)")
+			assert.Equal(t, 1, client.getCalls, "the takeover path must Get the holding lease once to check freshness")
+			assert.Equal(
+				t,
+				0,
+				client.deleteCalls,
+				"a fresh lease must NOT be deleted — only stale leases trigger takeover",
+			)
+		},
+	)
 
 	t.Run("should take over a stale lease (previous holder crashed mid-review) and re-acquire", func(t *testing.T) {
+		t.Parallel()
+
 		// given: pod-a acquired the lease and then "crashed" — we
 		// simulate the crash by aging the stored lease past the
 		// `leaseDurationSeconds` (60s) freshness window. Without takeover this would
@@ -250,13 +275,25 @@ func TestK8sLeaseDedup(t *testing.T) {
 
 		// then
 		assert.False(t, seen, "stale lease must be taken over — the next pod re-acquires and processes the webhook")
-		assert.Equal(t, 3, client.createCalls, "podA's first acquire (1) + podB's contended Create (2) + takeover retry Create (3)")
+		assert.Equal(
+			t,
+			3,
+			client.createCalls,
+			"podA's first acquire (1) + podB's contended Create (2) + takeover retry Create (3)",
+		)
 		assert.Equal(t, 1, client.getCalls, "exactly one Get to inspect the holder's freshness")
 		assert.Equal(t, 1, client.deleteCalls, "the stale lease must be Delete'd before the retry Create")
-		assert.Equal(t, 1, client.StoredCount(), "after takeover, exactly one lease (the new holder's) must be persisted")
+		assert.Equal(
+			t,
+			1,
+			client.StoredCount(),
+			"after takeover, exactly one lease (the new holder's) must be persisted",
+		)
 	})
 
 	t.Run("should NOT take over a fresh lease even when Get returns it (renewer is still alive)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: pod-a holds a lease that is well within its
 		// freshness window (acquired ~1 s ago). pod-b's takeover
 		// path must observe "still fresh" and NOT delete.
@@ -274,6 +311,8 @@ func TestK8sLeaseDedup(t *testing.T) {
 	})
 
 	t.Run("should let a forgotten key re-acquire (rollback contract for queue-full or new push)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: caller acquired the lease then either (a) Submit
 		// failed and they want a retry, or (b) the review finished
 		// successfully and a real follow-up push minutes later
@@ -291,24 +330,35 @@ func TestK8sLeaseDedup(t *testing.T) {
 		assert.Equal(t, 1, client.deleteCalls, "Forget must hit the API server (the lease is shared state)")
 	})
 
-	t.Run("should return false when Create returns a non-AlreadyExists error (best-effort fallback)", func(t *testing.T) {
-		// given: the K8s API server is wedged / RBAC missing /
-		// network blip — the dedup degrades to "process the
-		// webhook" so the bot is never WORSE than the no-dedup
-		// baseline. Using a sentinel that is neither AlreadyExists
-		// nor NotFound proves the production code does not
-		// accidentally swallow it as one of the two known outcomes.
-		client := newFakeLeaseClient().WithCreateError(errors.New("connection refused"))
-		dedup := webhooks.NewK8sLeaseDedup(client, "pod-a")
+	t.Run(
+		"should return false when Create returns a non-AlreadyExists error (best-effort fallback)",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// when
-		seen := dedup.SeenRecently(context.Background(), key)
+			// given: the K8s API server is wedged / RBAC missing /
+			// network blip — the dedup degrades to "process the
+			// webhook" so the bot is never WORSE than the no-dedup
+			// baseline. Using a sentinel that is neither AlreadyExists
+			// nor NotFound proves the production code does not
+			// accidentally swallow it as one of the two known outcomes.
+			client := newFakeLeaseClient().WithCreateError(errors.New("connection refused"))
+			dedup := webhooks.NewK8sLeaseDedup(client, "pod-a")
 
-		// then
-		assert.False(t, seen, "transient API-server errors must fall through to processing — never worse than no dedup")
-	})
+			// when
+			seen := dedup.SeenRecently(context.Background(), key)
+
+			// then
+			assert.False(
+				t,
+				seen,
+				"transient API-server errors must fall through to processing — never worse than no dedup",
+			)
+		},
+	)
 
 	t.Run("should be a no-op when Forget hits a NotFound (idempotency for double-rollback)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: defensive cleanup paths invoke Forget without
 		// knowing whether the key was ever recorded — typical when
 		// the worker finishes after the lease has aged out via TTL
@@ -321,30 +371,46 @@ func TestK8sLeaseDedup(t *testing.T) {
 		dedup.Forget(context.Background(), "ado:never-existed:99999")
 
 		// then: dedup remains usable for future calls
-		assert.False(t, dedup.SeenRecently(context.Background(), key), "Forget on an unknown key must keep the backend operational")
+		assert.False(
+			t,
+			dedup.SeenRecently(context.Background(), key),
+			"Forget on an unknown key must keep the backend operational",
+		)
 	})
 
-	t.Run("should produce distinct lease names for keys that would collide under a lossy character map", func(t *testing.T) {
-		// given: two GitHub keys whose only difference is a `/` vs
-		// `-` — under a naive `[^a-z0-9-] -> -` substitution they
-		// both flatten to `gh-foo-bar-1`, which would make pod B's
-		// dedup for `gh:foo-bar:1` silently swallow pod A's lease
-		// for `gh:foo/bar:1` (or vice versa). The hash suffix
-		// guarantees they map to different leases.
-		client := newFakeLeaseClient()
-		dedup := webhooks.NewK8sLeaseDedup(client, "pod-a")
+	t.Run(
+		"should produce distinct lease names for keys that would collide under a lossy character map",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// when: two genuinely-different-PR keys both go to
-		// SeenRecently. Each must acquire its own lease — neither
-		// must report `seen` because of the other.
-		require.False(t, dedup.SeenRecently(context.Background(), "gh:foo/bar:1"))
-		require.False(t, dedup.SeenRecently(context.Background(), "gh:foo-bar:1"))
+			// given: two GitHub keys whose only difference is a `/` vs
+			// `-` — under a naive `[^a-z0-9-] -> -` substitution they
+			// both flatten to `gh-foo-bar-1`, which would make pod B's
+			// dedup for `gh:foo-bar:1` silently swallow pod A's lease
+			// for `gh:foo/bar:1` (or vice versa). The hash suffix
+			// guarantees they map to different leases.
+			client := newFakeLeaseClient()
+			dedup := webhooks.NewK8sLeaseDedup(client, "pod-a")
 
-		// then
-		assert.Equal(t, 2, client.StoredCount(), "two distinct keys must produce two distinct leases — collision would only show one")
-	})
+			// when: two genuinely-different-PR keys both go to
+			// SeenRecently. Each must acquire its own lease — neither
+			// must report `seen` because of the other.
+			require.False(t, dedup.SeenRecently(context.Background(), "gh:foo/bar:1"))
+			require.False(t, dedup.SeenRecently(context.Background(), "gh:foo-bar:1"))
+
+			// then
+			assert.Equal(
+				t,
+				2,
+				client.StoredCount(),
+				"two distinct keys must produce two distinct leases — collision would only show one",
+			)
+		},
+	)
 
 	t.Run("should sanitise dedup keys into RFC 1123 lease names with the code-guru prefix", func(t *testing.T) {
+		t.Parallel()
+
 		// given: ADO keys carry `:` (`ado:<uuid>:<pr_id>`) and
 		// GitHub keys carry `/` (`gh:<owner>/<repo>:<pr_id>`).
 		// Neither is a valid character in a K8s resource name —
@@ -367,7 +433,11 @@ func TestK8sLeaseDedup(t *testing.T) {
 		client.mu.Lock()
 		defer client.mu.Unlock()
 		for name := range client.leases {
-			assert.True(t, strings.HasPrefix(name, "code-guru-"), "every lease must namespace under `code-guru-` so kubectl get leases distinguishes them")
+			assert.True(
+				t,
+				strings.HasPrefix(name, "code-guru-"),
+				"every lease must namespace under `code-guru-` so kubectl get leases distinguishes them",
+			)
 			assert.LessOrEqual(t, len(name), 253, "lease names must fit RFC 1123 (≤ 253 chars)")
 			assert.NotContains(t, name, ":", "colons must be transformed (API server rejects them)")
 			assert.NotContains(t, name, "/", "slashes must be transformed (API server rejects them)")
@@ -463,7 +533,11 @@ func TestLeaseDurationAndRenewIntervalInvariant(t *testing.T) {
 		apiTimeout := webhooks.LeaseAPITimeoutForTest
 
 		// then
-		assert.Greater(t, duration, renew+apiTimeout,
-			"leaseDurationSeconds must exceed renew interval + API timeout so a single Update completes inside the freshness window")
+		assert.Greater(
+			t,
+			duration,
+			renew+apiTimeout,
+			"leaseDurationSeconds must exceed renew interval + API timeout so a single Update completes inside the freshness window",
+		)
 	})
 }

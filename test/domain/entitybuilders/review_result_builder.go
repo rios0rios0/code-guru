@@ -1,5 +1,3 @@
-//go:build integration || unit || test
-
 package entitybuilders
 
 import (
@@ -9,6 +7,7 @@ import (
 
 type ReviewResultBuilder struct {
 	*testkit.BaseBuilder
+
 	pullRequestURL string
 	verdict        string
 	comments       []entities.ReviewComment
@@ -45,7 +44,7 @@ func (b *ReviewResultBuilder) WithSummary(summary string) *ReviewResultBuilder {
 	return b
 }
 
-func (b *ReviewResultBuilder) Build() interface{} {
+func (b *ReviewResultBuilder) Build() any {
 	return b.BuildReviewResult()
 }
 
@@ -69,7 +68,7 @@ func (b *ReviewResultBuilder) Reset() testkit.Builder {
 
 func (b *ReviewResultBuilder) Clone() testkit.Builder {
 	clone := &ReviewResultBuilder{
-		BaseBuilder:    b.BaseBuilder.Clone().(*testkit.BaseBuilder),
+		BaseBuilder:    cloneBase(b.BaseBuilder),
 		pullRequestURL: b.pullRequestURL,
 		verdict:        b.verdict,
 		summary:        b.summary,

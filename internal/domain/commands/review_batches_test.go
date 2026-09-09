@@ -1,5 +1,3 @@
-//go:build unit
-
 package commands_test
 
 import (
@@ -184,11 +182,13 @@ func TestReviewInBatches(t *testing.T) {
 		// then
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.ElementsMatch(t,
+		assert.ElementsMatch(
+			t,
 			[]string{"pkg/f0.go", "pkg/f1.go", "pkg/f2.go", "pkg/f3.go",
 				"pkg/f4.go", "pkg/f5.go", "pkg/f6.go", "pkg/f7.go"},
 			reviewedPaths(reviewer),
-			"every changed file must reach the model exactly once — a batched review that silently drops files is worse than none")
+			"every changed file must reach the model exactly once — a batched review that silently drops files is worse than none",
+		)
 		assert.Len(t, result.Comments, 8,
 			"the merged review must carry the findings from every batch")
 		assert.NotContains(t, result.Summary, "could not be read",
@@ -311,8 +311,12 @@ func TestReviewInBatches(t *testing.T) {
 		// then
 		require.Greater(t, len(reviewer.requests), reviewer.successfulCalls,
 			"this scenario is only meaningful while the planner spends at least one overflow probe")
-		assert.Equal(t, "request_changes", result.Verdict,
-			"the first REVIEWED batch must receive the first scripted verdict, regardless of how many probes preceded it")
+		assert.Equal(
+			t,
+			"request_changes",
+			result.Verdict,
+			"the first REVIEWED batch must receive the first scripted verdict, regardless of how many probes preceded it",
+		)
 		require.NoError(t, err)
 	})
 
@@ -385,8 +389,12 @@ func TestReviewInBatches(t *testing.T) {
 			assert.Positive(t, issued.Batch.Index, "every batch must be numbered")
 			assert.True(t, issued.Batch.IsPartial(),
 				"a batch carrying fewer files than the PR must be flagged partial so the prompt warns the model")
-			assert.Zero(t, issued.Attempt,
-				"the retry counter belongs to the retry decorator; batch %d must not inherit a stale attempt number", i+1)
+			assert.Zero(
+				t,
+				issued.Attempt,
+				"the retry counter belongs to the retry decorator; batch %d must not inherit a stale attempt number",
+				i+1,
+			)
 		}
 	})
 
@@ -430,9 +438,12 @@ func TestReviewInBatches(t *testing.T) {
 		)
 
 		// then
-		require.Error(t, err,
-			"with nothing reviewed the caller must fall through to its failure annotation rather than post an empty review")
-		assert.ErrorIs(t, err, support.ErrContextWindowExceeded,
+		require.Error(
+			t,
+			err,
+			"with nothing reviewed the caller must fall through to its failure annotation rather than post an empty review",
+		)
+		require.ErrorIs(t, err, support.ErrContextWindowExceeded,
 			"the failure must still classify as a context-window overflow so the PR gets the too-large guidance")
 		assert.Nil(t, result)
 	})
@@ -522,8 +533,12 @@ func TestReviewInBatchesConversation(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.ThreadResolutions, 2)
 		ids := []string{result.ThreadResolutions[0].ID, result.ThreadResolutions[1].ID}
-		assert.Equal(t, []string{"T1", "T3"}, ids,
-			"the second batch's local `T1` is the run's third thread; keeping it as `T1` would close a thread nobody addressed")
+		assert.Equal(
+			t,
+			[]string{"T1", "T3"},
+			ids,
+			"the second batch's local `T1` is the run's third thread; keeping it as `T1` would close a thread nobody addressed",
+		)
 	})
 
 	t.Run("should hand threads whose file left the diff to the first batch", func(t *testing.T) {
@@ -568,8 +583,12 @@ func TestInitialBatchBudget(t *testing.T) {
 		budget := commands.InitialBatchBudget(diffs, overflowError(400000, 100000), 20)
 
 		// then
-		assert.Less(t, budget, total/2,
-			"reading the overage must beat blind halving — halving a 4x-oversized prompt wastes two multi-megabyte round trips")
+		assert.Less(
+			t,
+			budget,
+			total/2,
+			"reading the overage must beat blind halving — halving a 4x-oversized prompt wastes two multi-megabyte round trips",
+		)
 		assert.Positive(t, budget)
 	})
 
@@ -630,11 +649,23 @@ func TestMergeBatchVerdicts(t *testing.T) {
 		next     string
 		expected string
 	}{
-		"first verdict wins over the empty zero value":    {current: "", next: "approve", expected: "approve"},
-		"request_changes outranks approve":                {current: "approve", next: "request_changes", expected: "request_changes"},
-		"approve never downgrades request_changes":        {current: "request_changes", next: "approve", expected: "request_changes"},
-		"comment outranks approve":                        {current: "approve", next: "comment", expected: "comment"},
-		"request_changes outranks comment":                {current: "comment", next: "request_changes", expected: "request_changes"},
+		"first verdict wins over the empty zero value": {current: "", next: "approve", expected: "approve"},
+		"request_changes outranks approve": {
+			current:  "approve",
+			next:     "request_changes",
+			expected: "request_changes",
+		},
+		"approve never downgrades request_changes": {
+			current:  "request_changes",
+			next:     "approve",
+			expected: "request_changes",
+		},
+		"comment outranks approve": {current: "approve", next: "comment", expected: "comment"},
+		"request_changes outranks comment": {
+			current:  "comment",
+			next:     "request_changes",
+			expected: "request_changes",
+		},
 		"an unrecognised verdict never overrides a known": {current: "approve", next: "banana", expected: "approve"},
 	}
 	for name, tc := range cases {
@@ -800,7 +831,7 @@ func TestExecuteBatchesOversizedPullRequest(t *testing.T) {
 
 	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 	pr := forgeEntities.PullRequestDetail{
-		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "big change", URL: "https://example/pr/4242"},
+		ID: 4242, Title: "big change", URL: "https://example/pr/4242",
 	}
 
 	newProvider := func(fileCount int) *recordingReviewProvider {
@@ -863,14 +894,16 @@ func TestExecuteBatchesOversizedPullRequest(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.ErrorIs(t, err, support.ErrContextWindowExceeded)
+		require.ErrorIs(t, err, support.ErrContextWindowExceeded)
 		assert.Len(t, reviewer.requests, 1,
 			"a one-file change must not be re-sent — the split would be identical to the prompt that just failed")
 
 		var joined string
+		var joinedSb869 strings.Builder
 		for _, call := range provider.calls {
-			joined += call.body
+			joinedSb869.WriteString(call.body)
 		}
+		joined += joinedSb869.String()
 		assert.NotContains(t, joined, "reviewing this PR in batches",
 			"the bot must not promise a batched review it cannot perform")
 		assert.Contains(t, joined, "too large for the AI model's context window")
@@ -892,14 +925,16 @@ func TestExecuteBatchesOversizedPullRequest(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.ErrorIs(t, err, support.ErrContextWindowExceeded)
+		require.ErrorIs(t, err, support.ErrContextWindowExceeded)
 		assert.Len(t, reviewer.requests, 1,
 			"with batching off the bot must not spend extra calls trying to split the change")
 
 		var joined string
+		var joinedSb898 strings.Builder
 		for _, call := range provider.calls {
-			joined += call.body
+			joinedSb898.WriteString(call.body)
 		}
+		joined += joinedSb898.String()
 		assert.Contains(t, joined, "too large for the AI model's context window",
 			"the historical give-up annotation stays available for operators who opt out")
 	})

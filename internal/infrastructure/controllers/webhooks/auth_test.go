@@ -1,5 +1,3 @@
-//go:build unit
-
 package webhooks_test
 
 import (
@@ -7,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,6 +27,8 @@ func TestVerifyHMACSHA256(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should accept a valid sha256 signature", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		secret := "topsecret"
 		payload := []byte(`{"hello":"world"}`)
@@ -43,6 +42,8 @@ func TestVerifyHMACSHA256(t *testing.T) {
 	})
 
 	t.Run("should reject a tampered payload", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		secret := "topsecret"
 		header := computeHMACHeader(secret, "original")
@@ -52,10 +53,12 @@ func TestVerifyHMACSHA256(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrInvalidSignature))
+		assert.ErrorIs(t, err, webhooks.ErrInvalidSignature)
 	})
 
 	t.Run("should reject when the header is missing", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		secret := "topsecret"
 
@@ -64,10 +67,12 @@ func TestVerifyHMACSHA256(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrMissingHeader))
+		assert.ErrorIs(t, err, webhooks.ErrMissingHeader)
 	})
 
 	t.Run("should reject when the secret is empty", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		payload := []byte("payload")
 		header := computeHMACHeader("topsecret", string(payload))
@@ -77,10 +82,12 @@ func TestVerifyHMACSHA256(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrInvalidSignature))
+		assert.ErrorIs(t, err, webhooks.ErrInvalidSignature)
 	})
 
 	t.Run("should reject when the prefix is wrong", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		mac := hmac.New(sha256.New, []byte("s"))
 		mac.Write([]byte("payload"))
@@ -91,10 +98,12 @@ func TestVerifyHMACSHA256(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrInvalidSignature))
+		assert.ErrorIs(t, err, webhooks.ErrInvalidSignature)
 	})
 
 	t.Run("should reject when the hex is malformed", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		header := "sha256=zzzz"
 
@@ -103,7 +112,7 @@ func TestVerifyHMACSHA256(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrInvalidSignature))
+		assert.ErrorIs(t, err, webhooks.ErrInvalidSignature)
 	})
 }
 
@@ -111,6 +120,8 @@ func TestVerifyBasicAuth(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should accept the configured username and secret", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		secret := "swordfish"
 		header := basicAuthHeader(webhooks.BasicAuthUsername, secret)
@@ -123,6 +134,8 @@ func TestVerifyBasicAuth(t *testing.T) {
 	})
 
 	t.Run("should reject a wrong password", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		header := basicAuthHeader(webhooks.BasicAuthUsername, "wrong")
 
@@ -131,10 +144,12 @@ func TestVerifyBasicAuth(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrInvalidBasicAuth))
+		assert.ErrorIs(t, err, webhooks.ErrInvalidBasicAuth)
 	})
 
 	t.Run("should reject an unexpected username", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		header := basicAuthHeader("attacker", "secret")
 
@@ -143,10 +158,12 @@ func TestVerifyBasicAuth(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrInvalidBasicAuth))
+		assert.ErrorIs(t, err, webhooks.ErrInvalidBasicAuth)
 	})
 
 	t.Run("should reject when the header is missing", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		// (no header provided)
 
@@ -155,10 +172,12 @@ func TestVerifyBasicAuth(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrMissingHeader))
+		assert.ErrorIs(t, err, webhooks.ErrMissingHeader)
 	})
 
 	t.Run("should reject when the prefix is wrong", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		header := "Bearer " + base64.StdEncoding.EncodeToString([]byte("code-guru:secret"))
 
@@ -167,10 +186,12 @@ func TestVerifyBasicAuth(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrInvalidBasicAuth))
+		assert.ErrorIs(t, err, webhooks.ErrInvalidBasicAuth)
 	})
 
 	t.Run("should reject when base64 is malformed", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		header := "Basic !!!"
 
@@ -179,10 +200,12 @@ func TestVerifyBasicAuth(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrInvalidBasicAuth))
+		assert.ErrorIs(t, err, webhooks.ErrInvalidBasicAuth)
 	})
 
 	t.Run("should reject when the secret is empty", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		header := basicAuthHeader(webhooks.BasicAuthUsername, "anything")
 
@@ -191,10 +214,12 @@ func TestVerifyBasicAuth(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrInvalidBasicAuth))
+		assert.ErrorIs(t, err, webhooks.ErrInvalidBasicAuth)
 	})
 
 	t.Run("should reject when the credentials lack a colon", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		header := "Basic " + base64.StdEncoding.EncodeToString([]byte("nocolonhere"))
 
@@ -203,10 +228,12 @@ func TestVerifyBasicAuth(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrInvalidBasicAuth))
+		assert.ErrorIs(t, err, webhooks.ErrInvalidBasicAuth)
 	})
 
 	t.Run("should accept the lowercase scheme prefix per RFC 7617", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		secret := "swordfish"
 		header := "basic " + base64.StdEncoding.EncodeToString([]byte(webhooks.BasicAuthUsername+":"+secret))

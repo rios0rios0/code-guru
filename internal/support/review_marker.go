@@ -302,3 +302,100 @@ func isMentionWordChar(b byte) bool {
 		return false
 	}
 }
+
+// adoMentionIDPrefix opens the markup Azure DevOps substitutes for an
+// @-autocompleted mention. When a user picks an account out of the ADO
+// comment box's autocomplete, the stored comment body carries
+// `@<identity-guid>` — the account's identity GUID, NOT the name the
+// user saw and picked. So a `bot_identities` entry written as an
+// account name (`svc-codeguru@corp.example`) cannot possibly match the
+// body, and the mention silently reaches no one: the most natural way
+// to summon the bot on Azure DevOps is precisely the way that used to
+// fail. `HasMention` handles the case where an operator pastes the
+// GUID into `bot_identities` (see deriveMentionNames' bracketed
+// candidate); this extractor exists so the ADO webhook handler can
+// close the gap with no configuration at all, by comparing the ids
+// against the identity its own PAT authenticates as.
+const adoMentionIDPrefix = "@<"
+
+// identityIDLength is the length of a canonical 8-4-4-4-12 GUID. Used
+// to reject anything inside `@<…>` that is not an identity id, so a
+// comment containing e.g. an autolinked `@<https://example.com>` never
+// triggers an identity lookup (or a log line) on the webhook path.
+const identityIDLength = 36
+
+// ExtractMentionedIdentityIDs returns the Azure DevOps identity ids
+// @-mentioned in body through the comment box's autocomplete markup
+// (`@<identity-guid>`), lower-cased and de-duplicated in first-seen
+// order. Returns nil when the body carries no such markup — which is
+// the overwhelmingly common case, so the scan allocates nothing on the
+// hot path.
+//
+// Only well-formed GUIDs are returned (see isIdentityGUID): the
+// caller uses a non-empty result BOTH as the trigger for an outbound
+// identity lookup and as operator-facing log content, and neither
+// should be reachable by arbitrary text a commenter can type.
+func ExtractMentionedIdentityIDs(body string) []string {
+	var ids []string
+	var seen map[string]struct{}
+	rest := body
+	for {
+		idx := strings.Index(rest, adoMentionIDPrefix)
+		if idx == -1 {
+			return ids
+		}
+		rest = rest[idx+len(adoMentionIDPrefix):]
+		end := strings.IndexByte(rest, '>')
+		if end == -1 {
+			return ids
+		}
+		candidate := strings.ToLower(rest[:end])
+		rest = rest[end+1:]
+		if !IsIdentityID(candidate) {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		if seen == nil {
+			seen = map[string]struct{}{}
+		}
+		seen[candidate] = struct{}{}
+		ids = append(ids, candidate)
+	}
+}
+
+// IsIdentityID reports whether s is a canonical lower-case 8-4-4-4-12
+// hyphenated GUID. Deliberately stricter than `uuid.Parse`: the braced
+// and unhyphenated forms never appear in ADO mention markup, and every
+// value that passes here is safe to embed in a log line verbatim —
+// which is why the identity resolver validates the id it reads back
+// from the REST API with it too, rather than trusting the response.
+func IsIdentityID(s string) bool {
+	if len(s) != identityIDLength {
+		return false
+	}
+	for i := range identityIDLength {
+		c := s[i]
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// EqualIdentityID compares two identity ids case-insensitively. Azure
+// DevOps is inconsistent about GUID case across its own surfaces — the
+// comment box emits the mention markup upper-cased while the REST API
+// returns the same identity lower-cased — so a byte comparison of the
+// two would never match. Empty ids never compare equal, so an
+// unresolved identity cannot match an unparsed mention.
+func EqualIdentityID(a, b string) bool {
+	return a != "" && equalFold(a, b)
+}

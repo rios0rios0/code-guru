@@ -1,5 +1,3 @@
-//go:build unit
-
 package support_test
 
 import (
@@ -15,6 +13,8 @@ func TestTruncate(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should return input unchanged when shorter than the limit", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		input := "short"
 
@@ -26,6 +26,8 @@ func TestTruncate(t *testing.T) {
 	})
 
 	t.Run("should return input unchanged when exactly at the limit", func(t *testing.T) {
+		t.Parallel()
+
 		// given: byte length equals the cap — no sentinel must be added,
 		// because the value is fully represented and any sentinel would
 		// confuse the reader.
@@ -39,6 +41,8 @@ func TestTruncate(t *testing.T) {
 	})
 
 	t.Run("should clip and append the truncation sentinel when over the limit", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		input := strings.Repeat("a", 20)
 
@@ -50,6 +54,8 @@ func TestTruncate(t *testing.T) {
 	})
 
 	t.Run("should handle empty input", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		input := ""
 
@@ -61,6 +67,8 @@ func TestTruncate(t *testing.T) {
 	})
 
 	t.Run("should be byte-based and may split a multi-byte rune at the boundary", func(t *testing.T) {
+		t.Parallel()
+
 		// given: `é` is 2 bytes in UTF-8 (0xC3 0xA9). Cutting at byte 2
 		// preserves it; cutting at byte 1 would split it. The contract
 		// is byte-based and the helper does NOT search for a rune
@@ -80,6 +88,8 @@ func TestTruncateForLog(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should quote a short string and skip the sentinel", func(t *testing.T) {
+		t.Parallel()
+
 		// given: under the cap → fully represented. Quoting wraps the
 		// content in `"..."` and escapes any control byte.
 		input := "hello"
@@ -92,6 +102,8 @@ func TestTruncateForLog(t *testing.T) {
 	})
 
 	t.Run("should quote and append sentinel OUTSIDE the quotes when over the limit", func(t *testing.T) {
+		t.Parallel()
+
 		// given: the sentinel must sit OUTSIDE the quoted region so a
 		// reader never confuses it with bytes that were actually in the
 		// body. This contract is also what makes the output unambiguous
@@ -107,6 +119,8 @@ func TestTruncateForLog(t *testing.T) {
 	})
 
 	t.Run("should escape newlines so they cannot inject fake log lines (log-injection defence)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: an attacker-controlled body could otherwise embed a
 		// `\nlevel=error msg="forged"` sequence that the logrus
 		// TextFormatter would render as a separate log entry.
@@ -124,6 +138,8 @@ func TestTruncateForLog(t *testing.T) {
 	})
 
 	t.Run("should escape ANSI / control bytes so the log stays single-line", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a body with a \x1b[31m ANSI escape and a \r\n CRLF
 		// pair — both common log-injection vectors.
 		input := "\x1b[31mred text\x1b[0m\r\nNEXT_LINE"
@@ -140,6 +156,8 @@ func TestTruncateForLog(t *testing.T) {
 	})
 
 	t.Run("should handle empty input as an empty quoted string with no sentinel", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		input := ""
 
@@ -151,6 +169,8 @@ func TestTruncateForLog(t *testing.T) {
 	})
 
 	t.Run("should produce valid UTF-8 even when the input contains an invalid sequence", func(t *testing.T) {
+		t.Parallel()
+
 		// given: `\xff` is not a valid UTF-8 start byte; logging it raw
 		// would corrupt JSON loggers and some terminals. `strconv.Quote`
 		// escapes it to `\xff` (4 ASCII bytes), guaranteeing UTF-8 output.
@@ -169,6 +189,8 @@ func TestTruncateBytesForLog(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should quote a short byte slice and skip the sentinel", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		input := []byte("hello")
 
@@ -180,6 +202,8 @@ func TestTruncateBytesForLog(t *testing.T) {
 	})
 
 	t.Run("should quote and append sentinel when over the limit", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		input := []byte(strings.Repeat("b", 20))
 
@@ -191,6 +215,8 @@ func TestTruncateBytesForLog(t *testing.T) {
 	})
 
 	t.Run("should escape newlines (log-injection defence)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: same threat model as `TruncateForLog`, but the source
 		// is the raw HTTP body bytes from a webhook — exactly the
 		// allowlist-rejection diagnostic path. Pin the property here so
@@ -207,6 +233,8 @@ func TestTruncateBytesForLog(t *testing.T) {
 	})
 
 	t.Run("should NOT allocate a full-size string when input is much larger than the cap", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a 1 MiB input. The byte-slice variant exists precisely
 		// to avoid the `string(b)` full-body copy that the string-based
 		// variant would force. Pin the budget by asserting the OUTPUT
@@ -227,6 +255,8 @@ func TestTruncateBytesForLog(t *testing.T) {
 	})
 
 	t.Run("should handle empty byte slice as an empty quoted string", func(t *testing.T) {
+		t.Parallel()
+
 		// given: cover both the `nil` slice and the explicit empty-but-
 		// non-nil `[]byte{}` since they are distinct in Go and a regression
 		// could trigger only one of them.
