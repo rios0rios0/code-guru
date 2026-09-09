@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'ignored the `.codeql-db/` directory that `make sast` builds in place, so a CodeQL run no longer leaves an untracked database in the working tree'
-time: '2026-09-09T15:56:09.89581603Z'
