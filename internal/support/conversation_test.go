@@ -1,5 +1,3 @@
-//go:build unit
-
 package support_test
 
 import (
@@ -200,10 +198,18 @@ func TestBuildReviewConversation(t *testing.T) {
 
 		// then
 		require.Len(t, threads, 1)
-		assert.Equal(t, int64(111), threads[0].ThreadID,
-			"the gitforge ThreadID must reach the post-pipeline so UpdatePullRequestThreadStatus has a concrete handle to act on")
-		assert.Equal(t, int64(1), threads[0].RootCommentID,
-			"the root bot comment ID must reach the post-pipeline for future thread-reply / edit-on-second-push features")
+		assert.Equal(
+			t,
+			int64(111),
+			threads[0].ThreadID,
+			"the gitforge ThreadID must reach the post-pipeline so UpdatePullRequestThreadStatus has a concrete handle to act on",
+		)
+		assert.Equal(
+			t,
+			int64(1),
+			threads[0].RootCommentID,
+			"the root bot comment ID must reach the post-pipeline for future thread-reply / edit-on-second-push features",
+		)
 	})
 }
 
@@ -225,7 +231,11 @@ func TestIsBotAuthor(t *testing.T) {
 		{name: "should reject a regular user", author: "alice", want: false},
 		{name: "should reject a hyphenated user with the prefix", author: "code-guru-fan", want: false},
 		{name: "should reject a digit-suffixed user with the prefix", author: "code-guru99", want: false},
-		{name: "should reject when the prefix is in the middle of the name", author: "alice+code-guru@example.com", want: false},
+		{
+			name:   "should reject when the prefix is in the middle of the name",
+			author: "alice+code-guru@example.com",
+			want:   false,
+		},
 		{name: "should reject when the prefix is followed by a dot", author: "code-guru.dev", want: false},
 		{name: "should reject the empty author", author: "", want: false},
 		// Configured identities — a deployment that posts review comments

@@ -1,5 +1,3 @@
-//go:build unit
-
 package support_test
 
 import (
@@ -44,7 +42,7 @@ func TestLooksLikeArgumentListTooLong(t *testing.T) {
 		oversized := strings.Repeat("x", 4*1024*1024)
 
 		// when
-		err := exec.Command("/bin/echo", oversized).Run() //nolint:gosec // fixed, non-user-controlled binary
+		err := exec.Command("/bin/echo", oversized).Run()
 
 		// then
 		require.Error(t, err, "a 4 MiB argument must be refused by the kernel on any POSIX platform")

@@ -1,5 +1,3 @@
-//go:build unit
-
 package support_test
 
 import (
@@ -15,6 +13,8 @@ func TestParsePullRequestURL(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should parse GitHub PR URL", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		rawURL := "https://github.com/rios0rios0/code-guru/pull/42"
 
@@ -31,6 +31,8 @@ func TestParsePullRequestURL(t *testing.T) {
 	})
 
 	t.Run("should parse Azure DevOps PR URL", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		rawURL := "https://dev.azure.com/myorg/myproject/_git/myrepo/pullrequest/123"
 
@@ -47,6 +49,8 @@ func TestParsePullRequestURL(t *testing.T) {
 	})
 
 	t.Run("should return error for unsupported host", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		rawURL := "https://gitlab.com/org/repo/merge_requests/1"
 
@@ -54,11 +58,13 @@ func TestParsePullRequestURL(t *testing.T) {
 		_, err := support.ParsePullRequestURL(rawURL)
 
 		// then
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported provider host")
 	})
 
 	t.Run("should return error for invalid GitHub URL format", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		rawURL := "https://github.com/org/repo"
 
@@ -70,6 +76,8 @@ func TestParsePullRequestURL(t *testing.T) {
 	})
 
 	t.Run("should return error for invalid PR ID", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		rawURL := "https://github.com/org/repo/pull/abc"
 
@@ -77,7 +85,7 @@ func TestParsePullRequestURL(t *testing.T) {
 		_, err := support.ParsePullRequestURL(rawURL)
 
 		// then
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid PR ID")
 	})
 }

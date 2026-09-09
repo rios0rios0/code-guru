@@ -1,5 +1,3 @@
-//go:build integration || unit || test
-
 package entitybuilders
 
 import (
@@ -9,6 +7,7 @@ import (
 
 type FileDiffBuilder struct {
 	*testkit.BaseBuilder
+
 	path     string
 	diff     string
 	language string
@@ -17,7 +16,7 @@ type FileDiffBuilder struct {
 func NewFileDiffBuilder() *FileDiffBuilder {
 	return &FileDiffBuilder{
 		BaseBuilder: testkit.NewBaseBuilder(),
-		path:        "test.go",
+		path:        defaultFilePath,
 		diff:        "+test line",
 		language:    "golang",
 	}
@@ -38,7 +37,7 @@ func (b *FileDiffBuilder) WithLanguage(language string) *FileDiffBuilder {
 	return b
 }
 
-func (b *FileDiffBuilder) Build() interface{} {
+func (b *FileDiffBuilder) Build() any {
 	return b.BuildFileDiff()
 }
 
@@ -52,7 +51,7 @@ func (b *FileDiffBuilder) BuildFileDiff() entities.FileDiff {
 
 func (b *FileDiffBuilder) Reset() testkit.Builder {
 	b.BaseBuilder.Reset()
-	b.path = "test.go"
+	b.path = defaultFilePath
 	b.diff = "+test line"
 	b.language = "golang"
 	return b
@@ -60,7 +59,7 @@ func (b *FileDiffBuilder) Reset() testkit.Builder {
 
 func (b *FileDiffBuilder) Clone() testkit.Builder {
 	clone := &FileDiffBuilder{
-		BaseBuilder: b.BaseBuilder.Clone().(*testkit.BaseBuilder),
+		BaseBuilder: cloneBase(b.BaseBuilder),
 		path:        b.path,
 		diff:        b.diff,
 		language:    b.language,

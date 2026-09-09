@@ -1,5 +1,3 @@
-//go:build unit
-
 package support_test
 
 import (
@@ -406,8 +404,19 @@ func TestDetectBotAuthors(t *testing.T) {
 		// whose name does not start with `code-guru`. Its PR-wide status
 		// annotation carries the bot marker.
 		comments := []forgeEntities.PullRequestComment{
-			{ID: 1, Line: 0, Author: "automation@example.com", Body: "✅ **Code Guru review complete.**\n\nVerdict: `approve`."},
-			{ID: 2, Line: 10, FilePath: "internal/foo.go", Author: "automation@example.com", Body: "[high] nil-check this"},
+			{
+				ID:     1,
+				Line:   0,
+				Author: "automation@example.com",
+				Body:   "✅ **Code Guru review complete.**\n\nVerdict: `approve`.",
+			},
+			{
+				ID:       2,
+				Line:     10,
+				FilePath: "internal/foo.go",
+				Author:   "automation@example.com",
+				Body:     "[high] nil-check this",
+			},
 			{ID: 3, Line: 10, FilePath: "internal/foo.go", Author: "alice", Body: "already handled", InReplyToID: 2},
 		}
 
@@ -459,7 +468,12 @@ func TestDetectBotAuthors(t *testing.T) {
 		// bot — otherwise their inline threads would be pulled in as
 		// prior bot threads and a re-review could auto-resolve them.
 		comments := []forgeEntities.PullRequestComment{
-			{ID: 1, Line: 0, Author: "alice", Body: "should we reword `✅ **Code Guru review complete.**` to be shorter?"},
+			{
+				ID:     1,
+				Line:   0,
+				Author: "alice",
+				Body:   "should we reword `✅ **Code Guru review complete.**` to be shorter?",
+			},
 		}
 
 		// when
@@ -492,5 +506,131 @@ func TestDetectBotAuthors(t *testing.T) {
 
 		// then
 		assert.Nil(t, got)
+	})
+}
+
+func TestExtractMentionedIdentityIDs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		body     string
+		expected []string
+	}{
+		{
+			name:     "should return nothing for an empty body",
+			body:     "",
+			expected: nil,
+		},
+		{
+			name:     "should return nothing for a plain-text mention",
+			body:     "@code-guru please take another look",
+			expected: nil,
+		},
+		{
+			name:     "should extract the identity id from Azure DevOps autocomplete markup",
+			body:     "@<8f3a1e2b-4c5d-6e7f-8a9b-0c1d2e3f4a5b> can you re-review?",
+			expected: []string{"8f3a1e2b-4c5d-6e7f-8a9b-0c1d2e3f4a5b"},
+		},
+		{
+			name: "should lower-case the id so the comment box's upper-case markup matches the REST API's form",
+			body: "@<8F3A1E2B-4C5D-6E7F-8A9B-0C1D2E3F4A5B> ",
+			expected: []string{
+				"8f3a1e2b-4c5d-6e7f-8a9b-0c1d2e3f4a5b",
+			},
+		},
+		{
+			name: "should extract every distinct id when several accounts are mentioned",
+			body: "@<8f3a1e2b-4c5d-6e7f-8a9b-0c1d2e3f4a5b> @<11111111-2222-3333-4444-555555555555> ping",
+			expected: []string{
+				"8f3a1e2b-4c5d-6e7f-8a9b-0c1d2e3f4a5b",
+				"11111111-2222-3333-4444-555555555555",
+			},
+		},
+		{
+			name:     "should collapse a repeated id to a single entry",
+			body:     "@<8f3a1e2b-4c5d-6e7f-8a9b-0c1d2e3f4a5b> and again @<8F3A1E2B-4C5D-6E7F-8A9B-0C1D2E3F4A5B>",
+			expected: []string{"8f3a1e2b-4c5d-6e7f-8a9b-0c1d2e3f4a5b"},
+		},
+		{
+			name:     "should ignore bracketed content that is not an identity id",
+			body:     "see @<https://example.com/docs> and @<not-a-guid>",
+			expected: nil,
+		},
+		{
+			name:     "should ignore an unterminated bracket",
+			body:     "@<8f3a1e2b-4c5d-6e7f-8a9b-0c1d2e3f4a5b",
+			expected: nil,
+		},
+		{
+			name:     "should ignore a guid-length value carrying a non-hex character",
+			body:     "@<8f3a1e2b-4c5d-6e7f-8a9b-0c1d2e3f4a5z>",
+			expected: nil,
+		},
+		{
+			name:     "should keep scanning after a rejected candidate",
+			body:     "@<not-a-guid> then @<11111111-2222-3333-4444-555555555555>",
+			expected: []string{"11111111-2222-3333-4444-555555555555"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			body := tt.body
+
+			// when
+			ids := support.ExtractMentionedIdentityIDs(body)
+
+			// then
+			assert.Equal(t, tt.expected, ids)
+		})
+	}
+}
+
+func TestEqualIdentityID(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should match ids that differ only in case", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		resolvedID := "8f3a1e2b-4c5d-6e7f-8a9b-0c1d2e3f4a5b"
+		mentionedID := "8F3A1E2B-4C5D-6E7F-8A9B-0C1D2E3F4A5B"
+
+		// when
+		equal := support.EqualIdentityID(resolvedID, mentionedID)
+
+		// then
+		assert.True(t, equal, "Azure DevOps emits the same identity in both cases; the comparison must fold them")
+	})
+
+	t.Run("should not match different ids", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		resolvedID := "8f3a1e2b-4c5d-6e7f-8a9b-0c1d2e3f4a5b"
+		mentionedID := "11111111-2222-3333-4444-555555555555"
+
+		// when
+		equal := support.EqualIdentityID(resolvedID, mentionedID)
+
+		// then
+		assert.False(t, equal)
+	})
+
+	t.Run("should never match when the resolved identity is empty", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		unresolved := ""
+
+		// when
+		equal := support.EqualIdentityID(unresolved, "")
+
+		// then
+		assert.False(t, equal, "an unresolved identity must not match an unparsed mention")
 	})
 }

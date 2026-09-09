@@ -1,5 +1,4 @@
-//go:build unit
-
+//nolint:gochecknoglobals // Test-only re-exports: a package-level var IS the mechanism (a method value or function value cannot be a const).
 package commands
 
 import "github.com/rios0rios0/codeguru/internal/domain/entities"
@@ -8,8 +7,9 @@ import "github.com/rios0rios0/codeguru/internal/domain/entities"
 // external `commands_test` package can pin their contracts directly,
 // without standing up stubs for every repository/provider/registry that
 // the full `Execute` flow would otherwise require. The variable
-// indirection keeps each helper unexported in production builds (the
-// file is gated on the `unit` build tag).
+// indirection keeps each helper unexported in production code — nothing
+// outside a test ever mentions these names, and `_test.go` files are
+// excluded from non-test builds by the toolchain itself.
 //
 //   - `FilterStaleComments`      — partitions AI findings into kept vs
 //     dropped, where dropped means "FilePath is no longer in the

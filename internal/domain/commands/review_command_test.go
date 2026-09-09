@@ -1,5 +1,3 @@
-//go:build unit
-
 package commands_test
 
 import (
@@ -45,6 +43,8 @@ func TestFilterStaleComments(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should keep all comments when every path is still in the live set", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		comments := []entities.ReviewComment{
 			{FilePath: "main.go", Line: 10, Body: "fix this"},
@@ -61,6 +61,8 @@ func TestFilterStaleComments(t *testing.T) {
 	})
 
 	t.Run("should drop only the comments whose path is no longer in the live set", func(t *testing.T) {
+		t.Parallel()
+
 		// given: AI returned 3 findings; only `main.go` survived the
 		// follow-up push. The other two reference files the latest
 		// iteration no longer touches and would render with the
@@ -84,6 +86,8 @@ func TestFilterStaleComments(t *testing.T) {
 	})
 
 	t.Run("should drop every comment when the live set is empty", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a defensive case — empty live set drops everything.
 		// In production this happens when `GetPullRequestFiles`
 		// returns an empty list (e.g. a force-pushed PR where every
@@ -103,6 +107,8 @@ func TestFilterStaleComments(t *testing.T) {
 	})
 
 	t.Run("should normalise leading slash so AI paths match ADO-style paths", func(t *testing.T) {
+		t.Parallel()
+
 		// given: ADO's `GetPullRequestFiles` returns paths like
 		// `/internal/foo.go` while the AI (driven from the diff) emits
 		// `internal/foo.go`. Both halves of the pipeline must compare
@@ -125,6 +131,8 @@ func TestFilterStaleComments(t *testing.T) {
 	})
 
 	t.Run("should normalise an AI-supplied leading slash too (defence in depth)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: belt-and-suspenders — if the AI ever emits a path
 		// with a leading slash (e.g. because the prompt or a future
 		// model behaviour change includes one), the filter must not
@@ -144,6 +152,8 @@ func TestFilterStaleComments(t *testing.T) {
 	})
 
 	t.Run("should return nil/nil when the input list is empty", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		live := map[string]struct{}{"main.go": {}}
 
@@ -156,6 +166,8 @@ func TestFilterStaleComments(t *testing.T) {
 	})
 
 	t.Run("should keep PR-wide comments even when their FilePath looks stale", func(t *testing.T) {
+		t.Parallel()
+
 		// given: PR-wide comments (`Line <= 0`) are posted via
 		// `PostPullRequestComment`, which renders them as repository-
 		// wide annotations with no file:line anchor — so they cannot
@@ -186,6 +198,8 @@ func TestSummarizeStaleFilePaths(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should join unique paths with a comma when the count is small", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		dropped := []entities.ReviewComment{
 			{FilePath: "a.go"}, {FilePath: "b.go"}, {FilePath: "a.go"},
@@ -199,6 +213,8 @@ func TestSummarizeStaleFilePaths(t *testing.T) {
 	})
 
 	t.Run("should append `(+N more)` when the unique count exceeds the cap", func(t *testing.T) {
+		t.Parallel()
+
 		// given: nine unique paths, cap is eight
 		var dropped []entities.ReviewComment
 		for _, p := range []string{"a.go", "b.go", "c.go", "d.go", "e.go", "f.go", "g.go", "h.go", "i.go"} {
@@ -216,6 +232,8 @@ func TestSummarizeStaleFilePaths(t *testing.T) {
 	})
 
 	t.Run("should return an empty string for an empty input", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a nil/empty `dropped` slice — every other subtest in
 		// this file (and across the repo) keeps the BDD `given/when/
 		// then` triplet even when the setup is trivial. CLAUDE.md
@@ -230,6 +248,8 @@ func TestSummarizeStaleFilePaths(t *testing.T) {
 	})
 
 	t.Run("should deduplicate by normalised path so leading-slash variants are not double-counted", func(t *testing.T) {
+		t.Parallel()
+
 		// given: the AI sometimes emits `internal/foo.go` and ADO's
 		// underlying paths look like `/internal/foo.go` — both
 		// references resolve to the same file, so the operator log
@@ -275,6 +295,8 @@ func TestNormalizeFilePath(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			// when
 			got := commands.NormalizeFilePathForTest(tc.in)
 
@@ -288,6 +310,8 @@ func TestBuildReviewingMarkerBody(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should render the marker with the start timestamp in RFC 3339 UTC", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a fixed timestamp pinned in UTC so the formatting
 		// contract is deterministic. RFC 3339 matches the shape on
 		// the corresponding `Info` log line emitted by
@@ -309,6 +333,8 @@ func TestBuildReviewingMarkerBody(t *testing.T) {
 	})
 
 	t.Run("should always emit a non-empty body even at the zero time (defensive)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: the zero `time.Time` shouldn't crash or produce an
 		// empty body — pin the contract so a future refactor that
 		// (e.g.) reads the year off the timestamp doesn't panic on
@@ -323,6 +349,8 @@ func TestBuildReviewingMarkerBody(t *testing.T) {
 	})
 
 	t.Run("should normalise a non-UTC input to UTC so the printed timestamp ends in Z", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a caller passing in a localised `time.Time` (e.g. an
 		// `America/Sao_Paulo` clock that mistakenly skipped the
 		// `.UTC()` step). The helper must enforce its own contract
@@ -349,6 +377,8 @@ func TestBuildReviewingMarkerBody(t *testing.T) {
 	})
 
 	t.Run("should not embed `\\n` literally (must use real newlines for Markdown rendering)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: ADO and GitHub render the marker as Markdown — the
 		// blank line between the headline and the explanatory
 		// paragraph requires an actual `\n\n` so the renderer treats
@@ -377,6 +407,8 @@ func TestBuildReviewFailedBody(t *testing.T) {
 	// and posting that to the PR is the leak this body must not produce.
 
 	t.Run("should render the headline, the next-step hint and the UTC timestamp", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		ts := time.Date(2026, 5, 1, 2, 51, 21, 0, time.UTC)
 		err := errors.New("boom")
@@ -394,6 +426,8 @@ func TestBuildReviewFailedBody(t *testing.T) {
 	})
 
 	t.Run("should NEVER echo the raw error text into the PR body", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a generic backend error carrying a distinctive raw token
 		// that stands in for the claude CLI's leaked socket-error envelope.
 		ts := time.Date(2026, 5, 1, 2, 51, 21, 0, time.UTC)
@@ -411,6 +445,8 @@ func TestBuildReviewFailedBody(t *testing.T) {
 	})
 
 	t.Run("should classify an unparseable-response error as a JSON-format failure", func(t *testing.T) {
+		t.Parallel()
+
 		// given: the sentinel wrapped the way the retry decorator wraps it
 		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 		err := fmt.Errorf("AI review failed after 3 attempt(s): %w", support.ErrUnparseableResponse)
@@ -426,6 +462,8 @@ func TestBuildReviewFailedBody(t *testing.T) {
 	})
 
 	t.Run("should render operator-facing guidance for an OS argument-limit refusal", func(t *testing.T) {
+		t.Parallel()
+
 		// given: the sentinel wrapped the way the backend wraps it. Nothing
 		// about the diff caused this failure — the oversized argument is the
 		// SYSTEM prompt, assembled from the operator's rule corpus — so the
@@ -451,6 +489,8 @@ func TestBuildReviewFailedBody(t *testing.T) {
 	})
 
 	t.Run("should normalise a non-UTC input to UTC so the printed timestamp ends in Z", func(t *testing.T) {
+		t.Parallel()
+
 		// given: defensive — same contract as `buildReviewingMarkerBody`.
 		// Use `time.FixedZone` rather than `time.LoadLocation` (which reads
 		// `tzdata` at runtime and returns nil on hermetic images).
@@ -467,6 +507,8 @@ func TestBuildReviewFailedBody(t *testing.T) {
 	})
 
 	t.Run("should produce a readable body when the error is nil (defensive)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: callers always pass a non-nil error, but belt-and-
 		// suspenders — a nil must not render the literal `<nil>`.
 		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
@@ -480,6 +522,8 @@ func TestBuildReviewFailedBody(t *testing.T) {
 	})
 
 	t.Run("should stay bounded even when the error is huge (no raw echo)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a runaway backend that emits a 10 KB error. Because the
 		// body never echoes the raw error, the rendered body stays small
 		// regardless of the error size — the strongest form of the bound.
@@ -490,8 +534,12 @@ func TestBuildReviewFailedBody(t *testing.T) {
 		body := commands.BuildReviewFailedBody(ts, oversized, commands.ReviewFailureContext{})
 
 		// then
-		assert.Less(t, len(body), 1024,
-			"the body must not grow with the error size — the raw error is never echoed, so a runaway backend cannot flood the PR")
+		assert.Less(
+			t,
+			len(body),
+			1024,
+			"the body must not grow with the error size — the raw error is never echoed, so a runaway backend cannot flood the PR",
+		)
 		assert.NotContains(t, body, strings.Repeat("X", 100),
 			"none of the raw error content may appear in the body")
 	})
@@ -502,6 +550,8 @@ func TestBuildReviewFailedBody(t *testing.T) {
 	// another commit, which only grows the diff.
 
 	t.Run("should render dedicated 'too large' guidance for a context-window failure", func(t *testing.T) {
+		t.Parallel()
+
 		// given: the sentinel wrapped the way a backend + retry decorator wrap it
 		ts := time.Date(2026, 5, 1, 2, 51, 21, 0, time.UTC)
 		err := fmt.Errorf("%w (anthropic: prompt is too long)", support.ErrContextWindowExceeded)
@@ -519,12 +569,18 @@ func TestBuildReviewFailedBody(t *testing.T) {
 			"the diff size must be humanised so the scale is legible at a glance")
 		assert.Contains(t, body, "Split it into several smaller",
 			"the fix guidance must point at splitting the PR, the reliable remedy")
-		assert.Contains(t, body, "**Code Guru review",
-			"the body must carry the review-once marker so a too-large PR is not re-reviewed (and re-failed) on every push")
+		assert.Contains(
+			t,
+			body,
+			"**Code Guru review",
+			"the body must carry the review-once marker so a too-large PR is not re-reviewed (and re-failed) on every push",
+		)
 		assert.Contains(t, body, "Failed at 2026-05-01T02:51:21Z.")
 	})
 
 	t.Run("should NOT tell the author to retry or mention the bot on a too-large failure", func(t *testing.T) {
+		t.Parallel()
+
 		// given: retrying a too-large PR re-runs the identical failure, and
 		// "push a new commit" makes the diff bigger — both are wrong here.
 		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
@@ -544,6 +600,8 @@ func TestBuildReviewFailedBody(t *testing.T) {
 	})
 
 	t.Run("should omit the scale figures when the PR size is unknown", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a zero-value context (scale not measured) still renders a
 		// coherent, actionable body — just without the concrete numbers.
 		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
@@ -565,6 +623,8 @@ func TestBuildReviewFailedBody(t *testing.T) {
 	// point at the real remedies — never suggest retrying.
 
 	t.Run("should render dedicated content-safety guidance naming the category", func(t *testing.T) {
+		t.Parallel()
+
 		// given: the typed refusal wrapped the way a backend wraps it
 		ts := time.Date(2026, 5, 1, 2, 51, 21, 0, time.UTC)
 		err := fmt.Errorf("anthropic: %w", &support.ContentSafetyRefusalError{Category: "cyber"})
@@ -588,22 +648,27 @@ func TestBuildReviewFailedBody(t *testing.T) {
 		assert.Contains(t, body, "Failed at 2026-05-01T02:51:21Z.")
 	})
 
-	t.Run("should fall back to generic phrasing and never suggest retrying on an uncategorised refusal", func(t *testing.T) {
-		// given: a refusal with no category (e.g. OpenAI content_filter)
-		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
-		err := error(&support.ContentSafetyRefusalError{})
+	t.Run(
+		"should fall back to generic phrasing and never suggest retrying on an uncategorised refusal",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// when
-		body := commands.BuildReviewFailedBody(ts, err, commands.ReviewFailureContext{})
+			// given: a refusal with no category (e.g. OpenAI content_filter)
+			ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+			err := error(&support.ContentSafetyRefusalError{})
 
-		// then
-		assert.Contains(t, body, "flagged this change",
-			"an unknown/empty category must fall back to the generic phrase, not render an empty clause")
-		assert.NotContains(t, body, "@code-guru",
-			"a refused PR must not be told to mention the bot — that re-runs the same refusal")
-		assert.NotContains(t, body, "push a new commit",
-			"a refused PR must not be told to push more commits — the same content is re-evaluated")
-	})
+			// when
+			body := commands.BuildReviewFailedBody(ts, err, commands.ReviewFailureContext{})
+
+			// then
+			assert.Contains(t, body, "flagged this change",
+				"an unknown/empty category must fall back to the generic phrase, not render an empty clause")
+			assert.NotContains(t, body, "@code-guru",
+				"a refused PR must not be told to mention the bot — that re-runs the same refusal")
+			assert.NotContains(t, body, "push a new commit",
+				"a refused PR must not be told to push more commits — the same content is re-evaluated")
+		},
+	)
 }
 
 // TestReviewFailureContextLeadSentence pins the scale sentence that opens
@@ -720,6 +785,8 @@ func TestBuildReviewCompleteBody(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should render the completion notice with verdict, comment count and timestamp", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a typical AI review result — `request_changes`
 		// verdict with 3 inline comments. The body must surface
 		// each so the author can see the conclusion at a glance
@@ -743,11 +810,17 @@ func TestBuildReviewCompleteBody(t *testing.T) {
 			"the verdict must surface so the author knows the bot's conclusion")
 		assert.Contains(t, body, "3 inline comments",
 			"the comment count must surface so the author can locate the threads")
-		assert.Contains(t, body, "Completed at 2026-05-01T02:51:21Z.",
-			"the timestamp must be RFC 3339 UTC matching the marker's `Started at <ts>` shape so a reader can pair them")
+		assert.Contains(
+			t,
+			body,
+			"Completed at 2026-05-01T02:51:21Z.",
+			"the timestamp must be RFC 3339 UTC matching the marker's `Started at <ts>` shape so a reader can pair them",
+		)
 	})
 
 	t.Run("should pluralise the comment label correctly for exactly 1 inline comment", func(t *testing.T) {
+		t.Parallel()
+
 		// given: pluralisation is the kind of thing that's quiet
 		// until a reader notices "1 inline comments" looks broken.
 		// Pin "1 inline comment" / "0 inline comments" /
@@ -769,6 +842,8 @@ func TestBuildReviewCompleteBody(t *testing.T) {
 	})
 
 	t.Run("should render `0 inline comments` when the AI returned no findings", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a clean review — `verdict=approve` and zero
 		// inline findings. The completion notice must still post
 		// (it's the bot's "done" signal) and must read naturally.
@@ -785,6 +860,8 @@ func TestBuildReviewCompleteBody(t *testing.T) {
 	})
 
 	t.Run("should fall back to `comment` verdict when the result's verdict is empty", func(t *testing.T) {
+		t.Parallel()
+
 		// given: the AI parser sometimes yields an empty Verdict
 		// (e.g. malformed JSON repaired but missing the field).
 		// The completion notice must still render something
@@ -802,6 +879,8 @@ func TestBuildReviewCompleteBody(t *testing.T) {
 	})
 
 	t.Run("should normalise a non-UTC input to UTC so the printed timestamp ends in Z", func(t *testing.T) {
+		t.Parallel()
+
 		// given: defensive — same contract as the other body
 		// builders (per Copilot review on PR #102 thread
 		// `PRRT_kwDOJKAEo85-56Sq`). Use `time.FixedZone` rather
@@ -822,6 +901,8 @@ func TestBuildReviewCompleteBody(t *testing.T) {
 	})
 
 	t.Run("should not panic and produce a usable body when the result is nil (defensive)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: the production caller never passes nil, but a
 		// future refactor that, e.g., skips the AI call for trivial
 		// detection and still wires the completion notice could
@@ -837,73 +918,96 @@ func TestBuildReviewCompleteBody(t *testing.T) {
 		assert.Contains(t, body, "Code Guru review complete.")
 	})
 
-	t.Run("should count only inline (Line > 0) comments — PR-wide annotations don't inflate the count", func(t *testing.T) {
-		// given: a review with 2 inline (`Line > 0`) findings and
-		// 3 PR-wide annotations (`Line <= 0`). The body says
-		// "X inline comments", so only the inline ones count
-		// against that label — pinned per Copilot review on PR #104
-		// thread `PRRT_kwDOJKAEo85-6ErC`.
-		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
-		result := &entities.ReviewResult{
-			Verdict: "request_changes",
-			Comments: []entities.ReviewComment{
-				{FilePath: "a.go", Line: 1, Body: "inline 1"},
-				{FilePath: "b.go", Line: 5, Body: "inline 2"},
-				{FilePath: "c.go", Line: 0, Body: "PR-wide"},
-				{FilePath: "", Line: 0, Body: "PR-wide annotation"},
-				{FilePath: "d.go", Line: -1, Body: "negative-line PR-wide"},
-			},
-		}
+	t.Run(
+		"should count only inline (Line > 0) comments — PR-wide annotations don't inflate the count",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// when
-		body := commands.BuildReviewCompleteBody(ts, result)
+			// given: a review with 2 inline (`Line > 0`) findings and
+			// 3 PR-wide annotations (`Line <= 0`). The body says
+			// "X inline comments", so only the inline ones count
+			// against that label — pinned per Copilot review on PR #104
+			// thread `PRRT_kwDOJKAEo85-6ErC`.
+			ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+			result := &entities.ReviewResult{
+				Verdict: "request_changes",
+				Comments: []entities.ReviewComment{
+					{FilePath: "a.go", Line: 1, Body: "inline 1"},
+					{FilePath: "b.go", Line: 5, Body: "inline 2"},
+					{FilePath: "c.go", Line: 0, Body: "PR-wide"},
+					{FilePath: "", Line: 0, Body: "PR-wide annotation"},
+					{FilePath: "d.go", Line: -1, Body: "negative-line PR-wide"},
+				},
+			}
 
-		// then
-		assert.Contains(t, body, "2 inline comments.",
-			"only the two `Line > 0` comments must show up against the `inline` label")
-		assert.NotContains(t, body, "5 inline comments",
-			"the three PR-wide annotations must NOT inflate the count")
-	})
+			// when
+			body := commands.BuildReviewCompleteBody(ts, result)
 
-	t.Run("should include result.Summary as a separate paragraph when non-empty (trivial fast path)", func(t *testing.T) {
-		// given: a trivial-detector-shaped result. Every detector emits
-		// a Summary like the one below; when the trivial path posts its
-		// completion annotation, that rationale is the ONLY place the
-		// PR author sees why the bot reached the verdict.
-		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
-		result := &entities.ReviewResult{
-			Verdict: "approve",
-			Summary: "Documentation-only change detected (2 markdown files). Auto-approved by trivial PR policy.",
-		}
+			// then
+			assert.Contains(t, body, "2 inline comments.",
+				"only the two `Line > 0` comments must show up against the `inline` label")
+			assert.NotContains(t, body, "5 inline comments",
+				"the three PR-wide annotations must NOT inflate the count")
+		},
+	)
 
-		// when
-		body := commands.BuildReviewCompleteBody(ts, result)
+	t.Run(
+		"should include result.Summary as a separate paragraph when non-empty (trivial fast path)",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// then
-		assert.Contains(t, body, "**Code Guru review",
-			"the F2 review-once-gate marker must remain in the annotation body")
-		assert.Contains(t, body, result.Summary,
-			"the trivial detector's Summary must surface in the annotation body — without it the PR author only sees the verdict label and loses the rationale (especially important for `reject` verdicts like the bump-detector's missing-files message)")
-	})
+			// given: a trivial-detector-shaped result. Every detector emits
+			// a Summary like the one below; when the trivial path posts its
+			// completion annotation, that rationale is the ONLY place the
+			// PR author sees why the bot reached the verdict.
+			ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+			result := &entities.ReviewResult{
+				Verdict: "approve",
+				Summary: "Documentation-only change detected (2 markdown files). Auto-approved by trivial PR policy.",
+			}
 
-	t.Run("should preserve the legacy two-paragraph layout when result.Summary is empty (LLM path)", func(t *testing.T) {
-		// given: the LLM path typically leaves Summary empty because
-		// the rationale lands as inline comments. The completion
-		// annotation has shipped with two paragraphs ("review complete"
-		// + "Verdict: ... " followed by the timestamp) and we must not
-		// regress that layout while wiring the trivial-summary section.
-		ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
-		result := &entities.ReviewResult{Verdict: "comment"}
+			// when
+			body := commands.BuildReviewCompleteBody(ts, result)
 
-		// when
-		body := commands.BuildReviewCompleteBody(ts, result)
+			// then
+			assert.Contains(t, body, "**Code Guru review",
+				"the F2 review-once-gate marker must remain in the annotation body")
+			assert.Contains(
+				t,
+				body,
+				result.Summary,
+				"the trivial detector's Summary must surface in the annotation body — without it the PR author only sees the verdict label and loses the rationale (especially important for `reject` verdicts like the bump-detector's missing-files message)",
+			)
+		},
+	)
 
-		// then: between "comments." and "_Completed" there must be
-		// exactly one blank line — same as before this PR landed.
-		expected := "comments.\n\n_Completed at 2026-05-01T00:00:00Z._"
-		assert.Contains(t, body, expected,
-			"empty Summary must keep the original layout: a single blank line between the verdict line and the timestamp")
-	})
+	t.Run(
+		"should preserve the legacy two-paragraph layout when result.Summary is empty (LLM path)",
+		func(t *testing.T) {
+			t.Parallel()
+
+			// given: the LLM path typically leaves Summary empty because
+			// the rationale lands as inline comments. The completion
+			// annotation has shipped with two paragraphs ("review complete"
+			// + "Verdict: ... " followed by the timestamp) and we must not
+			// regress that layout while wiring the trivial-summary section.
+			ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+			result := &entities.ReviewResult{Verdict: "comment"}
+
+			// when
+			body := commands.BuildReviewCompleteBody(ts, result)
+
+			// then: between "comments." and "_Completed" there must be
+			// exactly one blank line — same as before this PR landed.
+			expected := "comments.\n\n_Completed at 2026-05-01T00:00:00Z._"
+			assert.Contains(
+				t,
+				body,
+				expected,
+				"empty Summary must keep the original layout: a single blank line between the verdict line and the timestamp",
+			)
+		},
+	)
 }
 
 // stubPRStatusGetter is a 1-method test double satisfying
@@ -915,7 +1019,11 @@ type stubPRStatusGetter struct {
 	calls  int
 }
 
-func (s *stubPRStatusGetter) GetPullRequestStatus(_ context.Context, _ forgeEntities.Repository, _ int) (string, error) {
+func (s *stubPRStatusGetter) GetPullRequestStatus(
+	_ context.Context,
+	_ forgeEntities.Repository,
+	_ int,
+) (string, error) {
 	s.calls++
 	return s.status, s.err
 }
@@ -938,8 +1046,16 @@ func TestIsPullRequestClosed(t *testing.T) {
 		{name: "should normalise leading/trailing whitespace (` merged `)", status: " merged ", want: true},
 		{name: "should return false for ADO `active`", status: "active", want: false},
 		{name: "should return false for GitHub `open`", status: "open", want: false},
-		{name: "should return false for an empty status (defensive — webhook payload sometimes ships empty)", status: "", want: false},
-		{name: "should return false for an unknown future enum value (`merging`) — defer to the worker", status: "merging", want: false},
+		{
+			name:   "should return false for an empty status (defensive — webhook payload sometimes ships empty)",
+			status: "",
+			want:   false,
+		},
+		{
+			name:   "should return false for an unknown future enum value (`merging`) — defer to the worker",
+			status: "merging",
+			want:   false,
+		},
 	}
 
 	for _, tc := range cases {
@@ -959,23 +1075,26 @@ func TestIsPullRequestClosed(t *testing.T) {
 		})
 	}
 
-	t.Run("should return false (proceed with post) when GetPullRequestStatus errors — best-effort contract", func(t *testing.T) {
-		// given: a transient ADO outage. The bot must NOT silently
-		// drop the review comments because the status check failed —
-		// posting on a closed PR is harmless (verified live on PR
-		// #NNNN), but skipping a legitimate post would be a
-		// regression. Pinned per task #43.
-		t.Parallel()
-		getter := &stubPRStatusGetter{err: errors.New("ADO 503 Service Unavailable")}
-		repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
+	t.Run(
+		"should return false (proceed with post) when GetPullRequestStatus errors — best-effort contract",
+		func(t *testing.T) {
+			// given: a transient ADO outage. The bot must NOT silently
+			// drop the review comments because the status check failed —
+			// posting on a closed PR is harmless (verified live on PR
+			// #NNNN), but skipping a legitimate post would be a
+			// regression. Pinned per task #43.
+			t.Parallel()
+			getter := &stubPRStatusGetter{err: errors.New("ADO 503 Service Unavailable")}
+			repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 
-		// when
-		got := commands.IsPullRequestClosed(context.Background(), getter, repo, 12)
+			// when
+			got := commands.IsPullRequestClosed(context.Background(), getter, repo, 12)
 
-		// then
-		assert.False(t, got, "a fetch failure must default to `not closed` so the caller proceeds with posting")
-		assert.Equal(t, 1, getter.calls)
-	})
+			// then
+			assert.False(t, got, "a fetch failure must default to `not closed` so the caller proceeds with posting")
+			assert.Equal(t, 1, getter.calls)
+		},
+	)
 }
 
 // recordingReviewProvider satisfies `forgeEntities.ReviewProvider` by
@@ -987,6 +1106,7 @@ func TestIsPullRequestClosed(t *testing.T) {
 // than as a silent stub.
 type recordingReviewProvider struct {
 	forgeEntities.ReviewProvider
+
 	calls                  []recordedPRComment
 	submissions            []forgeEntities.ReviewSubmission
 	submitErr              error
@@ -1248,7 +1368,13 @@ func TestMarkerHelpersForwardThreadStatusOption(t *testing.T) {
 			name: "should forward WithThreadStatus(closed) from postReviewFailedAnnotation",
 			invoke: func(rc *commands.ReviewCommand, p *recordingReviewProvider) {
 				commands.PostReviewFailedAnnotation(
-					rc, context.Background(), p, repo, prID, errors.New("claude crashed"), commands.ReviewFailureContext{},
+					rc,
+					context.Background(),
+					p,
+					repo,
+					prID,
+					errors.New("claude crashed"),
+					commands.ReviewFailureContext{},
 				)
 			},
 		},
@@ -1337,42 +1463,48 @@ func TestSubmitNativeReviewFlagGate(t *testing.T) {
 		assert.Equal(t, forgeEntities.ReviewVerdictRequestChanges, provider.submissions[0].Verdict)
 	})
 
-	t.Run("should map comment verdict to WaitingForAuthor so ADO surfaces vote=-5 and GitHub posts a COMMENT review", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should map comment verdict to WaitingForAuthor so ADO surfaces vote=-5 and GitHub posts a COMMENT review",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given
-		rc := commands.NewReviewCommand(nil, nil, nil, nil)
-		provider := &recordingReviewProvider{}
+			// given
+			rc := commands.NewReviewCommand(nil, nil, nil, nil)
+			provider := &recordingReviewProvider{}
 
-		// when
-		commands.SubmitNativeReview(rc, context.Background(), provider, repo, prID,
-			"comment", "FYI", commands.ReviewOptions{SubmitNativeReview: true})
+			// when
+			commands.SubmitNativeReview(rc, context.Background(), provider, repo, prID,
+				"comment", "FYI", commands.ReviewOptions{SubmitNativeReview: true})
 
-		// then
-		require.Len(t, provider.submissions, 1)
-		assert.Equal(t, forgeEntities.ReviewVerdictWaitingForAuthor, provider.submissions[0].Verdict)
-		assert.Equal(t, "FYI", provider.submissions[0].Body)
-	})
+			// then
+			require.Len(t, provider.submissions, 1)
+			assert.Equal(t, forgeEntities.ReviewVerdictWaitingForAuthor, provider.submissions[0].Verdict)
+			assert.Equal(t, "FYI", provider.submissions[0].Body)
+		},
+	)
 
-	t.Run("should map LLM-vocabulary request_changes verdict to RequestChanges (parser emits this, not 'reject')", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should map LLM-vocabulary request_changes verdict to RequestChanges (parser emits this, not 'reject')",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given
-		rc := commands.NewReviewCommand(nil, nil, nil, nil)
-		provider := &recordingReviewProvider{}
+			// given
+			rc := commands.NewReviewCommand(nil, nil, nil, nil)
+			provider := &recordingReviewProvider{}
 
-		// when
-		commands.SubmitNativeReview(rc, context.Background(), provider, repo, prID,
-			"request_changes", "needs work", commands.ReviewOptions{SubmitNativeReview: true})
+			// when
+			commands.SubmitNativeReview(rc, context.Background(), provider, repo, prID,
+				"request_changes", "needs work", commands.ReviewOptions{SubmitNativeReview: true})
 
-		// then: this is the verdict shape that was silently skipped before the
-		// mapper learned the LLM vocabulary — see the dev pod logs from
-		// 2026-05-01T21:13Z where verdict=request_changes never produced a
-		// "native review submission failed" warning AND never produced a vote.
-		require.Len(t, provider.submissions, 1)
-		assert.Equal(t, forgeEntities.ReviewVerdictRequestChanges, provider.submissions[0].Verdict)
-		assert.Equal(t, "needs work", provider.submissions[0].Body)
-	})
+			// then: this is the verdict shape that was silently skipped before the
+			// mapper learned the LLM vocabulary — see the dev pod logs from
+			// 2026-05-01T21:13Z where verdict=request_changes never produced a
+			// "native review submission failed" warning AND never produced a vote.
+			require.Len(t, provider.submissions, 1)
+			assert.Equal(t, forgeEntities.ReviewVerdictRequestChanges, provider.submissions[0].Verdict)
+			assert.Equal(t, "needs work", provider.submissions[0].Body)
+		},
+	)
 
 	t.Run("should swallow provider errors so the worker keeps going", func(t *testing.T) {
 		t.Parallel()
@@ -1402,8 +1534,8 @@ func TestExecuteSkipsDraftsByDefault(t *testing.T) {
 		provider := &recordingReviewProvider{}
 		repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 		pr := forgeEntities.PullRequestDetail{
-			PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "wip", URL: "https://example/pr/4242"},
-			IsDraft:     true,
+			ID: 4242, Title: "wip", URL: "https://example/pr/4242",
+			IsDraft: true,
 		}
 
 		// when
@@ -1432,8 +1564,8 @@ func TestExecuteSkipsDraftsByDefault(t *testing.T) {
 		}
 		repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 		pr := forgeEntities.PullRequestDetail{
-			PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "wip", URL: "https://example/pr/4242"},
-			IsDraft:     true,
+			ID: 4242, Title: "wip", URL: "https://example/pr/4242",
+			IsDraft: true,
 		}
 
 		// when
@@ -1444,10 +1576,18 @@ func TestExecuteSkipsDraftsByDefault(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.ErrorIs(t, err, expectedErr,
-			"with ReviewDrafts=true the draft branch must be bypassed; Execute must surface the deterministic provider error from GetPullRequestFiles")
+		require.ErrorIs(
+			t,
+			err,
+			expectedErr,
+			"with ReviewDrafts=true the draft branch must be bypassed; Execute must surface the deterministic provider error from GetPullRequestFiles",
+		)
 		assert.Nil(t, result)
-		assert.Empty(t, provider.submissions, "the command should stop on the deterministic provider error instead of skipping the draft")
+		assert.Empty(
+			t,
+			provider.submissions,
+			"the command should stop on the deterministic provider error instead of skipping the draft",
+		)
 	})
 }
 
@@ -1533,59 +1673,65 @@ func TestExecuteReviewOnceGate(t *testing.T) {
 
 	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 	pr := forgeEntities.PullRequestDetail{
-		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "feat", URL: "https://example/pr/4242"},
+		ID: 4242, Title: "feat", URL: "https://example/pr/4242",
 	}
 
-	t.Run("should skip when an existing review-complete marker is present and the user has not mentioned the bot", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should skip when an existing review-complete marker is present and the user has not mentioned the bot",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given
-		rc := commands.NewReviewCommand(nil, nil, nil, nil)
-		provider := &recordingReviewProvider{
-			existingComments: []forgeEntities.PullRequestComment{
-				{Body: "✅ **Code Guru review complete.** Verdict: `approve`"},
-			},
-		}
+			// given
+			rc := commands.NewReviewCommand(nil, nil, nil, nil)
+			provider := &recordingReviewProvider{
+				existingComments: []forgeEntities.PullRequestComment{
+					{Body: "✅ **Code Guru review complete.** Verdict: `approve`"},
+				},
+			}
 
-		// when
-		result, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{})
+			// when
+			result, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{})
 
-		// then
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		assert.Equal(t, "comment", result.Verdict)
-		assert.Contains(t, result.Summary, "already been reviewed")
-		assert.Empty(t, provider.calls, "no marker / annotation should fire when the gate skips the review")
-		assert.Empty(t, provider.submissions, "no native review should fire when the gate skips the review")
-	})
+			// then
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, "comment", result.Verdict)
+			assert.Contains(t, result.Summary, "already been reviewed")
+			assert.Empty(t, provider.calls, "no marker / annotation should fire when the gate skips the review")
+			assert.Empty(t, provider.submissions, "no native review should fire when the gate skips the review")
+		},
+	)
 
-	t.Run("should NOT skip when UserMentioned is true even with an existing review-complete marker", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should NOT skip when UserMentioned is true even with an existing review-complete marker",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given: same precondition as the previous row plus a user
-		// mention. The deterministic GetPullRequestFiles error proves
-		// Execute reached past the gate (the user-requested re-review
-		// went through).
-		expectedErr := errors.New("get pull request files failed")
-		rc := commands.NewReviewCommand(nil, nil, nil, nil)
-		provider := &recordingReviewProvider{
-			existingComments: []forgeEntities.PullRequestComment{
-				{Body: "✅ **Code Guru review complete.** Verdict: `approve`"},
-			},
-			getPullRequestFilesErr: expectedErr,
-		}
+			// given: same precondition as the previous row plus a user
+			// mention. The deterministic GetPullRequestFiles error proves
+			// Execute reached past the gate (the user-requested re-review
+			// went through).
+			expectedErr := errors.New("get pull request files failed")
+			rc := commands.NewReviewCommand(nil, nil, nil, nil)
+			provider := &recordingReviewProvider{
+				existingComments: []forgeEntities.PullRequestComment{
+					{Body: "✅ **Code Guru review complete.** Verdict: `approve`"},
+				},
+				getPullRequestFilesErr: expectedErr,
+			}
 
-		// when
-		result, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
-			UserMentioned: true,
-		})
+			// when
+			result, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+				UserMentioned: true,
+			})
 
-		// then
-		require.Error(t, err)
-		assert.ErrorIs(t, err, expectedErr,
-			"UserMentioned=true must bypass the review-once gate so the re-review reaches GetPullRequestFiles")
-		assert.Nil(t, result)
-	})
+			// then
+			require.Error(t, err)
+			require.ErrorIs(t, err, expectedErr,
+				"UserMentioned=true must bypass the review-once gate so the re-review reaches GetPullRequestFiles")
+			assert.Nil(t, result)
+		},
+	)
 
 	t.Run("should proceed when no marker is present", func(t *testing.T) {
 		t.Parallel()
@@ -1643,7 +1789,14 @@ func TestBuildConversation(t *testing.T) {
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
 				{ID: 1, Line: 10, FilePath: "internal/foo.go", Body: "[high] nil-check", Author: "code-guru[bot]"},
-				{ID: 2, Line: 10, FilePath: "internal/foo.go", Body: "we already handle that", Author: "alice", InReplyToID: 1},
+				{
+					ID:          2,
+					Line:        10,
+					FilePath:    "internal/foo.go",
+					Body:        "we already handle that",
+					Author:      "alice",
+					InReplyToID: 1,
+				},
 			},
 		}
 
@@ -1679,34 +1832,52 @@ func TestBuildConversation(t *testing.T) {
 		assert.Nil(t, got, "list error must degrade to nil so the re-review still runs")
 	})
 
-	t.Run("should keep threads anchored to files outside the live diff so the LLM can mark them outdated", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should keep threads anchored to files outside the live diff so the LLM can mark them outdated",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given: bot has prior comments on both a file in the current
-		// diff AND a file the PR no longer touches. Both must reach the
-		// prompt — the stale-file thread is precisely the case the
-		// `outdated` resolution status exists for, and dropping it at
-		// the conversation stage would deny the LLM the chance to
-		// auto-close it.
-		rc := commands.NewReviewCommand(nil, nil, nil, nil)
-		provider := &recordingReviewProvider{
-			existingComments: []forgeEntities.PullRequestComment{
-				{ID: 1, Line: 10, FilePath: "internal/foo.go", Body: "[high] live", Author: "code-guru[bot]"},
-				{ID: 2, Line: 20, FilePath: "internal/old.go", Body: "[high] stale anchor", Author: "code-guru[bot]"},
-			},
-		}
+			// given: bot has prior comments on both a file in the current
+			// diff AND a file the PR no longer touches. Both must reach the
+			// prompt — the stale-file thread is precisely the case the
+			// `outdated` resolution status exists for, and dropping it at
+			// the conversation stage would deny the LLM the chance to
+			// auto-close it.
+			rc := commands.NewReviewCommand(nil, nil, nil, nil)
+			provider := &recordingReviewProvider{
+				existingComments: []forgeEntities.PullRequestComment{
+					{ID: 1, Line: 10, FilePath: "internal/foo.go", Body: "[high] live", Author: "code-guru[bot]"},
+					{
+						ID:       2,
+						Line:     20,
+						FilePath: "internal/old.go",
+						Body:     "[high] stale anchor",
+						Author:   "code-guru[bot]",
+					},
+				},
+			}
 
-		// when
-		got := commands.BuildConversation(rc, context.Background(), provider, repo, prID,
-			commands.ReviewOptions{UserMentioned: true})
+			// when
+			got := commands.BuildConversation(rc, context.Background(), provider, repo, prID,
+				commands.ReviewOptions{UserMentioned: true})
 
-		// then
-		require.Len(t, got, 2, "every prior bot thread must reach the LLM regardless of whether its file is still in the latest diff — that is what enables the `outdated` resolution path")
-		paths := []string{got[0].FilePath, got[1].FilePath}
-		assert.Contains(t, paths, "internal/foo.go")
-		assert.Contains(t, paths, "internal/old.go",
-			"the stale-file thread must reach the prompt so the LLM can classify it as `outdated`; if it never appears in the conversation, the bot can never auto-close it")
-	})
+			// then
+			require.Len(
+				t,
+				got,
+				2,
+				"every prior bot thread must reach the LLM regardless of whether its file is still in the latest diff — that is what enables the `outdated` resolution path",
+			)
+			paths := []string{got[0].FilePath, got[1].FilePath}
+			assert.Contains(t, paths, "internal/foo.go")
+			assert.Contains(
+				t,
+				paths,
+				"internal/old.go",
+				"the stale-file thread must reach the prompt so the LLM can classify it as `outdated`; if it never appears in the conversation, the bot can never auto-close it",
+			)
+		},
+	)
 
 	t.Run("should recognise the bot under a custom service account via self-detection", func(t *testing.T) {
 		t.Parallel()
@@ -1721,9 +1892,27 @@ func TestBuildConversation(t *testing.T) {
 		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
-				{ID: 1, Line: 0, Author: "automation@example.com", Body: "✅ **Code Guru review complete.**\n\nVerdict: `request_changes`."},
-				{ID: 2, Line: 10, FilePath: "internal/foo.go", Author: "automation@example.com", Body: "[high] this YAML value must be quoted"},
-				{ID: 3, Line: 10, FilePath: "internal/foo.go", Author: "alice", Body: "this file is auto-generated; the quoting cannot be configured", InReplyToID: 2},
+				{
+					ID:     1,
+					Line:   0,
+					Author: "automation@example.com",
+					Body:   "✅ **Code Guru review complete.**\n\nVerdict: `request_changes`.",
+				},
+				{
+					ID:       2,
+					Line:     10,
+					FilePath: "internal/foo.go",
+					Author:   "automation@example.com",
+					Body:     "[high] this YAML value must be quoted",
+				},
+				{
+					ID:          3,
+					Line:        10,
+					FilePath:    "internal/foo.go",
+					Author:      "alice",
+					Body:        "this file is auto-generated; the quoting cannot be configured",
+					InReplyToID: 2,
+				},
 			},
 		}
 
@@ -1732,9 +1921,19 @@ func TestBuildConversation(t *testing.T) {
 			commands.ReviewOptions{UserMentioned: true})
 
 		// then
-		require.Len(t, got, 1, "the bot's own thread must be recognised even when it posts under a non-`code-guru` account")
+		require.Len(
+			t,
+			got,
+			1,
+			"the bot's own thread must be recognised even when it posts under a non-`code-guru` account",
+		)
 		assert.Equal(t, "internal/foo.go", got[0].FilePath)
-		require.Len(t, got[0].Comments, 2, "the author's reply must be carried so the LLM can judge the correction instead of re-posting")
+		require.Len(
+			t,
+			got[0].Comments,
+			2,
+			"the author's reply must be carried so the LLM can judge the correction instead of re-posting",
+		)
 		assert.Equal(t, "automation@example.com", got[0].Comments[0].Author)
 		assert.Equal(t, "alice", got[0].Comments[1].Author)
 	})
@@ -1749,8 +1948,21 @@ func TestBuildConversation(t *testing.T) {
 		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{
 			existingComments: []forgeEntities.PullRequestComment{
-				{ID: 1, Line: 10, FilePath: "internal/foo.go", Author: "automation@example.com", Body: "[high] nil-check"},
-				{ID: 2, Line: 10, FilePath: "internal/foo.go", Author: "alice", Body: "fixed in latest push", InReplyToID: 1},
+				{
+					ID:       1,
+					Line:     10,
+					FilePath: "internal/foo.go",
+					Author:   "automation@example.com",
+					Body:     "[high] nil-check",
+				},
+				{
+					ID:          2,
+					Line:        10,
+					FilePath:    "internal/foo.go",
+					Author:      "alice",
+					Body:        "fixed in latest push",
+					InReplyToID: 1,
+				},
 			},
 		}
 
@@ -1814,7 +2026,7 @@ func TestExecuteRunsTrivialDetectionRegardlessOfCIPassed(t *testing.T) {
 
 	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 	pr := forgeEntities.PullRequestDetail{
-		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "docs", URL: "https://example/pr/4242"},
+		ID: 4242, Title: "docs", URL: "https://example/pr/4242",
 	}
 
 	t.Run("should return the trivial verdict when CIPassed is false", func(t *testing.T) {
@@ -1845,8 +2057,12 @@ func TestExecuteRunsTrivialDetectionRegardlessOfCIPassed(t *testing.T) {
 		assert.Equal(t, "approve", result.Verdict,
 			"Execute must propagate the trivial detector's verdict even with CIPassed=false")
 		assert.Equal(t, "trivial", result.Summary)
-		assert.Equal(t, []string{"CHANGELOG.md"}, registry.lastFiles,
-			"the leading `/` Azure DevOps prefixes onto every path must be stripped before the detector sees it — otherwise bump detectors miss their required-files match against `CHANGELOG.md`")
+		assert.Equal(
+			t,
+			[]string{"CHANGELOG.md"},
+			registry.lastFiles,
+			"the leading `/` Azure DevOps prefixes onto every path must be stripped before the detector sees it — otherwise bump detectors miss their required-files match against `CHANGELOG.md`",
+		)
 	})
 }
 
@@ -1870,7 +2086,7 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 
 	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 	pr := forgeEntities.PullRequestDetail{
-		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "docs", URL: "https://example/pr/4242"},
+		ID: 4242, Title: "docs", URL: "https://example/pr/4242",
 	}
 
 	newCmd := func(verdict string) (*commands.ReviewCommand, *recordingReviewProvider) {
@@ -1883,164 +2099,231 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 		return rc, provider
 	}
 
-	t.Run("should post exactly one PR-wide comment carrying the `**Code Guru review` F2 marker on approve", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should post exactly one PR-wide comment carrying the `**Code Guru review` F2 marker on approve",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given
-		rc, provider := newCmd("approve")
+			// given
+			rc, provider := newCmd("approve")
 
-		// when
-		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
-			SubmitNativeReview: true,
-		})
+			// when
+			_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+				SubmitNativeReview: true,
+			})
 
-		// then
-		require.NoError(t, err)
-		require.Len(t, provider.calls, 1, "exactly one PR-wide comment must be posted on a trivial-approve verdict — duplicates flooded the smoke PR before this contract pinned it")
-		assert.Contains(t, provider.calls[0].body, "**Code Guru review",
-			"the trivial-path comment MUST contain the F2 review-once-gate marker substring; without it the second ADO `pullrequest.updated` delivery re-runs the trivial path and posts again")
-		assert.NotContains(t, provider.calls[0].body, "[Auto-Approved]",
-			"the legacy `[Auto-Approved]` prefix has been replaced by the unified completion annotation — its presence would mean the dedup contract regressed")
-	})
+			// then
+			require.NoError(t, err)
+			require.Len(
+				t,
+				provider.calls,
+				1,
+				"exactly one PR-wide comment must be posted on a trivial-approve verdict — duplicates flooded the smoke PR before this contract pinned it",
+			)
+			assert.Contains(
+				t,
+				provider.calls[0].body,
+				"**Code Guru review",
+				"the trivial-path comment MUST contain the F2 review-once-gate marker substring; without it the second ADO `pullrequest.updated` delivery re-runs the trivial path and posts again",
+			)
+			assert.NotContains(
+				t,
+				provider.calls[0].body,
+				"[Auto-Approved]",
+				"the legacy `[Auto-Approved]` prefix has been replaced by the unified completion annotation — its presence would mean the dedup contract regressed",
+			)
+		},
+	)
 
-	t.Run("should submit a native review with empty body (vote-only) so it does not duplicate the annotation", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should submit a native review with empty body (vote-only) so it does not duplicate the annotation",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given
-		rc, provider := newCmd("approve")
+			// given
+			rc, provider := newCmd("approve")
 
-		// when
-		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
-			SubmitNativeReview: true,
-		})
+			// when
+			_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+				SubmitNativeReview: true,
+			})
 
-		// then
-		require.NoError(t, err)
-		require.Len(t, provider.submissions, 1, "native review submission still records the reviewer-panel vote")
-		assert.Empty(t, provider.submissions[0].Body,
-			"the native submission's body MUST be empty so gitforge does not post the trivial summary as a second PR-wide comment alongside the annotation")
-	})
+			// then
+			require.NoError(t, err)
+			require.Len(t, provider.submissions, 1, "native review submission still records the reviewer-panel vote")
+			assert.Empty(
+				t,
+				provider.submissions[0].Body,
+				"the native submission's body MUST be empty so gitforge does not post the trivial summary as a second PR-wide comment alongside the annotation",
+			)
+		},
+	)
 
-	t.Run("should call MergePullRequest with the configured strategy and NO bypass when only TrivialAutoMerge is set", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should call MergePullRequest with the configured strategy and NO bypass when only TrivialAutoMerge is set",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given
-		rc, provider := newCmd("approve")
+			// given
+			rc, provider := newCmd("approve")
 
-		// when
-		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
-			TrivialAutoMerge:     true,
-			TrivialMergeStrategy: "squash",
-		})
+			// when
+			_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+				TrivialAutoMerge:     true,
+				TrivialMergeStrategy: "squash",
+			})
 
-		// then
-		require.NoError(t, err)
-		require.Len(t, provider.merges, 1, "auto-merge must fire on a trivial-approve verdict when the operator opted in")
-		assert.Equal(t, 4242, provider.merges[0].prID)
-		assert.Equal(t, "squash", provider.merges[0].strategy,
-			"the configured merge strategy must reach gitforge unchanged — empty falls back to the platform default, but `squash` is an explicit operator choice")
-		assert.False(t, provider.merges[0].bypassPolicy,
-			"TrivialAutoMerge alone MUST default to polite-merge: bypass requires the bot to hold the platform-level `Bypass policies when completing pull requests` permission, so flipping bypass on by default would turn previously-working auto-merges into hard 403s in environments where the bot has merge but not bypass permission")
-	})
+			// then
+			require.NoError(t, err)
+			require.Len(
+				t,
+				provider.merges,
+				1,
+				"auto-merge must fire on a trivial-approve verdict when the operator opted in",
+			)
+			assert.Equal(t, 4242, provider.merges[0].prID)
+			assert.Equal(
+				t,
+				"squash",
+				provider.merges[0].strategy,
+				"the configured merge strategy must reach gitforge unchanged — empty falls back to the platform default, but `squash` is an explicit operator choice",
+			)
+			assert.False(
+				t,
+				provider.merges[0].bypassPolicy,
+				"TrivialAutoMerge alone MUST default to polite-merge: bypass requires the bot to hold the platform-level `Bypass policies when completing pull requests` permission, so flipping bypass on by default would turn previously-working auto-merges into hard 403s in environments where the bot has merge but not bypass permission",
+			)
+		},
+	)
 
-	t.Run("should call MergePullRequest with bypass-policy when both TrivialAutoMerge and TrivialBypassPolicy are set", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should call MergePullRequest with bypass-policy when both TrivialAutoMerge and TrivialBypassPolicy are set",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given
-		rc, provider := newCmd("approve")
+			// given
+			rc, provider := newCmd("approve")
 
-		// when
-		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
-			TrivialAutoMerge:     true,
-			TrivialMergeStrategy: "rebaseMerge",
-			TrivialBypassPolicy:  true,
-		})
+			// when
+			_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+				TrivialAutoMerge:     true,
+				TrivialMergeStrategy: "rebaseMerge",
+				TrivialBypassPolicy:  true,
+			})
 
-		// then
-		require.NoError(t, err)
-		require.Len(t, provider.merges, 1)
-		assert.Equal(t, "rebaseMerge", provider.merges[0].strategy)
-		assert.True(t, provider.merges[0].bypassPolicy,
-			"TrivialBypassPolicy=true MUST forward gitforge.WithBypassPolicy so the merge call carries `bypassPolicy=true` — required for repos with `Required reviewers` policies that the bot itself cannot satisfy")
-		assert.NotEmpty(t, provider.merges[0].bypassReason,
-			"the bypass reason MUST be non-empty so it lands in the ADO audit trail (ADO rejects empty `bypassReason` strings)")
-	})
+			// then
+			require.NoError(t, err)
+			require.Len(t, provider.merges, 1)
+			assert.Equal(t, "rebaseMerge", provider.merges[0].strategy)
+			assert.True(
+				t,
+				provider.merges[0].bypassPolicy,
+				"TrivialBypassPolicy=true MUST forward gitforge.WithBypassPolicy so the merge call carries `bypassPolicy=true` — required for repos with `Required reviewers` policies that the bot itself cannot satisfy",
+			)
+			assert.NotEmpty(
+				t,
+				provider.merges[0].bypassReason,
+				"the bypass reason MUST be non-empty so it lands in the ADO audit trail (ADO rejects empty `bypassReason` strings)",
+			)
+		},
+	)
 
-	t.Run("should call MergePullRequest with delete-source-branch when TrivialAutoMerge and TrivialDeleteSourceBranch are set", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should call MergePullRequest with delete-source-branch when TrivialAutoMerge and TrivialDeleteSourceBranch are set",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given
-		rc, provider := newCmd("approve")
+			// given
+			rc, provider := newCmd("approve")
 
-		// when
-		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
-			TrivialAutoMerge:          true,
-			TrivialMergeStrategy:      "squash",
-			TrivialDeleteSourceBranch: true,
-		})
+			// when
+			_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+				TrivialAutoMerge:          true,
+				TrivialMergeStrategy:      "squash",
+				TrivialDeleteSourceBranch: true,
+			})
 
-		// then
-		require.NoError(t, err)
-		require.Len(t, provider.merges, 1)
-		assert.True(t, provider.merges[0].deleteSourceBranch,
-			"TrivialDeleteSourceBranch=true MUST forward gitforge.WithDeleteSourceBranch so the source branch is removed after the auto-merge completes")
-	})
+			// then
+			require.NoError(t, err)
+			require.Len(t, provider.merges, 1)
+			assert.True(
+				t,
+				provider.merges[0].deleteSourceBranch,
+				"TrivialDeleteSourceBranch=true MUST forward gitforge.WithDeleteSourceBranch so the source branch is removed after the auto-merge completes",
+			)
+		},
+	)
 
-	t.Run("should NOT pass delete-source-branch when TrivialDeleteSourceBranch is false even though TrivialAutoMerge fires", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should NOT pass delete-source-branch when TrivialDeleteSourceBranch is false even though TrivialAutoMerge fires",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given: an operator who set `delete_source_branch: false` wants the
-		// branch kept after the merge, so the option must not leak through.
-		rc, provider := newCmd("approve")
+			// given: an operator who set `delete_source_branch: false` wants the
+			// branch kept after the merge, so the option must not leak through.
+			rc, provider := newCmd("approve")
 
-		// when
-		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
-			TrivialAutoMerge:          true,
-			TrivialDeleteSourceBranch: false,
-		})
+			// when
+			_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+				TrivialAutoMerge:          true,
+				TrivialDeleteSourceBranch: false,
+			})
 
-		// then
-		require.NoError(t, err)
-		require.Len(t, provider.merges, 1, "the merge still fires; only the branch-deletion cleanup is suppressed")
-		assert.False(t, provider.merges[0].deleteSourceBranch,
-			"TrivialDeleteSourceBranch=false MUST NOT forward WithDeleteSourceBranch, so an operator opt-out keeps the source branch")
-	})
+			// then
+			require.NoError(t, err)
+			require.Len(t, provider.merges, 1, "the merge still fires; only the branch-deletion cleanup is suppressed")
+			assert.False(
+				t,
+				provider.merges[0].deleteSourceBranch,
+				"TrivialDeleteSourceBranch=false MUST NOT forward WithDeleteSourceBranch, so an operator opt-out keeps the source branch",
+			)
+		},
+	)
 
-	t.Run("should NOT pass delete-source-branch when TrivialDeleteSourceBranch is set without TrivialAutoMerge (the merge call never fires)", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should NOT pass delete-source-branch when TrivialDeleteSourceBranch is set without TrivialAutoMerge (the merge call never fires)",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given: like bypass, delete-source-branch is meaningless without a
-		// merge to attach it to.
-		rc, provider := newCmd("approve")
+			// given: like bypass, delete-source-branch is meaningless without a
+			// merge to attach it to.
+			rc, provider := newCmd("approve")
 
-		// when
-		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
-			TrivialDeleteSourceBranch: true,
-		})
+			// when
+			_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+				TrivialDeleteSourceBranch: true,
+			})
 
-		// then
-		require.NoError(t, err)
-		assert.Empty(t, provider.merges,
-			"delete-source-branch alone is a no-op — the gate that fires MergePullRequest is TrivialAutoMerge")
-	})
+			// then
+			require.NoError(t, err)
+			assert.Empty(t, provider.merges,
+				"delete-source-branch alone is a no-op — the gate that fires MergePullRequest is TrivialAutoMerge")
+		},
+	)
 
-	t.Run("should NOT pass bypass-policy when TrivialBypassPolicy is set without TrivialAutoMerge (the merge call never fires)", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should NOT pass bypass-policy when TrivialBypassPolicy is set without TrivialAutoMerge (the merge call never fires)",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given: TrivialBypassPolicy without TrivialAutoMerge is a
-		// no-op because there is no merge call to apply the option to.
-		rc, provider := newCmd("approve")
+			// given: TrivialBypassPolicy without TrivialAutoMerge is a
+			// no-op because there is no merge call to apply the option to.
+			rc, provider := newCmd("approve")
 
-		// when
-		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
-			TrivialBypassPolicy: true,
-		})
+			// when
+			_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+				TrivialBypassPolicy: true,
+			})
 
-		// then
-		require.NoError(t, err)
-		assert.Empty(t, provider.merges,
-			"TrivialBypassPolicy alone is a no-op — the gate that fires `MergePullRequest` is `TrivialAutoMerge`, so without it the bypass setting has nothing to apply against")
-	})
+			// then
+			require.NoError(t, err)
+			assert.Empty(
+				t,
+				provider.merges,
+				"TrivialBypassPolicy alone is a no-op — the gate that fires `MergePullRequest` is `TrivialAutoMerge`, so without it the bypass setting has nothing to apply against",
+			)
+		},
+	)
 
 	t.Run("should NOT call MergePullRequest when TrivialAutoMerge=false (the default)", func(t *testing.T) {
 		t.Parallel()
@@ -2053,8 +2336,11 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 
 		// then
 		require.NoError(t, err)
-		assert.Empty(t, provider.merges,
-			"auto-merge is opt-in by design; the default config must NEVER complete a PR cross-system without operator consent")
+		assert.Empty(
+			t,
+			provider.merges,
+			"auto-merge is opt-in by design; the default config must NEVER complete a PR cross-system without operator consent",
+		)
 	})
 
 	t.Run("should NOT call MergePullRequest when verdict=reject even with TrivialAutoMerge=true", func(t *testing.T) {
@@ -2070,8 +2356,11 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 
 		// then
 		require.NoError(t, err)
-		assert.Empty(t, provider.merges,
-			"auto-merge fires only on the approve verdict — a trivial detector that rejects (e.g. an incomplete bump per `.autobump.yaml`) must never auto-merge")
+		assert.Empty(
+			t,
+			provider.merges,
+			"auto-merge fires only on the approve verdict — a trivial detector that rejects (e.g. an incomplete bump per `.autobump.yaml`) must never auto-merge",
+		)
 	})
 
 	t.Run("should auto-merge when the PR author is in the allowlist", func(t *testing.T) {
@@ -2081,8 +2370,8 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 		// account that the operator allow-listed.
 		rc, provider := newCmd("approve")
 		botPR := forgeEntities.PullRequestDetail{
-			PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "deps", URL: "https://example/pr/4242"},
-			Author:      "automation@example.com",
+			ID: 4242, Title: "deps", URL: "https://example/pr/4242",
+			Author: "automation@example.com",
 		}
 
 		// when
@@ -2097,34 +2386,40 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 			"a trivial-approve PR from an allow-listed automation author must auto-merge")
 	})
 
-	t.Run("should NOT auto-merge when the PR author is not in the allowlist (e.g. a human docs PR)", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should NOT auto-merge when the PR author is not in the allowlist (e.g. a human docs PR)",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given: same trivial-approve verdict, but the PR was opened by a
-		// human whose account is NOT in the allowlist. Triviality makes it
-		// eligible; the allowlist withholds the unattended merge so a human
-		// still merges it — the whole point of this gate.
-		rc, provider := newCmd("approve")
-		humanPR := forgeEntities.PullRequestDetail{
-			PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "docs", URL: "https://example/pr/4242"},
-			Author:      "alice@example.com",
-		}
+			// given: same trivial-approve verdict, but the PR was opened by a
+			// human whose account is NOT in the allowlist. Triviality makes it
+			// eligible; the allowlist withholds the unattended merge so a human
+			// still merges it — the whole point of this gate.
+			rc, provider := newCmd("approve")
+			humanPR := forgeEntities.PullRequestDetail{
+				ID: 4242, Title: "docs", URL: "https://example/pr/4242",
+				Author: "alice@example.com",
+			}
 
-		// when
-		_, err := rc.Execute(context.Background(), provider, repo, humanPR, commands.ReviewOptions{
-			SubmitNativeReview:      true,
-			TrivialAutoMerge:        true,
-			TrivialBypassPolicy:     true,
-			TrivialAutoMergeAuthors: []string{"automation@example.com"},
-		})
+			// when
+			_, err := rc.Execute(context.Background(), provider, repo, humanPR, commands.ReviewOptions{
+				SubmitNativeReview:      true,
+				TrivialAutoMerge:        true,
+				TrivialBypassPolicy:     true,
+				TrivialAutoMergeAuthors: []string{"automation@example.com"},
+			})
 
-		// then
-		require.NoError(t, err)
-		assert.Empty(t, provider.merges,
-			"a trivial PR from a non-allow-listed (human) author MUST NOT be auto-merged even with bypass on — it is approved and left for a human to merge")
-		require.Len(t, provider.submissions, 1,
-			"the PR is still reviewed and voted on; only the merge is withheld")
-	})
+			// then
+			require.NoError(t, err)
+			assert.Empty(
+				t,
+				provider.merges,
+				"a trivial PR from a non-allow-listed (human) author MUST NOT be auto-merged even with bypass on — it is approved and left for a human to merge",
+			)
+			require.Len(t, provider.submissions, 1,
+				"the PR is still reviewed and voted on; only the merge is withheld")
+		},
+	)
 
 	t.Run("should match the author allowlist case-insensitively", func(t *testing.T) {
 		t.Parallel()
@@ -2133,8 +2428,8 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 		// author (account identities are not case-sensitive).
 		rc, provider := newCmd("approve")
 		botPR := forgeEntities.PullRequestDetail{
-			PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "deps", URL: "https://example/pr/4242"},
-			Author:      "Automation@Example.com",
+			ID: 4242, Title: "deps", URL: "https://example/pr/4242",
+			Author: "Automation@Example.com",
 		}
 
 		// when
@@ -2145,8 +2440,12 @@ func TestTrivialFastPathPostsSingleMarkerAndOptionalMerge(t *testing.T) {
 
 		// then
 		require.NoError(t, err)
-		require.Len(t, provider.merges, 1,
-			"author matching must be case-insensitive so a casing difference between config and the provider's author string does not silently disable auto-merge")
+		require.Len(
+			t,
+			provider.merges,
+			1,
+			"author matching must be case-insensitive so a casing difference between config and the provider's author string does not silently disable auto-merge",
+		)
 	})
 }
 
@@ -2166,7 +2465,7 @@ func TestExecuteLLMPathSubmitsNativeReviewWithEmptyBody(t *testing.T) {
 
 	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 	pr := forgeEntities.PullRequestDetail{
-		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "feat", URL: "https://example/pr/4242"},
+		ID: 4242, Title: "feat", URL: "https://example/pr/4242",
 	}
 
 	t.Run("should submit native review with empty body and let the annotation carry the summary", func(t *testing.T) {
@@ -2201,8 +2500,11 @@ func TestExecuteLLMPathSubmitsNativeReviewWithEmptyBody(t *testing.T) {
 		// then
 		require.NoError(t, err)
 		require.Len(t, provider.submissions, 1, "native review submission still records the reviewer-panel vote")
-		assert.Empty(t, provider.submissions[0].Body,
-			"the native submission's body MUST be empty so gitforge does not post the LLM summary as a second PR-wide comment alongside the completion annotation. Without this contract, every LLM review left a duplicate summary on the PR.")
+		assert.Empty(
+			t,
+			provider.submissions[0].Body,
+			"the native submission's body MUST be empty so gitforge does not post the LLM summary as a second PR-wide comment alongside the completion annotation. Without this contract, every LLM review left a duplicate summary on the PR.",
+		)
 
 		// also: the annotation body MUST still contain the summary so
 		// the rationale is visible exactly once.
@@ -2217,10 +2519,18 @@ func TestExecuteLLMPathSubmitsNativeReviewWithEmptyBody(t *testing.T) {
 			}
 		}
 		require.NotEmpty(t, annotationBody, "the completion annotation must still be posted")
-		assert.Contains(t, annotationBody, ai.Result.Summary,
-			"the annotation MUST carry the LLM summary so the rationale is visible — without this the empty-body native submission would erase the rationale entirely")
-		assert.Equal(t, 1, summaryOccurrences,
-			"the LLM summary text MUST appear in exactly ONE PR-wide comment (the annotation). The standalone summary post that `postComments` used to emit on no-inline-comments reviews is removed in favour of letting the annotation be the single source of truth — without this gate we'd drift back into the duplicate-summary failure mode the live PR surfaced.")
+		assert.Contains(
+			t,
+			annotationBody,
+			ai.Result.Summary,
+			"the annotation MUST carry the LLM summary so the rationale is visible — without this the empty-body native submission would erase the rationale entirely",
+		)
+		assert.Equal(
+			t,
+			1,
+			summaryOccurrences,
+			"the LLM summary text MUST appear in exactly ONE PR-wide comment (the annotation). The standalone summary post that `postComments` used to emit on no-inline-comments reviews is removed in favour of letting the annotation be the single source of truth — without this gate we'd drift back into the duplicate-summary failure mode the live PR surfaced.",
+		)
 	})
 }
 
@@ -2272,25 +2582,53 @@ func TestApplyThreadResolutions(t *testing.T) {
 		provider := &recordingReviewProvider{}
 		resolutions := []entities.ThreadResolution{
 			{FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "Diff adds the nil check."},
-			{FilePath: "internal/bar.go", Line: 20, Status: "outstanding", Explanation: "Latest diff still references the global."},
+			{
+				FilePath:    "internal/bar.go",
+				Line:        20,
+				Status:      "outstanding",
+				Explanation: "Latest diff still references the global.",
+			},
 		}
 
 		// when
-		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, fixedThreads, resolutions)
+		handled := commands.ApplyThreadResolutions(
+			rc,
+			context.Background(),
+			provider,
+			repo,
+			prID,
+			fixedThreads,
+			resolutions,
+		)
 
 		// then: one reply per resolution, each anchored on the original
 		// thread's file:line so the user sees the bot engaging with the
 		// existing thread instead of opening a parallel comment.
-		require.Len(t, provider.replies, 2,
-			"there must be exactly one reply per ThreadResolution — duplicate replies would re-create the flooding the resolution path is designed to fix")
-		assert.Empty(t, provider.threadComments,
-			"a thread with a usable ThreadID must be replied to IN-THREAD (ReplyToThread), never as a new same-line comment — that fragmentation is what this feature removes")
+		require.Len(
+			t,
+			provider.replies,
+			2,
+			"there must be exactly one reply per ThreadResolution — duplicate replies would re-create the flooding the resolution path is designed to fix",
+		)
+		assert.Empty(
+			t,
+			provider.threadComments,
+			"a thread with a usable ThreadID must be replied to IN-THREAD (ReplyToThread), never as a new same-line comment — that fragmentation is what this feature removes",
+		)
 		assert.Equal(t, 111, provider.replies[0].threadID,
 			"the reply must nest in the resolved thread (#111), not a new thread on the same line")
-		assert.Contains(t, provider.replies[0].body, "Resolved",
-			"the resolved-reply body must carry the explicit Resolved headline so the PR author can tell at a glance the bot considers this addressed")
-		assert.Contains(t, provider.replies[0].body, "Diff adds the nil check.",
-			"the LLM's explanation must surface in the reply body — without it the user has the verdict but no rationale")
+		assert.Contains(
+			t,
+			provider.replies[0].body,
+			"Resolved",
+			"the resolved-reply body must carry the explicit Resolved headline so the PR author can tell at a glance the bot considers this addressed",
+		)
+		assert.Contains(
+			t,
+			provider.replies[0].body,
+			"Diff adds the nil check.",
+			"the LLM's explanation must surface in the reply body — without it the user has the verdict but no rationale",
+		)
 		assert.Equal(t, 222, provider.replies[1].threadID,
 			"the outstanding reply must nest in thread #222")
 		assert.Contains(t, provider.replies[1].body, "outstanding",
@@ -2299,12 +2637,20 @@ func TestApplyThreadResolutions(t *testing.T) {
 		// only the `resolved` thread should auto-close — `outstanding`
 		// keeps the thread `active` since the bot is restating the
 		// concern, not closing the loop.
-		require.Len(t, provider.threadStatusUpdates, 1,
-			"only the resolved/outdated resolutions should call UpdatePullRequestThreadStatus; outstanding leaves the thread active")
+		require.Len(
+			t,
+			provider.threadStatusUpdates,
+			1,
+			"only the resolved/outdated resolutions should call UpdatePullRequestThreadStatus; outstanding leaves the thread active",
+		)
 		assert.Equal(t, 111, provider.threadStatusUpdates[0].threadID,
 			"the auto-close must target the resolved thread, not the outstanding one")
-		assert.Equal(t, "fixed", provider.threadStatusUpdates[0].status,
-			"`resolved` must map to the platform `fixed` state — that is what ADO renders as a closed-with-resolution thread")
+		assert.Equal(
+			t,
+			"fixed",
+			provider.threadStatusUpdates[0].status,
+			"`resolved` must map to the platform `fixed` state — that is what ADO renders as a closed-with-resolution thread",
+		)
 
 		// the returned anchor set must only carry CLOSED-thread
 		// anchors — `outstanding` keeps the prior thread active, and a
@@ -2313,10 +2659,18 @@ func TestApplyThreadResolutions(t *testing.T) {
 		// aggressive than the duplicate-guard the dedup gate is meant
 		// to be. With `resolved` + `outstanding` here, only the
 		// `resolved` anchor (`internal/foo.go:10`) must be in the set.
-		require.Len(t, handled, 1,
-			"the dedup gate must drop new comments only on anchors whose prior thread is now closed; outstanding anchors must remain free for distinct new findings")
+		require.Len(
+			t,
+			handled,
+			1,
+			"the dedup gate must drop new comments only on anchors whose prior thread is now closed; outstanding anchors must remain free for distinct new findings",
+		)
 		_, ok := handled["internal/foo.go:10"]
-		assert.True(t, ok, "the resolved-status anchor must be in the dedup gate so a duplicate of the same finding gets suppressed")
+		assert.True(
+			t,
+			ok,
+			"the resolved-status anchor must be in the dedup gate so a duplicate of the same finding gets suppressed",
+		)
 	})
 
 	t.Run("should map outdated to closed and auto-close the thread", func(t *testing.T) {
@@ -2326,11 +2680,24 @@ func TestApplyThreadResolutions(t *testing.T) {
 		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 		resolutions := []entities.ThreadResolution{
-			{FilePath: "internal/foo.go", Line: 10, Status: "outdated", Explanation: "The function in question was deleted."},
+			{
+				FilePath:    "internal/foo.go",
+				Line:        10,
+				Status:      "outdated",
+				Explanation: "The function in question was deleted.",
+			},
 		}
 
 		// when
-		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, fixedThreads, resolutions)
+		handled := commands.ApplyThreadResolutions(
+			rc,
+			context.Background(),
+			provider,
+			repo,
+			prID,
+			fixedThreads,
+			resolutions,
+		)
 
 		// then
 		require.Len(t, provider.replies, 1)
@@ -2357,19 +2724,44 @@ func TestApplyThreadResolutions(t *testing.T) {
 				Comments: []entities.ReviewMessage{{Author: "code-guru[bot]", Body: "[high] nil-check"}},
 			},
 			{
-				FilePath: "internal/foo.go", Line: 10, ThreadID: 222, RootCommentID: 5,
-				Comments: []entities.ReviewMessage{{Author: "code-guru[bot]", Body: "[medium] separate concern on the same line"}},
+				FilePath:      "internal/foo.go",
+				Line:          10,
+				ThreadID:      222,
+				RootCommentID: 5,
+				Comments: []entities.ReviewMessage{
+					{Author: "code-guru[bot]", Body: "[medium] separate concern on the same line"},
+				},
 			},
 		}
 		rc := commands.NewReviewCommand(nil, nil, nil, nil)
 		provider := &recordingReviewProvider{}
 		resolutions := []entities.ThreadResolution{
-			{ID: "T1", FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "Diff added the nil check."},
-			{ID: "T2", FilePath: "internal/foo.go", Line: 10, Status: "outdated", Explanation: "The unrelated concern no longer applies."},
+			{
+				ID:          "T1",
+				FilePath:    "internal/foo.go",
+				Line:        10,
+				Status:      "resolved",
+				Explanation: "Diff added the nil check.",
+			},
+			{
+				ID:          "T2",
+				FilePath:    "internal/foo.go",
+				Line:        10,
+				Status:      "outdated",
+				Explanation: "The unrelated concern no longer applies.",
+			},
 		}
 
 		// when
-		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, twoThreadsSameAnchor, resolutions)
+		handled := commands.ApplyThreadResolutions(
+			rc,
+			context.Background(),
+			provider,
+			repo,
+			prID,
+			twoThreadsSameAnchor,
+			resolutions,
+		)
 
 		// then: BOTH resolutions must route to their correct thread —
 		// the auto-close calls must hit ThreadID 111 (T1, resolved →
@@ -2378,18 +2770,30 @@ func TestApplyThreadResolutions(t *testing.T) {
 		// these.
 		require.Len(t, provider.replies, 2,
 			"each prior thread sharing the anchor must receive its own reply when the LLM disambiguates via id")
-		require.Len(t, provider.threadStatusUpdates, 2,
-			"both closing resolutions must trigger an UpdatePullRequestThreadStatus call — without the id-based match one would be silently dropped")
+		require.Len(
+			t,
+			provider.threadStatusUpdates,
+			2,
+			"both closing resolutions must trigger an UpdatePullRequestThreadStatus call — without the id-based match one would be silently dropped",
+		)
 		statusByThreadID := map[int]string{}
 		for _, u := range provider.threadStatusUpdates {
 			statusByThreadID[u.threadID] = u.status
 		}
 		assert.Equal(t, "fixed", statusByThreadID[111],
 			"T1 → resolved must map ThreadID 111 to `fixed`")
-		assert.Equal(t, "closed", statusByThreadID[222],
-			"T2 → outdated must map ThreadID 222 to `closed` — without the id-based match this would have routed to ThreadID 111 (a wrong-thread auto-close) or been dropped")
-		assert.Len(t, handled, 1,
-			"both resolutions close the same anchor `internal/foo.go:10`, so the dedup gate has one normalised key (the set, not the list)")
+		assert.Equal(
+			t,
+			"closed",
+			statusByThreadID[222],
+			"T2 → outdated must map ThreadID 222 to `closed` — without the id-based match this would have routed to ThreadID 111 (a wrong-thread auto-close) or been dropped",
+		)
+		assert.Len(
+			t,
+			handled,
+			1,
+			"both resolutions close the same anchor `internal/foo.go:10`, so the dedup gate has one normalised key (the set, not the list)",
+		)
 	})
 
 	t.Run("should normalise leading slash so ADO-shape paths match conversation anchors", func(t *testing.T) {
@@ -2413,35 +2817,67 @@ func TestApplyThreadResolutions(t *testing.T) {
 		}
 
 		// when
-		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, threadsADO, resolutions)
+		handled := commands.ApplyThreadResolutions(
+			rc,
+			context.Background(),
+			provider,
+			repo,
+			prID,
+			threadsADO,
+			resolutions,
+		)
 
 		// then
-		require.Len(t, provider.replies, 1, "ADO/AI path normalisation must let the resolution match the conversation thread")
+		require.Len(
+			t,
+			provider.replies,
+			1,
+			"ADO/AI path normalisation must let the resolution match the conversation thread",
+		)
 		assert.Len(t, handled, 1)
 	})
 
-	t.Run("should skip a resolution whose anchor matches no prior thread (LLM hallucinated anchor)", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should skip a resolution whose anchor matches no prior thread (LLM hallucinated anchor)",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given: the LLM emits a resolution for a file:line the prompt
-		// never showed it. Without this guard, the bot would post an
-		// inline reply on a random line and call status updates on a
-		// thread that does not exist.
-		rc := commands.NewReviewCommand(nil, nil, nil, nil)
-		provider := &recordingReviewProvider{}
-		resolutions := []entities.ThreadResolution{
-			{FilePath: "does/not/exist.go", Line: 99, Status: "resolved", Explanation: "."},
-		}
+			// given: the LLM emits a resolution for a file:line the prompt
+			// never showed it. Without this guard, the bot would post an
+			// inline reply on a random line and call status updates on a
+			// thread that does not exist.
+			rc := commands.NewReviewCommand(nil, nil, nil, nil)
+			provider := &recordingReviewProvider{}
+			resolutions := []entities.ThreadResolution{
+				{FilePath: "does/not/exist.go", Line: 99, Status: "resolved", Explanation: "."},
+			}
 
-		// when
-		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, fixedThreads, resolutions)
+			// when
+			handled := commands.ApplyThreadResolutions(
+				rc,
+				context.Background(),
+				provider,
+				repo,
+				prID,
+				fixedThreads,
+				resolutions,
+			)
 
-		// then
-		assert.Empty(t, provider.replies, "an unmatched resolution must not reply on any thread")
-		assert.Empty(t, provider.threadComments, "an unmatched resolution must not produce a stray inline comment somewhere on the PR")
-		assert.Empty(t, provider.threadStatusUpdates, "an unmatched resolution must not attempt a status update on a thread that does not exist")
-		assert.Empty(t, handled, "no anchor was handled, so the dedup gate must remain empty")
-	})
+			// then
+			assert.Empty(t, provider.replies, "an unmatched resolution must not reply on any thread")
+			assert.Empty(
+				t,
+				provider.threadComments,
+				"an unmatched resolution must not produce a stray inline comment somewhere on the PR",
+			)
+			assert.Empty(
+				t,
+				provider.threadStatusUpdates,
+				"an unmatched resolution must not attempt a status update on a thread that does not exist",
+			)
+			assert.Empty(t, handled, "no anchor was handled, so the dedup gate must remain empty")
+		},
+	)
 
 	t.Run("should skip the auto-close when the thread has no usable ThreadID", func(t *testing.T) {
 		t.Parallel()
@@ -2471,8 +2907,11 @@ func TestApplyThreadResolutions(t *testing.T) {
 			"with no usable ThreadID the reply must FALL BACK to a fresh inline comment at the anchor (not be dropped)")
 		assert.Empty(t, provider.replies,
 			"ThreadID 0 has no thread to reply into, so the in-thread ReplyToThread path must NOT be used")
-		assert.Empty(t, provider.threadStatusUpdates,
-			"a ThreadID of 0 must NOT trigger an UpdatePullRequestThreadStatus call — the provider has no handle to act on")
+		assert.Empty(
+			t,
+			provider.threadStatusUpdates,
+			"a ThreadID of 0 must NOT trigger an UpdatePullRequestThreadStatus call — the provider has no handle to act on",
+		)
 	})
 
 	t.Run("should return nil and skip when there are no resolutions", func(t *testing.T) {
@@ -2508,14 +2947,34 @@ func TestApplyThreadResolutions(t *testing.T) {
 		}
 
 		// when
-		handled := commands.ApplyThreadResolutions(rc, context.Background(), provider, repo, prID, fixedThreads, resolutions)
+		handled := commands.ApplyThreadResolutions(
+			rc,
+			context.Background(),
+			provider,
+			repo,
+			prID,
+			fixedThreads,
+			resolutions,
+		)
 
 		// then
-		require.Len(t, provider.replies, 1, "the helper attempted the in-thread reply once before the error path took over")
-		assert.Empty(t, provider.threadStatusUpdates,
-			"a reply failure must short-circuit the auto-close so the bot does not advertise a `fixed` thread that has no visible reply")
-		assert.Len(t, handled, 1,
-			"the anchor must be marked handled even on reply failure so the surrounding postComments still drops the duplicate inline comment")
+		require.Len(
+			t,
+			provider.replies,
+			1,
+			"the helper attempted the in-thread reply once before the error path took over",
+		)
+		assert.Empty(
+			t,
+			provider.threadStatusUpdates,
+			"a reply failure must short-circuit the auto-close so the bot does not advertise a `fixed` thread that has no visible reply",
+		)
+		assert.Len(
+			t,
+			handled,
+			1,
+			"the anchor must be marked handled even on reply failure so the surrounding postComments still drops the duplicate inline comment",
+		)
 	})
 }
 
@@ -2531,87 +2990,117 @@ func TestExecuteMentionPathAppliesThreadResolutions(t *testing.T) {
 
 	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 	pr := forgeEntities.PullRequestDetail{
-		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "feat", URL: "https://example/pr/4242"},
+		ID: 4242, Title: "feat", URL: "https://example/pr/4242",
 	}
 
-	t.Run("should reply on each prior thread, auto-close the resolved one, and drop the duplicated new comment", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should reply on each prior thread, auto-close the resolved one, and drop the duplicated new comment",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given:
-		//   * one prior bot inline thread on internal/foo.go:10 (ThreadID 111).
-		//   * the LLM marks that thread `resolved` AND emits a new
-		//     comment on the same anchor — the duplicate-flood failure
-		//     mode this whole change is fixing. The dedup-by-anchor
-		//     gate must drop that new comment so the thread does NOT
-		//     receive both a "Resolved" reply AND a duplicate "still
-		//     not handled" inline comment.
-		rules := &doubles.StubRulesRepository{}
-		ai := &doubles.StubAIReviewerRepository{
-			NameValue: "stub",
-			Result: &entities.ReviewResult{
-				Verdict: "approve",
-				Summary: "All prior issues addressed.",
-				ThreadResolutions: []entities.ThreadResolution{
-					{
-						FilePath:    "internal/foo.go",
-						Line:        10,
-						Status:      "resolved",
-						Explanation: "The new diff guards against nil before deref.",
+			// given:
+			//   * one prior bot inline thread on internal/foo.go:10 (ThreadID 111).
+			//   * the LLM marks that thread `resolved` AND emits a new
+			//     comment on the same anchor — the duplicate-flood failure
+			//     mode this whole change is fixing. The dedup-by-anchor
+			//     gate must drop that new comment so the thread does NOT
+			//     receive both a "Resolved" reply AND a duplicate "still
+			//     not handled" inline comment.
+			rules := &doubles.StubRulesRepository{}
+			ai := &doubles.StubAIReviewerRepository{
+				NameValue: "stub",
+				Result: &entities.ReviewResult{
+					Verdict: "approve",
+					Summary: "All prior issues addressed.",
+					ThreadResolutions: []entities.ThreadResolution{
+						{
+							FilePath:    "internal/foo.go",
+							Line:        10,
+							Status:      "resolved",
+							Explanation: "The new diff guards against nil before deref.",
+						},
+					},
+					Comments: []entities.ReviewComment{
+						{
+							FilePath: "internal/foo.go",
+							Line:     10,
+							Severity: "warning",
+							Body:     "Reworded restatement of the prior nil-check finding.",
+						},
 					},
 				},
-				Comments: []entities.ReviewComment{
+			}
+			rc := commands.NewReviewCommand(ai, rules, nil, nil)
+			provider := &recordingReviewProvider{
+				files: []forgeEntities.PullRequestFile{
+					{Path: "internal/foo.go", Patch: "@@ -10 +10 @@\n-old\n+new\n"},
+				},
+				existingComments: []forgeEntities.PullRequestComment{
 					{
-						FilePath: "internal/foo.go",
+						ID:       1,
+						ThreadID: 111,
 						Line:     10,
-						Severity: "warning",
-						Body:     "Reworded restatement of the prior nil-check finding.",
+						FilePath: "internal/foo.go",
+						Body:     "[high] consider nil-check",
+						Author:   "code-guru[bot]",
 					},
 				},
-			},
-		}
-		rc := commands.NewReviewCommand(ai, rules, nil, nil)
-		provider := &recordingReviewProvider{
-			files: []forgeEntities.PullRequestFile{
-				{Path: "internal/foo.go", Patch: "@@ -10 +10 @@\n-old\n+new\n"},
-			},
-			existingComments: []forgeEntities.PullRequestComment{
-				{ID: 1, ThreadID: 111, Line: 10, FilePath: "internal/foo.go", Body: "[high] consider nil-check", Author: "code-guru[bot]"},
-			},
-		}
+			}
 
-		// when
-		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
-			UserMentioned: true,
-		})
+			// when
+			_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+				UserMentioned: true,
+			})
 
-		// then
-		require.NoError(t, err)
+			// then
+			require.NoError(t, err)
 
-		// 1. exactly one inline reply on the prior thread's anchor —
-		//    the bot engaged with the existing thread instead of
-		//    flooding the PR with a parallel comment.
-		require.Len(t, provider.replies, 1,
-			"the mention path must produce exactly one reply per prior thread; the new `comments[]` entry on the same anchor must NOT also produce an inline post — that is the duplicate-flood failure mode")
-		assert.Equal(t, 111, provider.replies[0].threadID,
-			"the verdict must nest IN the prior thread (#111), not as a new same-line comment that confuses the author")
-		assert.Contains(t, provider.replies[0].body, "Resolved",
-			"the resolved-status reply must surface the green-check headline so the user sees the bot considers the prior concern addressed")
+			// 1. exactly one inline reply on the prior thread's anchor —
+			//    the bot engaged with the existing thread instead of
+			//    flooding the PR with a parallel comment.
+			require.Len(
+				t,
+				provider.replies,
+				1,
+				"the mention path must produce exactly one reply per prior thread; the new `comments[]` entry on the same anchor must NOT also produce an inline post — that is the duplicate-flood failure mode",
+			)
+			assert.Equal(
+				t,
+				111,
+				provider.replies[0].threadID,
+				"the verdict must nest IN the prior thread (#111), not as a new same-line comment that confuses the author",
+			)
+			assert.Contains(
+				t,
+				provider.replies[0].body,
+				"Resolved",
+				"the resolved-status reply must surface the green-check headline so the user sees the bot considers the prior concern addressed",
+			)
 
-		// 2. the resolved thread must auto-close so the user does not
-		//    have to dismiss it by hand.
-		require.Len(t, provider.threadStatusUpdates, 1,
-			"a resolved status must call UpdatePullRequestThreadStatus so the platform thread state matches the bot's verdict")
-		assert.Equal(t, 111, provider.threadStatusUpdates[0].threadID)
-		assert.Equal(t, "fixed", provider.threadStatusUpdates[0].status)
+			// 2. the resolved thread must auto-close so the user does not
+			//    have to dismiss it by hand.
+			require.Len(
+				t,
+				provider.threadStatusUpdates,
+				1,
+				"a resolved status must call UpdatePullRequestThreadStatus so the platform thread state matches the bot's verdict",
+			)
+			assert.Equal(t, 111, provider.threadStatusUpdates[0].threadID)
+			assert.Equal(t, "fixed", provider.threadStatusUpdates[0].status)
 
-		// 3. the LLM's prompt must have received the conversation —
-		//    pin the contract so a future refactor that disconnects
-		//    BuildConversation from ReviewRequest fails here.
-		require.Len(t, ai.LastRequest.Conversation, 1,
-			"the LLM must receive the prior thread as conversation context — that is what lets it judge whether the concern is resolved")
-		assert.Equal(t, int64(111), ai.LastRequest.Conversation[0].ThreadID,
-			"the gitforge ThreadID must propagate from BuildConversation through ReviewRequest into the LLM call")
-	})
+			// 3. the LLM's prompt must have received the conversation —
+			//    pin the contract so a future refactor that disconnects
+			//    BuildConversation from ReviewRequest fails here.
+			require.Len(
+				t,
+				ai.LastRequest.Conversation,
+				1,
+				"the LLM must receive the prior thread as conversation context — that is what lets it judge whether the concern is resolved",
+			)
+			assert.Equal(t, int64(111), ai.LastRequest.Conversation[0].ThreadID,
+				"the gitforge ThreadID must propagate from BuildConversation through ReviewRequest into the LLM call")
+		},
+	)
 }
 
 // TestBuildResolutionReplyBody pins the body shape per LLM verdict so a
@@ -2626,10 +3115,30 @@ func TestBuildResolutionReplyBody(t *testing.T) {
 		explanation  string
 		wantHeadline string
 	}{
-		{name: "resolved headline carries the green check", status: "resolved", explanation: "Fixed.", wantHeadline: "Resolved"},
-		{name: "outstanding headline carries the warn", status: "outstanding", explanation: "Still here.", wantHeadline: "Still outstanding"},
-		{name: "outdated headline carries the soft close", status: "outdated", explanation: "Code removed.", wantHeadline: "Outdated"},
-		{name: "unknown status falls back to a generic note", status: "weird", explanation: "?", wantHeadline: "Code Guru re-review note"},
+		{
+			name:         "resolved headline carries the green check",
+			status:       "resolved",
+			explanation:  "Fixed.",
+			wantHeadline: "Resolved",
+		},
+		{
+			name:         "outstanding headline carries the warn",
+			status:       "outstanding",
+			explanation:  "Still here.",
+			wantHeadline: "Still outstanding",
+		},
+		{
+			name:         "outdated headline carries the soft close",
+			status:       "outdated",
+			explanation:  "Code removed.",
+			wantHeadline: "Outdated",
+		},
+		{
+			name:         "unknown status falls back to a generic note",
+			status:       "weird",
+			explanation:  "?",
+			wantHeadline: "Code Guru re-review note",
+		},
 	}
 
 	for _, tc := range cases {
@@ -2684,7 +3193,11 @@ func TestMapResolutionStatusToThreadState(t *testing.T) {
 		{name: "outstanding leaves the thread active", status: "outstanding", want: "active"},
 		{name: "case-insensitive: RESOLVED still maps to fixed", status: "RESOLVED", want: "fixed"},
 		{name: "trims whitespace before mapping", status: "  resolved  ", want: "fixed"},
-		{name: "unknown verbiage falls back to active so the bot never auto-closes by accident", status: "weird", want: "active"},
+		{
+			name:   "unknown verbiage falls back to active so the bot never auto-closes by accident",
+			status: "weird",
+			want:   "active",
+		},
 	}
 
 	for _, tc := range cases {
@@ -2742,6 +3255,7 @@ func TestShouldCloseResolution(t *testing.T) {
 type fileAccessRecordingProvider struct {
 	recordingReviewProvider
 	forgeEntities.FileAccessProvider
+
 	// fileContents seeds GetFileContent / HasFile responses by path.
 	fileContents map[string]string
 	// fileErr, when set, makes GetFileContent fail so tests can pin the
@@ -2785,25 +3299,28 @@ func TestLoadProjectGuidelines(t *testing.T) {
 	const prID = 4242
 	enabled := commands.ReviewOptions{LoadProjectGuidelines: true}
 
-	t.Run("should fetch the repository CLAUDE.md when enabled and the provider supports file access", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should fetch the repository CLAUDE.md when enabled and the provider supports file access",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given
-		rc := commands.NewReviewCommand(nil, nil, nil, nil)
-		provider := &fileAccessRecordingProvider{
-			fileContents: map[string]string{"CLAUDE.md": "# Project rules\n\nUse BDD blocks in every test.\n"},
-		}
+			// given
+			rc := commands.NewReviewCommand(nil, nil, nil, nil)
+			provider := &fileAccessRecordingProvider{
+				fileContents: map[string]string{"CLAUDE.md": "# Project rules\n\nUse BDD blocks in every test.\n"},
+			}
 
-		// when
-		got := commands.LoadProjectGuidelines(
-			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
+			// when
+			got := commands.LoadProjectGuidelines(
+				rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
 
-		// then
-		assert.Equal(t, "# Project rules\n\nUse BDD blocks in every test.", got,
-			"the fetched content must be returned trimmed so the prompt does not carry stray blank lines")
-		assert.Equal(t, []string{"CLAUDE.md"}, provider.fetchedPaths,
-			"exactly one fetch for the root CLAUDE.md must be issued")
-	})
+			// then
+			assert.Equal(t, "# Project rules\n\nUse BDD blocks in every test.", got,
+				"the fetched content must be returned trimmed so the prompt does not carry stray blank lines")
+			assert.Equal(t, []string{"CLAUDE.md"}, provider.fetchedPaths,
+				"exactly one fetch for the root CLAUDE.md must be issued")
+		},
+	)
 
 	t.Run("should return empty and never fetch when the option is disabled", func(t *testing.T) {
 		t.Parallel()
@@ -3103,7 +3620,7 @@ func TestExecuteLLMPathLoadsProjectGuidelines(t *testing.T) {
 
 	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 	pr := forgeEntities.PullRequestDetail{
-		PullRequest: forgeEntities.PullRequest{ID: 4242, Title: "feat", URL: "https://example/pr/4242"},
+		ID: 4242, Title: "feat", URL: "https://example/pr/4242",
 	}
 
 	t.Run("should forward the fetched CLAUDE.md to the AI request", func(t *testing.T) {
@@ -3118,10 +3635,8 @@ func TestExecuteLLMPathLoadsProjectGuidelines(t *testing.T) {
 		}
 		rc := commands.NewReviewCommand(ai, rules, nil, nil)
 		provider := &fileAccessRecordingProvider{
-			recordingReviewProvider: recordingReviewProvider{
-				files: []forgeEntities.PullRequestFile{
-					{Path: "internal/foo.go", Patch: "@@ -1 +1 @@\n-old\n+new\n"},
-				},
+			files: []forgeEntities.PullRequestFile{
+				{Path: "internal/foo.go", Patch: "@@ -1 +1 @@\n-old\n+new\n"},
 			},
 			fileContents: map[string]string{"CLAUDE.md": "# Conventions\n\nAlways alias logrus as logger."},
 		}
@@ -3149,10 +3664,8 @@ func TestExecuteLLMPathLoadsProjectGuidelines(t *testing.T) {
 		}
 		rc := commands.NewReviewCommand(ai, rules, nil, nil)
 		provider := &fileAccessRecordingProvider{
-			recordingReviewProvider: recordingReviewProvider{
-				files: []forgeEntities.PullRequestFile{
-					{Path: "internal/foo.go", Patch: "@@ -1 +1 @@\n-old\n+new\n"},
-				},
+			files: []forgeEntities.PullRequestFile{
+				{Path: "internal/foo.go", Patch: "@@ -1 +1 @@\n-old\n+new\n"},
 			},
 			fileContents: map[string]string{"CLAUDE.md": "# Conventions"},
 		}
@@ -3181,10 +3694,8 @@ func TestExecuteLLMPathLoadsProjectGuidelines(t *testing.T) {
 		}
 		rc := commands.NewReviewCommand(ai, rules, nil, nil)
 		provider := &fileAccessRecordingProvider{
-			recordingReviewProvider: recordingReviewProvider{
-				files: []forgeEntities.PullRequestFile{
-					{Path: "CLAUDE.md", Patch: "@@ -1 +1 @@\n-old guidance\n+new guidance\n"},
-				},
+			files: []forgeEntities.PullRequestFile{
+				{Path: "CLAUDE.md", Patch: "@@ -1 +1 @@\n-old guidance\n+new guidance\n"},
 			},
 			fileContents: map[string]string{"CLAUDE.md": "# default-branch copy"},
 		}
@@ -3323,7 +3834,7 @@ func TestExecuteForwardsPullRequestMetadata(t *testing.T) {
 
 	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 	pr := forgeEntities.PullRequestDetail{
-		PullRequest:  forgeEntities.PullRequest{ID: 7, Title: "Add limiter"},
+		ID: 7, Title: "Add limiter",
 		SourceBranch: "feat/limiter",
 		TargetBranch: "main",
 	}

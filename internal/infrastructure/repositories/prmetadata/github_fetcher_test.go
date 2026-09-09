@@ -1,5 +1,3 @@
-//go:build unit
-
 package prmetadata_test
 
 import (
@@ -29,7 +27,7 @@ func TestGitHubFetcherGetPullRequestMetadata(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotPath = r.URL.Path
 			gotAuth = r.Header.Get("Authorization")
-			gotAPIVersion = r.Header.Get("X-GitHub-Api-Version")
+			gotAPIVersion = r.Header.Get("X-Github-Api-Version")
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"body": "Adds a rate limiter.", "commits": 5, "title": "ignored"}`))
 		}))

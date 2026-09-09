@@ -1,5 +1,3 @@
-//go:build unit
-
 package entities_test
 
 import (
@@ -155,22 +153,25 @@ func TestNativeReviewSubmissionEnabled(t *testing.T) {
 }
 
 func TestNewSettingsFromEnvNativeReviewDefault(t *testing.T) {
-	t.Run("should leave SubmitNativeReview nil when the env var is not set so the default ON path takes over", func(t *testing.T) {
-		// given: a minimal env-only configuration with no
-		// CODE_GURU_AI_SUBMIT_NATIVE_REVIEW setting at all.
-		t.Setenv("CODE_GURU_BACKEND", "openai")
-		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+	t.Run(
+		"should leave SubmitNativeReview nil when the env var is not set so the default ON path takes over",
+		func(t *testing.T) {
+			// given: a minimal env-only configuration with no
+			// CODE_GURU_AI_SUBMIT_NATIVE_REVIEW setting at all.
+			t.Setenv("CODE_GURU_BACKEND", "openai")
+			t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
 
-		// when
-		settings, err := entities.NewSettingsFromEnv()
+			// when
+			settings, err := entities.NewSettingsFromEnv()
 
-		// then: the field stays nil so NativeReviewSubmissionEnabled
-		// returns the documented default (true) without operator action.
-		require.NoError(t, err)
-		assert.Nil(t, settings.AI.SubmitNativeReview,
-			"unset CODE_GURU_AI_SUBMIT_NATIVE_REVIEW must leave the pointer nil so the default-ON resolver fires")
-		assert.True(t, settings.AI.NativeReviewSubmissionEnabled())
-	})
+			// then: the field stays nil so NativeReviewSubmissionEnabled
+			// returns the documented default (true) without operator action.
+			require.NoError(t, err)
+			assert.Nil(t, settings.AI.SubmitNativeReview,
+				"unset CODE_GURU_AI_SUBMIT_NATIVE_REVIEW must leave the pointer nil so the default-ON resolver fires")
+			assert.True(t, settings.AI.NativeReviewSubmissionEnabled())
+		},
+	)
 
 	t.Run("should resolve to false when the operator explicitly sets the env var to false", func(t *testing.T) {
 		// given
@@ -204,26 +205,29 @@ func TestNewSettingsFromEnvNativeReviewDefault(t *testing.T) {
 		assert.True(t, settings.AI.NativeReviewSubmissionEnabled())
 	})
 
-	t.Run("should honour an explicit opt-out shipped with surrounding whitespace (Helm templating)", func(t *testing.T) {
-		// given: Helm / templating frequently injects a trailing newline
-		// or space when rendering values into a Pod's env. Without
-		// trimming, `strconv.ParseBool("false ")` errors and the
-		// resolver falls back to the default ON — silently flipping the
-		// operator's explicit opt-out into the very behaviour they
-		// disabled. Pin the trim contract here.
-		t.Setenv("CODE_GURU_BACKEND", "openai")
-		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
-		t.Setenv("CODE_GURU_AI_SUBMIT_NATIVE_REVIEW", "false \n")
+	t.Run(
+		"should honour an explicit opt-out shipped with surrounding whitespace (Helm templating)",
+		func(t *testing.T) {
+			// given: Helm / templating frequently injects a trailing newline
+			// or space when rendering values into a Pod's env. Without
+			// trimming, `strconv.ParseBool("false ")` errors and the
+			// resolver falls back to the default ON — silently flipping the
+			// operator's explicit opt-out into the very behaviour they
+			// disabled. Pin the trim contract here.
+			t.Setenv("CODE_GURU_BACKEND", "openai")
+			t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+			t.Setenv("CODE_GURU_AI_SUBMIT_NATIVE_REVIEW", "false \n")
 
-		// when
-		settings, err := entities.NewSettingsFromEnv()
+			// when
+			settings, err := entities.NewSettingsFromEnv()
 
-		// then
-		require.NoError(t, err)
-		require.NotNil(t, settings.AI.SubmitNativeReview)
-		assert.False(t, *settings.AI.SubmitNativeReview)
-		assert.False(t, settings.AI.NativeReviewSubmissionEnabled())
-	})
+			// then
+			require.NoError(t, err)
+			require.NotNil(t, settings.AI.SubmitNativeReview)
+			assert.False(t, *settings.AI.SubmitNativeReview)
+			assert.False(t, settings.AI.NativeReviewSubmissionEnabled())
+		},
+	)
 }
 
 func TestNewSettingsTrivialEnvOverride(t *testing.T) {
@@ -264,8 +268,12 @@ trivial:
 		// then
 		require.NoError(t, err)
 		assert.True(t, settings.Trivial.Enabled)
-		assert.Equal(t, []string{"bump-go", "docs-only"}, settings.Trivial.Adapters,
-			"env var must override YAML so deployments can flip adapters per-environment without re-rendering the config file")
+		assert.Equal(
+			t,
+			[]string{"bump-go", "docs-only"},
+			settings.Trivial.Adapters,
+			"env var must override YAML so deployments can flip adapters per-environment without re-rendering the config file",
+		)
 	})
 
 	t.Run("should preserve the YAML adapter list when CODE_GURU_TRIVIAL_ADAPTERS is unset", func(t *testing.T) {
@@ -294,10 +302,17 @@ trivial:
 
 		// then
 		require.NoError(t, err)
-		assert.True(t, settings.Trivial.AutoMerge,
-			"CODE_GURU_TRIVIAL_AUTO_MERGE=true must reach Settings.Trivial.AutoMerge so the dispatcher path can opt in to merging trivial PRs")
-		assert.Equal(t, "squash", settings.Trivial.MergeStrategy,
-			"the merge strategy env var must reach Settings.Trivial.MergeStrategy so operators can pick `merge` / `squash` / `rebase` per environment")
+		assert.True(
+			t,
+			settings.Trivial.AutoMerge,
+			"CODE_GURU_TRIVIAL_AUTO_MERGE=true must reach Settings.Trivial.AutoMerge so the dispatcher path can opt in to merging trivial PRs",
+		)
+		assert.Equal(
+			t,
+			"squash",
+			settings.Trivial.MergeStrategy,
+			"the merge strategy env var must reach Settings.Trivial.MergeStrategy so operators can pick `merge` / `squash` / `rebase` per environment",
+		)
 	})
 }
 
@@ -319,8 +334,12 @@ func TestNewSettingsBotIdentities(t *testing.T) {
 
 		// then
 		require.NoError(t, err)
-		assert.Equal(t, []string{"automation@example.com", "svc-codeguru@example.com"}, settings.BotIdentities,
-			"comma-separated identities must be split and trimmed so the re-review walk can recognise the bot's own comments")
+		assert.Equal(
+			t,
+			[]string{"automation@example.com", "svc-codeguru@example.com"},
+			settings.BotIdentities,
+			"comma-separated identities must be split and trimmed so the re-review walk can recognise the bot's own comments",
+		)
 	})
 
 	t.Run("should default to no configured identities when the env var is unset", func(t *testing.T) {
@@ -401,8 +420,12 @@ func TestNewSettingsTrivialAutoMergeAuthors(t *testing.T) {
 
 		// then
 		require.NoError(t, err)
-		assert.Equal(t, []string{"automation@example.com", "svc-bump@example.com"}, settings.Trivial.AutoMergeAllowedAuthors,
-			"comma-separated authors must be split and trimmed so only those accounts auto-merge")
+		assert.Equal(
+			t,
+			[]string{"automation@example.com", "svc-bump@example.com"},
+			settings.Trivial.AutoMergeAllowedAuthors,
+			"comma-separated authors must be split and trimmed so only those accounts auto-merge",
+		)
 	})
 
 	t.Run("should default to an empty allowlist when the env var is unset", func(t *testing.T) {
@@ -633,7 +656,12 @@ func TestNewSettingsMaxAttempts(t *testing.T) {
 		// then
 		require.NoError(t, err)
 		assert.Equal(t, 0, settings.AI.MaxAttempts, "unset env leaves the raw field zero")
-		assert.Equal(t, 3, settings.AI.ReviewAttempts(), "the resolver then defaults to 3 so retries apply automatically")
+		assert.Equal(
+			t,
+			3,
+			settings.AI.ReviewAttempts(),
+			"the resolver then defaults to 3 so retries apply automatically",
+		)
 	})
 
 	t.Run("should override YAML max_attempts when the env var is set", func(t *testing.T) {
@@ -805,22 +833,25 @@ func TestNewSettingsFromEnvRefusalFallbackModel(t *testing.T) {
 }
 
 func TestNewSettingsFromEnvProjectGuidelines(t *testing.T) {
-	t.Run("should leave ProjectGuidelines nil when the env var is not set so the default ON path takes over", func(t *testing.T) {
-		// given: a minimal env-only configuration with no
-		// CODE_GURU_AI_PROJECT_GUIDELINES setting at all.
-		t.Setenv("CODE_GURU_BACKEND", "openai")
-		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+	t.Run(
+		"should leave ProjectGuidelines nil when the env var is not set so the default ON path takes over",
+		func(t *testing.T) {
+			// given: a minimal env-only configuration with no
+			// CODE_GURU_AI_PROJECT_GUIDELINES setting at all.
+			t.Setenv("CODE_GURU_BACKEND", "openai")
+			t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
 
-		// when
-		settings, err := entities.NewSettingsFromEnv()
+			// when
+			settings, err := entities.NewSettingsFromEnv()
 
-		// then: the field stays nil so ProjectGuidelinesEnabled returns
-		// the documented default (true) without operator action.
-		require.NoError(t, err)
-		assert.Nil(t, settings.AI.ProjectGuidelines,
-			"unset CODE_GURU_AI_PROJECT_GUIDELINES must leave the pointer nil so the default-ON resolver fires")
-		assert.True(t, settings.AI.ProjectGuidelinesEnabled())
-	})
+			// then: the field stays nil so ProjectGuidelinesEnabled returns
+			// the documented default (true) without operator action.
+			require.NoError(t, err)
+			assert.Nil(t, settings.AI.ProjectGuidelines,
+				"unset CODE_GURU_AI_PROJECT_GUIDELINES must leave the pointer nil so the default-ON resolver fires")
+			assert.True(t, settings.AI.ProjectGuidelinesEnabled())
+		},
+	)
 
 	t.Run("should resolve to false when the operator explicitly sets the env var to false", func(t *testing.T) {
 		// given
@@ -967,21 +998,24 @@ func TestPullRequestMetadataEnabled(t *testing.T) {
 }
 
 func TestNewSettingsFromEnvPRMetadata(t *testing.T) {
-	t.Run("should leave PRMetadata nil when the env var is not set so the default ON path takes over", func(t *testing.T) {
-		// given: a minimal env-only configuration with no
-		// CODE_GURU_AI_PR_METADATA setting at all.
-		t.Setenv("CODE_GURU_BACKEND", "openai")
-		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+	t.Run(
+		"should leave PRMetadata nil when the env var is not set so the default ON path takes over",
+		func(t *testing.T) {
+			// given: a minimal env-only configuration with no
+			// CODE_GURU_AI_PR_METADATA setting at all.
+			t.Setenv("CODE_GURU_BACKEND", "openai")
+			t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
 
-		// when
-		settings, err := entities.NewSettingsFromEnv()
+			// when
+			settings, err := entities.NewSettingsFromEnv()
 
-		// then
-		require.NoError(t, err)
-		assert.Nil(t, settings.AI.PRMetadata,
-			"unset CODE_GURU_AI_PR_METADATA must leave the pointer nil so the default-ON resolver fires")
-		assert.True(t, settings.AI.PullRequestMetadataEnabled())
-	})
+			// then
+			require.NoError(t, err)
+			assert.Nil(t, settings.AI.PRMetadata,
+				"unset CODE_GURU_AI_PR_METADATA must leave the pointer nil so the default-ON resolver fires")
+			assert.True(t, settings.AI.PullRequestMetadataEnabled())
+		},
+	)
 
 	t.Run("should resolve to false when the operator explicitly sets the env var to false", func(t *testing.T) {
 		// given
@@ -1093,21 +1127,27 @@ func TestDeleteSourceBranchEnabled(t *testing.T) {
 }
 
 func TestNewSettingsFromEnvTrivialDeleteSourceBranch(t *testing.T) {
-	t.Run("should leave DeleteSourceBranch nil when the env var is unset so the default ON path takes over", func(t *testing.T) {
-		// given: a minimal env-only configuration with no
-		// CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH setting at all.
-		t.Setenv("CODE_GURU_BACKEND", "openai")
-		t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
+	t.Run(
+		"should leave DeleteSourceBranch nil when the env var is unset so the default ON path takes over",
+		func(t *testing.T) {
+			// given: a minimal env-only configuration with no
+			// CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH setting at all.
+			t.Setenv("CODE_GURU_BACKEND", "openai")
+			t.Setenv("CODE_GURU_OPENAI_API_KEY", "test-key-123")
 
-		// when
-		settings, err := entities.NewSettingsFromEnv()
+			// when
+			settings, err := entities.NewSettingsFromEnv()
 
-		// then
-		require.NoError(t, err)
-		assert.Nil(t, settings.Trivial.DeleteSourceBranch,
-			"unset CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH must leave the pointer nil so the default-ON resolver fires")
-		assert.True(t, settings.Trivial.DeleteSourceBranchEnabled())
-	})
+			// then
+			require.NoError(t, err)
+			assert.Nil(
+				t,
+				settings.Trivial.DeleteSourceBranch,
+				"unset CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH must leave the pointer nil so the default-ON resolver fires",
+			)
+			assert.True(t, settings.Trivial.DeleteSourceBranchEnabled())
+		},
+	)
 
 	t.Run("should resolve to false when the operator explicitly sets the env var to false", func(t *testing.T) {
 		// given

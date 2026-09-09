@@ -1,5 +1,3 @@
-//go:build unit
-
 package support_test
 
 import (
@@ -18,6 +16,8 @@ func TestParseReviewResponse(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should parse valid JSON with verdict and comments", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		content := `{"verdict":"approve","summary":"Looks good.","comments":[]}`
 
@@ -32,6 +32,8 @@ func TestParseReviewResponse(t *testing.T) {
 	})
 
 	t.Run("should default verdict to comment when missing", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		content := `{"summary":"No issues found.","comments":[]}`
 
@@ -44,6 +46,8 @@ func TestParseReviewResponse(t *testing.T) {
 	})
 
 	t.Run("should default verdict to comment when invalid value", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		content := `{"verdict":"unknown_value","summary":"test","comments":[]}`
 
@@ -56,6 +60,8 @@ func TestParseReviewResponse(t *testing.T) {
 	})
 
 	t.Run("should parse JSON from markdown code fences", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		content := "Some text\n```json\n{\"verdict\":\"request_changes\",\"summary\":\"Issues found.\",\"comments\":[]}\n```\nMore text"
 
@@ -69,6 +75,8 @@ func TestParseReviewResponse(t *testing.T) {
 	})
 
 	t.Run("should parse comments with all fields", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		content := `{
 			"verdict": "request_changes",
@@ -101,6 +109,8 @@ func TestParseReviewResponse(t *testing.T) {
 	})
 
 	t.Run("should return ErrUnparseableResponse when content is not JSON", func(t *testing.T) {
+		t.Parallel()
+
 		// given: previous behaviour was to return a `ReviewResult{Summary: content}`,
 		// which the command layer then posted verbatim as a PR thread — exactly the
 		// "raw JSON dumped onto the PR" symptom this fix targets. The parser now
@@ -118,6 +128,8 @@ func TestParseReviewResponse(t *testing.T) {
 	})
 
 	t.Run("should repair unescaped quotes inside string values (canonical LLM failure)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: this is the exact failure observed on internal/auth-service#NNNN
 		// thread 71418 — the model embedded an unescaped quoted phrase ("Always
 		// use ...") inside a `body` string. `json.Unmarshal` rejects it; the
@@ -151,6 +163,8 @@ func TestParseReviewResponse(t *testing.T) {
 	})
 
 	t.Run("should leave already-escaped quotes untouched after repair", func(t *testing.T) {
+		t.Parallel()
+
 		// given: the input is valid JSON. Repair should be a no-op and the
 		// original `\"` sequences must reach the result unchanged.
 		content := `{"verdict":"comment","summary":"He said \"hi\".","comments":[]}`
@@ -162,7 +176,17 @@ func TestParseReviewResponse(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, `He said "hi".`, result.Summary)
 	})
+}
 
+// TestParseReviewResponseLogging is deliberately NOT parallel — neither the
+// function nor its subtests call `t.Parallel()`. Both cases attach a hook to
+// the process-wide `logger.StandardLogger()` and assert on the entries it
+// captured, so two of them running concurrently would each see the other's
+// entries and both would fail. Splitting them out of `TestParseReviewResponse`
+// keeps every parse assertion parallel while the log-capture assertions stay
+// serial; making them parallel would require `ParseReviewResponse` to take a
+// logger, which is a production change this test does not justify.
+func TestParseReviewResponseLogging(t *testing.T) {
 	t.Run("should not log raw content at ERROR level on parse failure", func(t *testing.T) {
 		// given: the model occasionally echoes pieces of the prompt back, and
 		// the prompt embeds the full PR diff — so a default-on raw log would

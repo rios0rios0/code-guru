@@ -1,0 +1,3 @@
+kind: 'Changed'
+body: 'removed the `unit` build tag from every test file so `go test ./...`, IDE runs and the linter all see the unit suite (`make test` still passes `-tags test,unit`), and fixed the lint findings the newly-visible files surfaced — `t.Parallel()` on every subtest, `require` for error assertions, and a checked type assertion in the entity builders'
+time: '2026-09-09T15:56:09.893154786Z'

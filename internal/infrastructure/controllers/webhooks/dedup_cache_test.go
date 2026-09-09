@@ -1,5 +1,3 @@
-//go:build unit
-
 package webhooks_test
 
 import (
@@ -24,6 +22,8 @@ func TestWebhookDedupCache_SeenRecently(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should return false on the first call and record the timestamp", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a fresh cache with a 1-minute TTL
 		cache := webhooks.NewWebhookDedupCache(time.Minute)
 		now := time.Date(2026, 5, 1, 1, 0, 0, 0, time.UTC)
@@ -36,6 +36,8 @@ func TestWebhookDedupCache_SeenRecently(t *testing.T) {
 	})
 
 	t.Run("should return true on a duplicate within the TTL window", func(t *testing.T) {
+		t.Parallel()
+
 		// given: simulating a `pullrequest.created` followed by a
 		// `pullrequest.updated` 4 seconds later — the longest gap we
 		// captured in production (PR #NNNN).
@@ -51,6 +53,8 @@ func TestWebhookDedupCache_SeenRecently(t *testing.T) {
 	})
 
 	t.Run("should refresh the timestamp and return false after the TTL has elapsed", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a real follow-up push happens minutes after the
 		// initial review — the cache must NOT swallow it. Pin the
 		// behaviour so a future "let me extend the TTL to 5 minutes"
@@ -67,6 +71,8 @@ func TestWebhookDedupCache_SeenRecently(t *testing.T) {
 	})
 
 	t.Run("should treat distinct keys as independent (one PR's duplicate does not block another)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: one PR was already enqueued
 		cache := webhooks.NewWebhookDedupCache(time.Minute)
 		now := time.Date(2026, 5, 1, 1, 0, 0, 0, time.UTC)
@@ -80,6 +86,8 @@ func TestWebhookDedupCache_SeenRecently(t *testing.T) {
 	})
 
 	t.Run("should be a no-op when constructed with a zero or negative TTL (test hook)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: tests that need a permissive cache use TTL=0; pin
 		// the contract so wiring tests can build a `*webhookDedupCache`
 		// without affecting downstream behaviour.
@@ -96,6 +104,8 @@ func TestWebhookDedupCache_SeenRecently(t *testing.T) {
 	})
 
 	t.Run("should let a forgotten key pass through on the next call (rollback contract)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: caller records the key (first-call branch), then the
 		// work it intended to gate fails — calling Forget rolls the
 		// record back so a webhook retry inside the TTL is allowed
@@ -114,6 +124,8 @@ func TestWebhookDedupCache_SeenRecently(t *testing.T) {
 	})
 
 	t.Run("should be a no-op when forgetting an unknown key", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a fresh cache. The contract is that Forget never
 		// panics regardless of caller order, so a defensive double-
 		// rollback or a cleanup path that is not sure whether the
@@ -129,6 +141,8 @@ func TestWebhookDedupCache_SeenRecently(t *testing.T) {
 	})
 
 	t.Run("should be safe under concurrent calls on the same key (only one wins)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: the worst-case race the K8s Service can produce on a
 		// single pod is two webhook handler goroutines arriving for
 		// the same PR within microseconds. Exactly one must observe
@@ -145,7 +159,7 @@ func TestWebhookDedupCache_SeenRecently(t *testing.T) {
 		var mu sync.Mutex
 		var wg sync.WaitGroup
 		wg.Add(goroutines)
-		for i := 0; i < goroutines; i++ {
+		for range goroutines {
 			go func() {
 				defer wg.Done()
 				if !cache.SeenRecently("ado:repo-id:NNNN", now) {

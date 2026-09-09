@@ -1,5 +1,3 @@
-//go:build unit
-
 package webhooks_test
 
 import (
@@ -56,15 +54,18 @@ const ghOpenedPayload = `{
   "installation": {"id": 1234}
 }`
 
-func githubRequest(t *testing.T, secret, body, eventType string) *http.Request {
+func githubRequest(t *testing.T, body, eventType string) *http.Request {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewBufferString(body))
-	req.Header.Set("X-GitHub-Event", eventType)
-	req.Header.Set("X-Hub-Signature-256", computeHMACHeader(secret, body))
+	req.Header.Set("X-Github-Event", eventType)
+	req.Header.Set("X-Hub-Signature-256", computeHMACHeader(ghSecret, body))
 	return req
 }
 
-func newDispatcherWithGitHubTokenizer(t *testing.T, settings *entities.Settings) (*webhooks.Dispatcher, *doubles.StubWebhookSubmitter) {
+func newDispatcherWithGitHubTokenizer(
+	t *testing.T,
+	settings *entities.Settings,
+) (*webhooks.Dispatcher, *doubles.StubWebhookSubmitter) {
 	t.Helper()
 	d, sub := newDispatcherWithSettings(t, settings)
 	d.SetGitHubTokenizer(&doubles.StubGitHubTokenizer{Token: "installation-token-xyz"})
@@ -75,9 +76,11 @@ func TestHandleGitHub(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should respond 202 (Accepted) when an opened PR is enqueued", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		req := githubRequest(t, ghOpenedPayload, "pull_request")
 		w := httptest.NewRecorder()
 
 		// when
@@ -93,10 +96,12 @@ func TestHandleGitHub(t *testing.T) {
 	})
 
 	t.Run("should respond 401 (Unauthorized) when the HMAC is invalid", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
 		req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewBufferString(ghOpenedPayload))
-		req.Header.Set("X-GitHub-Event", "pull_request")
+		req.Header.Set("X-Github-Event", "pull_request")
 		req.Header.Set("X-Hub-Signature-256", "sha256=deadbeef")
 		w := httptest.NewRecorder()
 
@@ -109,10 +114,12 @@ func TestHandleGitHub(t *testing.T) {
 	})
 
 	t.Run("should respond 400 (Bad Request) when the signature header is missing", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
 		req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewBufferString(ghOpenedPayload))
-		req.Header.Set("X-GitHub-Event", "pull_request")
+		req.Header.Set("X-Github-Event", "pull_request")
 		w := httptest.NewRecorder()
 
 		// when
@@ -124,10 +131,12 @@ func TestHandleGitHub(t *testing.T) {
 	})
 
 	t.Run("should respond 204 (No Content) when the action is ignored", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
 		body := `{"action":"closed","pull_request":{"number":1},"repository":{"full_name":"rios0rios0/demo"},"installation":{"id":1}}`
-		req := githubRequest(t, ghSecret, body, "pull_request")
+		req := githubRequest(t, body, "pull_request")
 		w := httptest.NewRecorder()
 
 		// when
@@ -139,12 +148,14 @@ func TestHandleGitHub(t *testing.T) {
 	})
 
 	t.Run("should respond 204 (No Content) when the event type is unsupported", func(t *testing.T) {
+		t.Parallel()
+
 		// given: `push` is genuinely unhandled. This row used to send
 		// `issue_comment`, which the dispatcher DOES handle — it passed
 		// only because the payload's action is "opened", so it exercised
 		// the mention handler's action gate rather than the default arm.
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, ghOpenedPayload, "push")
+		req := githubRequest(t, ghOpenedPayload, "push")
 		w := httptest.NewRecorder()
 
 		// when
@@ -156,9 +167,11 @@ func TestHandleGitHub(t *testing.T) {
 	})
 
 	t.Run("should respond 400 (Bad Request) when the JSON is malformed", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		d, _ := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, `{not json`, "pull_request")
+		req := githubRequest(t, `{not json`, "pull_request")
 		w := httptest.NewRecorder()
 
 		// when
@@ -169,11 +182,13 @@ func TestHandleGitHub(t *testing.T) {
 	})
 
 	t.Run("should respond 403 (Forbidden) when the org is not on the allowlist", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		settings := defaultGitHubSettings()
 		settings.Server.AllowedOrganizations = []string{"someoneelse"}
 		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
-		req := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		req := githubRequest(t, ghOpenedPayload, "pull_request")
 		w := httptest.NewRecorder()
 
 		// when
@@ -185,9 +200,11 @@ func TestHandleGitHub(t *testing.T) {
 	})
 
 	t.Run("should fall back to the configured PAT when no GitHub App tokenizer is wired", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		d, sub := newDispatcherWithSettings(t, defaultGitHubSettings()) // no SetGitHubTokenizer
-		req := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		req := githubRequest(t, ghOpenedPayload, "pull_request")
 		w := httptest.NewRecorder()
 
 		// when
@@ -199,6 +216,8 @@ func TestHandleGitHub(t *testing.T) {
 	})
 
 	t.Run("should accept a single untyped provider entry as the catch-all PAT", func(t *testing.T) {
+		t.Parallel()
+
 		// given - mirrors the env-only configuration where CODE_GURU_PROVIDER_TOKEN
 		// populates a single ProviderConfig entry without a Type.
 		settings := &entities.Settings{
@@ -211,7 +230,7 @@ func TestHandleGitHub(t *testing.T) {
 			},
 		}
 		d, sub := newDispatcherWithSettings(t, settings)
-		req := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		req := githubRequest(t, ghOpenedPayload, "pull_request")
 		w := httptest.NewRecorder()
 
 		// when
@@ -223,13 +242,15 @@ func TestHandleGitHub(t *testing.T) {
 	})
 
 	t.Run("should respond 403 (Forbidden) when CF-Connecting-IP is outside AllowedSourceCIDRs", func(t *testing.T) {
+		t.Parallel()
+
 		// given: source-IP allowlist runs before HMAC verification, so an
 		// off-list request never gets a chance to brute-force the signature.
 		settings := defaultGitHubSettings()
 		settings.Server.AllowedSourceCIDRs = []string{"140.82.112.0/20"} // GitHub Hooks range example
 		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
-		req := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
-		req.Header.Set("CF-Connecting-IP", "8.8.8.8")
+		req := githubRequest(t, ghOpenedPayload, "pull_request")
+		req.Header.Set("Cf-Connecting-Ip", "8.8.8.8")
 		w := httptest.NewRecorder()
 
 		// when
@@ -241,12 +262,14 @@ func TestHandleGitHub(t *testing.T) {
 	})
 
 	t.Run("should respond 202 (Accepted) when CF-Connecting-IP is inside AllowedSourceCIDRs", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		settings := defaultGitHubSettings()
 		settings.Server.AllowedSourceCIDRs = []string{"140.82.112.0/20"}
 		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
-		req := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
-		req.Header.Set("CF-Connecting-IP", "140.82.112.42")
+		req := githubRequest(t, ghOpenedPayload, "pull_request")
+		req.Header.Set("Cf-Connecting-Ip", "140.82.112.42")
 		w := httptest.NewRecorder()
 
 		// when
@@ -258,13 +281,15 @@ func TestHandleGitHub(t *testing.T) {
 	})
 
 	t.Run("should short-circuit a duplicate webhook delivery without enqueueing a second job", func(t *testing.T) {
+		t.Parallel()
+
 		// given: GitHub sometimes redelivers a webhook (e.g. on a 5xx
 		// response). The dedup cache must accept the first and refuse
 		// the second, mirroring the ADO contract. Pinned per Copilot
 		// review on PR #100 thread `PRRT_kwDOJKAEo85-5zEz`.
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req1 := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
-		req2 := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		req1 := githubRequest(t, ghOpenedPayload, "pull_request")
+		req2 := githubRequest(t, ghOpenedPayload, "pull_request")
 		w1 := httptest.NewRecorder()
 		w2 := httptest.NewRecorder()
 
@@ -280,6 +305,8 @@ func TestHandleGitHub(t *testing.T) {
 	})
 
 	t.Run("should let a webhook retry through after Submit fails (rollback contract)", func(t *testing.T) {
+		t.Parallel()
+
 		// given: a submitter wired to fail the first call, succeed
 		// the second. Without the rollback in `dedupForget`, the
 		// retry inside the TTL would be silently dropped because
@@ -291,7 +318,7 @@ func TestHandleGitHub(t *testing.T) {
 		// behaviour is local to this row.
 		failing := doubles.NewStubWebhookSubmitter().WithError(errSubmitterFull)
 		d.SetSubmitter(failing)
-		req1 := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		req1 := githubRequest(t, ghOpenedPayload, "pull_request")
 		w1 := httptest.NewRecorder()
 
 		// when (1): first delivery fails at Submit
@@ -303,12 +330,17 @@ func TestHandleGitHub(t *testing.T) {
 
 		// when (2): retry now hits a healthy submitter — must be allowed through
 		d.SetSubmitter(sub)
-		req2 := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		req2 := githubRequest(t, ghOpenedPayload, "pull_request")
 		w2 := httptest.NewRecorder()
 		d.HandleGitHub(w2, req2)
 
 		// then (2)
-		assert.Equal(t, http.StatusAccepted, w2.Code, "retry within TTL must NOT be dropped just because the previous attempt was recorded")
+		assert.Equal(
+			t,
+			http.StatusAccepted,
+			w2.Code,
+			"retry within TTL must NOT be dropped just because the previous attempt was recorded",
+		)
 		assert.Len(t, sub.Jobs(), 1, "the retry reaches the worker queue")
 	})
 }
@@ -347,7 +379,7 @@ func TestHandleGitHubPropagatesIsDraft(t *testing.T) {
 
 		// given
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, ghDraftOpenedPayload, "pull_request")
+		req := githubRequest(t, ghDraftOpenedPayload, "pull_request")
 		w := httptest.NewRecorder()
 
 		// when
@@ -365,7 +397,7 @@ func TestHandleGitHubPropagatesIsDraft(t *testing.T) {
 
 		// given
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, ghOpenedPayload, "pull_request")
+		req := githubRequest(t, ghOpenedPayload, "pull_request")
 		w := httptest.NewRecorder()
 
 		// when
@@ -432,7 +464,7 @@ func TestHandleGitHubIssueCommentMention(t *testing.T) {
 		// given
 		body := ghIssueCommentPayload("@code-guru please re-review the auth changes")
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, body, "issue_comment")
+		req := githubRequest(t, body, "issue_comment")
 		w := httptest.NewRecorder()
 
 		// when
@@ -457,7 +489,7 @@ func TestHandleGitHubIssueCommentMention(t *testing.T) {
 		settings.BotIdentities = []string{"felipe"}
 		body := ghIssueCommentPayload("@code-guru re-review")
 		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
-		req := githubRequest(t, ghSecret, body, "issue_comment")
+		req := githubRequest(t, body, "issue_comment")
 		w := httptest.NewRecorder()
 
 		// when
@@ -474,7 +506,7 @@ func TestHandleGitHubIssueCommentMention(t *testing.T) {
 		// given
 		body := ghIssueCommentPayload("LGTM, thanks!")
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, body, "issue_comment")
+		req := githubRequest(t, body, "issue_comment")
 		w := httptest.NewRecorder()
 
 		// when
@@ -492,7 +524,7 @@ func TestHandleGitHubIssueCommentMention(t *testing.T) {
 		// review even when it contains the mention.
 		body := `{"action":"edited","comment":{"body":"@code-guru re-review","user":{"login":"felipe"}},"issue":{"number":12,"pull_request":{"url":"x"}},"repository":{"full_name":"rios0rios0/demo"},"installation":{"id":1}}`
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, body, "issue_comment")
+		req := githubRequest(t, body, "issue_comment")
 		w := httptest.NewRecorder()
 
 		// when
@@ -510,7 +542,7 @@ func TestHandleGitHubIssueCommentMention(t *testing.T) {
 		// issue) must NOT trigger the review.
 		body := `{"action":"created","comment":{"body":"@code-guru please review","user":{"login":"felipe"}},"issue":{"number":12},"repository":{"full_name":"rios0rios0/demo"},"installation":{"id":1}}`
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, body, "issue_comment")
+		req := githubRequest(t, body, "issue_comment")
 		w := httptest.NewRecorder()
 
 		// when
@@ -530,7 +562,7 @@ func TestHandleGitHubIssueCommentMention(t *testing.T) {
 		settings.BotIdentities = []string{"svc-codeguru@corp.example"}
 		body := ghIssueCommentPayload("@svc-codeguru please re-review")
 		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
-		req := githubRequest(t, ghSecret, body, "issue_comment")
+		req := githubRequest(t, body, "issue_comment")
 		w := httptest.NewRecorder()
 
 		// when
@@ -549,7 +581,7 @@ func TestHandleGitHubIssueCommentMention(t *testing.T) {
 		// given: same body, but nothing tells the bot it owns that name.
 		body := ghIssueCommentPayload("@svc-codeguru please re-review")
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, body, "issue_comment")
+		req := githubRequest(t, body, "issue_comment")
 		w := httptest.NewRecorder()
 
 		// when
@@ -571,7 +603,7 @@ func TestHandleGitHubIssueCommentMention(t *testing.T) {
 		settings.BotIdentities = []string{"felipe"}
 		body := ghIssueCommentPayload("@felipe re-review")
 		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
-		req := githubRequest(t, ghSecret, body, "issue_comment")
+		req := githubRequest(t, body, "issue_comment")
 		w := httptest.NewRecorder()
 
 		// when
@@ -625,7 +657,7 @@ func TestHandleGitHubReviewCommentMention(t *testing.T) {
 		// given
 		body := ghReviewCommentPayload("@code-guru please re-review this thread", false)
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, body, eventType)
+		req := githubRequest(t, body, eventType)
 		w := httptest.NewRecorder()
 
 		// when
@@ -648,7 +680,7 @@ func TestHandleGitHubReviewCommentMention(t *testing.T) {
 		settings.BotIdentities = []string{"svc-codeguru@corp.example"}
 		body := ghReviewCommentPayload("@svc-codeguru please re-review", false)
 		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
-		req := githubRequest(t, ghSecret, body, eventType)
+		req := githubRequest(t, body, eventType)
 		w := httptest.NewRecorder()
 
 		// when
@@ -670,7 +702,7 @@ func TestHandleGitHubReviewCommentMention(t *testing.T) {
 		// does not reverse it.
 		body := ghReviewCommentPayload("@code-guru please re-review", true)
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, body, eventType)
+		req := githubRequest(t, body, eventType)
 		w := httptest.NewRecorder()
 
 		// when
@@ -695,7 +727,7 @@ func TestHandleGitHubReviewCommentMention(t *testing.T) {
 
 		// when
 		for range 3 {
-			d.HandleGitHub(httptest.NewRecorder(), githubRequest(t, ghSecret, body, eventType))
+			d.HandleGitHub(httptest.NewRecorder(), githubRequest(t, body, eventType))
 		}
 
 		// then
@@ -712,7 +744,7 @@ func TestHandleGitHubReviewCommentMention(t *testing.T) {
 		settings.BotIdentities = []string{"felipe"}
 		body := ghReviewCommentPayload("@code-guru re-review", false)
 		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
-		req := githubRequest(t, ghSecret, body, eventType)
+		req := githubRequest(t, body, eventType)
 		w := httptest.NewRecorder()
 
 		// when
@@ -729,7 +761,7 @@ func TestHandleGitHubReviewCommentMention(t *testing.T) {
 		// given
 		body := ghReviewCommentPayload("nit: rename this variable", false)
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, body, eventType)
+		req := githubRequest(t, body, eventType)
 		w := httptest.NewRecorder()
 
 		// when
@@ -750,7 +782,7 @@ func TestHandleGitHubReviewCommentMention(t *testing.T) {
 				`","comment":{"body":"@code-guru re-review","user":{"login":"felipe"}},` +
 				`"pull_request":{"number":12},"repository":{"full_name":"rios0rios0/demo"},"installation":{"id":1}}`
 			d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-			req := githubRequest(t, ghSecret, body, eventType)
+			req := githubRequest(t, body, eventType)
 			w := httptest.NewRecorder()
 
 			// when
@@ -770,7 +802,7 @@ func TestHandleGitHubReviewCommentMention(t *testing.T) {
 		settings.Server.AllowedOrganizations = []string{"someone-else"}
 		body := ghReviewCommentPayload("@code-guru please re-review", false)
 		d, sub := newDispatcherWithGitHubTokenizer(t, settings)
-		req := githubRequest(t, ghSecret, body, eventType)
+		req := githubRequest(t, body, eventType)
 		w := httptest.NewRecorder()
 
 		// when
@@ -786,7 +818,7 @@ func TestHandleGitHubReviewCommentMention(t *testing.T) {
 
 		// given
 		d, sub := newDispatcherWithGitHubTokenizer(t, defaultGitHubSettings())
-		req := githubRequest(t, ghSecret, `{not json`, eventType)
+		req := githubRequest(t, `{not json`, eventType)
 		w := httptest.NewRecorder()
 
 		// when

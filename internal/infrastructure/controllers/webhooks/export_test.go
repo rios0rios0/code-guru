@@ -1,5 +1,4 @@
-//go:build unit
-
+//nolint:gochecknoglobals // Test-only re-exports: a package-level var IS the mechanism (a method value or function value cannot be a const).
 package webhooks
 
 import (
@@ -14,8 +13,9 @@ import (
 // shapes ADO actually delivers, status normalisation, ref prefixes) that
 // deserves dedicated coverage.
 //
-// The variable indirection keeps the production identifiers unexported in
-// non-test builds (this file is gated on the `unit` build tag).
+// The variable indirection keeps the production identifiers unexported —
+// nothing outside a test ever mentions these names, and `_test.go` files
+// are excluded from non-test builds by the toolchain itself.
 var (
 	ExtractADOOrganization       = extractADOOrganization
 	IsClosedADOPullRequestStatus = isClosedADOPullRequestStatus
@@ -31,7 +31,7 @@ var (
 // serves on `127.0.0.1`, a host the production validator correctly
 // refuses as part of the SSRF defence). Production code wires the
 // validator via `NewHTTPADOHydrator`, so this escape hatch never reaches
-// non-`unit` builds.
+// a non-test build.
 func NewTestHTTPADOHydrator(client *http.Client) ADOResourceHydrator {
 	if client == nil {
 		client = &http.Client{Timeout: adoHydrationTimeout}
@@ -39,6 +39,24 @@ func NewTestHTTPADOHydrator(client *http.Client) ADOResourceHydrator {
 	return &httpADOHydrator{
 		client:        client,
 		hostValidator: func(string) bool { return true },
+	}
+}
+
+// NewTestHTTPADOIdentityResolver returns the production identity
+// resolver pointed at an arbitrary base URL, so tests can drive it
+// against `httptest.NewServer` instead of the constant
+// `https://dev.azure.com` host it pins in production (that pin is the
+// path's SSRF defence, so the override lives in `export_test.go` and
+// never reaches a non-test build).
+func NewTestHTTPADOIdentityResolver(client *http.Client, baseURL string) ADOIdentityResolver {
+	if client == nil {
+		client = &http.Client{Timeout: adoIdentityTimeout}
+	}
+	return &httpADOIdentityResolver{
+		client:            client,
+		baseURL:           baseURL,
+		endpointValidator: func(string) bool { return true },
+		cache:             map[string]string{},
 	}
 }
 

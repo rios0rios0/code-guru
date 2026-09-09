@@ -1,12 +1,11 @@
-//go:build unit
+package prmetadata
 
-// Internal test (package prmetadata): the fetcher map is an unexported
+// This file is an internal test: the fetcher map is an unexported
 // construction detail, so the dispatch contract — provider name keys
 // the map, provider token flows to the vendor fetcher — is pinned here
 // with a hand-rolled fake fetcher instead of exporting a setter that
 // production code must never call. Mirrors the precedent set by the
 // webhooks package's internal tests.
-package prmetadata
 
 import (
 	"context"
@@ -44,6 +43,7 @@ func (f *recordingFetcher) GetPullRequestMetadata(
 // contract promises — the registry needs nothing but name and token.
 type stubForgeProvider struct {
 	forgeEntities.ForgeProvider
+
 	name  string
 	token string
 }

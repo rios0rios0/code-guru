@@ -1,5 +1,3 @@
-//go:build integration || unit || test
-
 package entitybuilders
 
 import (
@@ -9,6 +7,7 @@ import (
 
 type RuleBuilder struct {
 	*testkit.BaseBuilder
+
 	name      string
 	category  string
 	content   string
@@ -45,7 +44,7 @@ func (b *RuleBuilder) WithFileGlobs(fileGlobs []string) *RuleBuilder {
 	return b
 }
 
-func (b *RuleBuilder) Build() interface{} {
+func (b *RuleBuilder) Build() any {
 	return b.BuildRule()
 }
 
@@ -69,7 +68,7 @@ func (b *RuleBuilder) Reset() testkit.Builder {
 
 func (b *RuleBuilder) Clone() testkit.Builder {
 	clone := &RuleBuilder{
-		BaseBuilder: b.BaseBuilder.Clone().(*testkit.BaseBuilder),
+		BaseBuilder: cloneBase(b.BaseBuilder),
 		name:        b.name,
 		category:    b.category,
 		content:     b.content,

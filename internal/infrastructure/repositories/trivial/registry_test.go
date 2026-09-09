@@ -1,5 +1,3 @@
-//go:build unit
-
 package trivial_test
 
 import (
@@ -20,6 +18,8 @@ func TestDetectorRegistry(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("should detect update-go PR when only go.mod and go.sum changed", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"update-go", "docs-only"})
 		dctx := repositories.DetectionContext{Files: []string{"go.mod", "go.sum"}}
@@ -34,6 +34,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should detect update-go PR when go.mod, go.sum, and CHANGELOG.md changed", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"update-go"})
 		dctx := repositories.DetectionContext{Files: []string{"go.mod", "go.sum", "CHANGELOG.md"}}
@@ -48,6 +50,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should not detect trivial PR when code files are included", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"update-go", "docs-only"})
 		dctx := repositories.DetectionContext{Files: []string{"go.mod", "go.sum", "main.go"}}
@@ -60,6 +64,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should detect docs-only PR when only markdown files changed", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"update-go", "docs-only"})
 		dctx := repositories.DetectionContext{Files: []string{"README.md", "docs/guide.md"}}
@@ -74,6 +80,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should return the first matching detector when several match", func(t *testing.T) {
+		t.Parallel()
+
 		// given -- a Node version bump (package.json + CHANGELOG.md) matches both
 		// bump-node and update-node; the first registered detector wins.
 		registry := trivial.NewDetectorRegistry([]string{"bump-node", "update-node"})
@@ -88,6 +96,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should not detect a CHANGELOG-only change via docs-only (it is a version bump)", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"docs-only"})
 		dctx := repositories.DetectionContext{Files: []string{"CHANGELOG.md"}}
@@ -100,6 +110,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should not detect a CHANGELOG-only change via update-go (it is a version bump)", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"update-go"})
 		dctx := repositories.DetectionContext{Files: []string{"CHANGELOG.md"}}
@@ -111,23 +123,30 @@ func TestDetectorRegistry(t *testing.T) {
 		assert.False(t, found)
 	})
 
-	t.Run("should not auto-approve a CHANGELOG-only bump when only docs/update adapters are enabled", func(t *testing.T) {
-		// given -- the bump-* adapters are intentionally disabled, leaving only
-		// docs-only and the update-* family; a CHANGELOG-only version bump must
-		// NOT slip through any of them.
-		registry := trivial.NewDetectorRegistry(
-			[]string{"docs-only", "update-go", "update-node", "update-python"},
-		)
-		dctx := repositories.DetectionContext{Files: []string{"CHANGELOG.md"}}
+	t.Run(
+		"should not auto-approve a CHANGELOG-only bump when only docs/update adapters are enabled",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// when
-		_, _, found := registry.Detect(ctx, dctx)
+			// given -- the bump-* adapters are intentionally disabled, leaving only
+			// docs-only and the update-* family; a CHANGELOG-only version bump must
+			// NOT slip through any of them.
+			registry := trivial.NewDetectorRegistry(
+				[]string{"docs-only", "update-go", "update-node", "update-python"},
+			)
+			dctx := repositories.DetectionContext{Files: []string{"CHANGELOG.md"}}
 
-		// then
-		assert.False(t, found)
-	})
+			// when
+			_, _, found := registry.Detect(ctx, dctx)
+
+			// then
+			assert.False(t, found)
+		},
+	)
 
 	t.Run("should still claim a CHANGELOG-only change with bump-go when that adapter is enabled", func(t *testing.T) {
+		t.Parallel()
+
 		// given -- with a bump adapter enabled, the CHANGELOG-only bump is claimed
 		// by it (not by docs-only / update-go, which decline it).
 		registry := trivial.NewDetectorRegistry([]string{"docs-only", "update-go", "bump-go"})
@@ -143,6 +162,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should still detect docs-only when a real doc accompanies the CHANGELOG", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"docs-only"})
 		dctx := repositories.DetectionContext{Files: []string{"README.md", "CHANGELOG.md"}}
@@ -157,6 +178,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should still detect update-go when a manifest accompanies the CHANGELOG", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"update-go"})
 		dctx := repositories.DetectionContext{Files: []string{"go.mod", "CHANGELOG.md"}}
@@ -171,6 +194,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should not detect anything with empty file list", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"update-go"})
 		dctx := repositories.DetectionContext{Files: []string{}}
@@ -183,6 +208,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should not detect anything with nil enabled list", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry(nil)
 		dctx := repositories.DetectionContext{Files: []string{"go.mod", "go.sum"}}
@@ -195,6 +222,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should detect update-node PR with package.json and lock file", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"update-node"})
 		dctx := repositories.DetectionContext{Files: []string{"package.json", "package-lock.json", "CHANGELOG.md"}}
@@ -209,6 +238,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should detect update-python PR with pyproject.toml", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"update-python"})
 		dctx := repositories.DetectionContext{Files: []string{"pyproject.toml", "requirements.txt", "CHANGELOG.md"}}
@@ -223,6 +254,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should return non-empty summary from matched detector", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"update-go"})
 		dctx := repositories.DetectionContext{Files: []string{"go.mod", "go.sum"}}
@@ -236,6 +269,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should detect bump-go PR with only CHANGELOG.md", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"bump-go"})
 		dctx := repositories.DetectionContext{Files: []string{"CHANGELOG.md"}}
@@ -250,6 +285,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should detect bump-node PR with package.json and CHANGELOG.md", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"bump-node"})
 		dctx := repositories.DetectionContext{Files: []string{"package.json", "CHANGELOG.md"}}
@@ -264,6 +301,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should detect bump-python PR with __init__.py and CHANGELOG.md", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"bump-python"})
 		dctx := repositories.DetectionContext{Files: []string{"mypackage/__init__.py", "CHANGELOG.md"}}
@@ -278,6 +317,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should not detect bump-python when __init__.py path has no parent dir", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		registry := trivial.NewDetectorRegistry([]string{"bump-python"})
 		dctx := repositories.DetectionContext{Files: []string{"__init__.py", "CHANGELOG.md"}}
@@ -290,6 +331,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should approve bump-go with autobump when all version files present", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		fetcher := &stubFileContentFetcher{
 			files: map[string]string{
@@ -313,6 +356,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should reject bump-python with autobump when version file is missing", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		fetcher := &stubFileContentFetcher{
 			files: map[string]string{
@@ -336,6 +381,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should approve bump-python with autobump when all files present", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		fetcher := &stubFileContentFetcher{
 			files: map[string]string{
@@ -359,6 +406,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should approve bump-node with autobump typescript section", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		fetcher := &stubFileContentFetcher{
 			files: map[string]string{
@@ -383,6 +432,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should reject bump-node with autobump when version file from config is missing", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		fetcher := &stubFileContentFetcher{
 			files: map[string]string{
@@ -406,6 +457,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should approve bump-node with autobump when additional version files are present", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		fetcher := &stubFileContentFetcher{
 			files: map[string]string{
@@ -429,6 +482,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should fall back to default patterns when autobump fetch fails", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		fetcher := &stubFileContentFetcher{
 			files: map[string]string{}, // no autobump file
@@ -450,6 +505,8 @@ func TestDetectorRegistry(t *testing.T) {
 	})
 
 	t.Run("should list all 7 available detectors", func(t *testing.T) {
+		t.Parallel()
+
 		// given / when
 		names := trivial.AvailableDetectors()
 

@@ -1,5 +1,3 @@
-//go:build unit
-
 package webhooks_test
 
 import (
@@ -28,6 +26,8 @@ func TestPool(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should consume every submitted job", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		var processed atomic.Int32
 		done := make(chan struct{}, 10)
@@ -57,6 +57,8 @@ func TestPool(t *testing.T) {
 	})
 
 	t.Run("should refuse new work after shutdown", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		pool := webhooks.NewPool(1, 5, func(_ context.Context, _ webhooks.Job) error {
 			return nil
@@ -68,10 +70,12 @@ func TestPool(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrPoolClosed))
+		assert.ErrorIs(t, err, webhooks.ErrPoolClosed)
 	})
 
 	t.Run("should return ErrPoolFull when the queue is saturated", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		release := make(chan struct{})
 		pool := webhooks.NewPool(1, 1, func(_ context.Context, _ webhooks.Job) error {
@@ -89,13 +93,15 @@ func TestPool(t *testing.T) {
 
 		// then
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, webhooks.ErrPoolFull))
+		require.ErrorIs(t, err, webhooks.ErrPoolFull)
 
 		close(release)
 		require.NoError(t, pool.Shutdown(context.Background()))
 	})
 
 	t.Run("should keep running after a handler returns an error", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		var processed atomic.Int32
 		done := make(chan struct{}, 2)

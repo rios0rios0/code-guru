@@ -1,5 +1,3 @@
-//go:build unit
-
 package support
 
 // Test-only re-exports of unexported helpers, so the external

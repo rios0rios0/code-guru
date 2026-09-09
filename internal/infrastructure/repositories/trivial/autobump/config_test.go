@@ -1,5 +1,3 @@
-//go:build unit
-
 package autobump_test
 
 import (
@@ -15,6 +13,8 @@ func TestParseConfig(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should parse valid YAML with multiple languages", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		content := `
 languages:
@@ -41,6 +41,8 @@ languages:
 	})
 
 	t.Run("should return error for invalid YAML", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		content := `languages: [invalid`
 
@@ -48,7 +50,7 @@ languages:
 		cfg, err := autobump.ParseConfig(content)
 
 		// then
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Nil(t, cfg)
 	})
 }
@@ -57,6 +59,8 @@ func TestResolveVersionFilePaths(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should resolve {project_name} placeholder", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		cfg := &autobump.Config{
 			Languages: map[string]autobump.LanguageConfig{
@@ -76,6 +80,8 @@ func TestResolveVersionFilePaths(t *testing.T) {
 	})
 
 	t.Run("should return nil for missing language", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		cfg := &autobump.Config{
 			Languages: map[string]autobump.LanguageConfig{
@@ -91,6 +97,8 @@ func TestResolveVersionFilePaths(t *testing.T) {
 	})
 
 	t.Run("should return empty slice for language with no version files", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		cfg := &autobump.Config{
 			Languages: map[string]autobump.LanguageConfig{
@@ -106,6 +114,8 @@ func TestResolveVersionFilePaths(t *testing.T) {
 	})
 
 	t.Run("should return nil for nil config", func(t *testing.T) {
+		t.Parallel()
+
 		// given / when
 		paths := autobump.ResolveVersionFilePaths(nil, "go", "myrepo")
 
@@ -114,6 +124,8 @@ func TestResolveVersionFilePaths(t *testing.T) {
 	})
 
 	t.Run("should resolve multiple version files", func(t *testing.T) {
+		t.Parallel()
+
 		// given
 		cfg := &autobump.Config{
 			Languages: map[string]autobump.LanguageConfig{

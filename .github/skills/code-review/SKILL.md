@@ -97,14 +97,14 @@ test/infrastructure/doubles/   stubs for infrastructure-only types
 - **Stubs stay on their own side of the import boundary.** Domain-contract stubs go in `test/domain/doubles/repositories/`, infrastructure-only stubs in `test/infrastructure/doubles/repositories/`, named with a `Stub` prefix. A domain stub that imports an infrastructure type inverts the dependency arrow.
 - **Prompt and rule-file handling is untrusted input.** Rules and diffs come from other people's repositories; check that neither can smuggle instructions into a system prompt or escape the JSON contract.
 - **Thread resolution must be idempotent.** `ReviewThread` carries gitforge `ThreadID`/`RootCommentID`; a change that can post a duplicate comment or resolve a thread it did not address is a Critical finding.
-- Unit test files carry `//go:build unit` in this repository — that is the local convention. Exported types and functions each need a GoDoc comment starting with the identifier name, and every `//nolint:exhaustruct` needs a justification.
+- Unit test files carry NO build tag in this repository — a `//go:build unit` constraint on a unit test is a finding, not the convention. Exported types and functions each need a GoDoc comment starting with the identifier name, and every `//nolint:exhaustruct` needs a justification.
 
 ### Commands a reviewer should be able to quote
 
 ```bash
 make lint && make test && make sast
 go build -o bin/code-guru ./cmd/code-guru/
-go test -tags unit ./...
+go test ./...
 ```
 
 ### Local quality gates
