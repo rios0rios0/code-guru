@@ -120,6 +120,51 @@ var (
 // timing-sensitive sleeps.
 var DedupRenewIntervalForTest = dedupRenewInterval
 
+// API-server error constructors re-exported so the lease fake can
+// return the exact error shapes the production code branches on, without
+// exporting the status-error type itself. The reason strings are the
+// ones the Kubernetes API server sets on these outcomes; `isNotFound`
+// and `isAlreadyExists` read them.
+func NewNotFoundErrorForTest() error {
+	return &apiStatusError{Verb: "GET", Code: http.StatusNotFound, Reason: reasonNotFound}
+}
+
+func NewAlreadyExistsErrorForTest() error {
+	return &apiStatusError{Verb: "POST", Code: http.StatusConflict, Reason: reasonAlreadyExist}
+}
+
+// NewConflictErrorForTest is the *other* 409 — a failed precondition, not
+// a name collision. Distinguishing the two is exactly why the production
+// code reads `reason` instead of the status code.
+func NewConflictErrorForTest() error {
+	return &apiStatusError{Verb: "DELETE", Code: http.StatusConflict, Reason: "Conflict"}
+}
+
+// Error predicates re-exported so the adapter tests can pin that a real
+// API-server response body maps to the outcome the dedup dance branches
+// on. These two decisions are what the whole backend rests upon.
+var (
+	IsNotFoundForTest         = isNotFound
+	IsAlreadyExistsForTest    = isAlreadyExists
+	NewLeaseRESTClientForTest = newLeaseRESTClientForTest
+	TokenSourceForTest        = tokenSourceForTest
+)
+
+// newLeaseRESTClientForTest points the REST adapter at an arbitrary base
+// URL (an `httptest` server) with a fixed bearer token, so the wire
+// contract can be exercised without a cluster.
+func newLeaseRESTClientForTest(baseURL, namespace, token string) LeaseClient {
+	source := &tokenSource{path: "", cached: token, readAt: time.Now()}
+	return newLeaseRESTClient(baseURL, namespace, http.DefaultClient, source)
+}
+
+// tokenSourceForTest exposes the ServiceAccount token reader so its
+// rotation and fallback behaviour can be tested against a real file.
+func tokenSourceForTest(path string) func() (string, error) {
+	source := &tokenSource{path: path}
+	return source.get
+}
+
 // MarkInFlightForTest exposes the unexported `trackInFlight` helper so
 // external dispatcher tests can populate the in-flight set without
 // driving the full webhook handler stack. The production code only

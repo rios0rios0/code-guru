@@ -94,11 +94,6 @@ import (
 	"time"
 
 	logger "github.com/sirupsen/logrus"
-	coordinationv1 "k8s.io/api/coordination/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 // leaseAPITimeout caps every call to the K8s API server. The webhook
@@ -159,29 +154,30 @@ const (
 	logFieldLeaseName = "lease_name"
 )
 
-// LeaseClient is the narrow subset of
-// `k8s.io/client-go/kubernetes/typed/coordination/v1.LeaseInterface`
-// the dedup backend actually uses. Defining our own narrow port keeps
-// the test stub tractable (~50 lines instead of implementing the full
-// 9-method generated client) and follows the project rule "the bigger
-// the interface, the weaker the abstraction".
+// LeaseClient is the narrow port the dedup backend needs from the
+// `coordination.k8s.io/v1` API — four verbs on one namespaced resource.
+// `dedup_lease_client.go` implements it over `net/http`; tests implement
+// it with an in-memory fake.
 //
-// The signatures match the upstream `LeaseInterface` exactly so the
-// real client satisfies this interface via Go's structural typing
-// without a wrapper.
+// The signatures carry only what the callers actually decide on, so the
+// per-verb option structs the Kubernetes Go client exposes collapse to
+// the single precondition this package uses (`Delete`'s UID).
 //
 // `Get` is required by the stale-lease takeover path in
 // `SeenRecently` — when `Create` hits `AlreadyExists` we must inspect
 // the holder's `acquireTime` to decide whether to take it over.
 type LeaseClient interface {
-	Create(ctx context.Context, lease *coordinationv1.Lease, opts metav1.CreateOptions) (*coordinationv1.Lease, error)
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*coordinationv1.Lease, error)
-	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
+	Create(ctx context.Context, lease *Lease) (*Lease, error)
+	Get(ctx context.Context, name string) (*Lease, error)
+	// Delete removes the lease. A non-empty `uid` is sent as a
+	// precondition so a takeover cannot remove a lease that another pod
+	// recreated between our Get and our Delete.
+	Delete(ctx context.Context, name, uid string) error
 	// Update is required by the renewal loop. The bot's RBAC `Role`
 	// already grants `update` on `coordination.k8s.io/leases` (see the
 	// shared-toolbox terraform `kubernetes_role.lease_dedup`), so adding
 	// it to the client interface costs no operator action.
-	Update(ctx context.Context, lease *coordinationv1.Lease, opts metav1.UpdateOptions) (*coordinationv1.Lease, error)
+	Update(ctx context.Context, lease *Lease) (*Lease, error)
 }
 
 // K8sLeaseDedup is the cross-pod WebhookDedup backend. It treats a
@@ -224,14 +220,6 @@ func NewK8sLeaseDedupFromInCluster(namespace, holderIdentity string) (*K8sLeaseD
 	if !IsInKubernetes() {
 		return nil, ErrLeaseClientNotConfigured
 	}
-	cfg, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, fmt.Errorf("dedup-lease: in-cluster config: %w", err)
-	}
-	clientset, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("dedup-lease: build clientset: %w", err)
-	}
 	if namespace == "" {
 		ns, readErr := os.ReadFile(podNamespaceFile)
 		if readErr != nil {
@@ -242,7 +230,11 @@ func NewK8sLeaseDedupFromInCluster(namespace, holderIdentity string) (*K8sLeaseD
 	if namespace == "" {
 		return nil, errors.New("dedup-lease: pod namespace is empty after fallback read")
 	}
-	return NewK8sLeaseDedup(clientset.CoordinationV1().Leases(namespace), holderIdentity), nil
+	client, err := newInClusterLeaseClient(namespace)
+	if err != nil {
+		return nil, err
+	}
+	return NewK8sLeaseDedup(client, holderIdentity), nil
 }
 
 // SeenRecently performs the optimistic-create dance against the K8s
@@ -269,9 +261,9 @@ func (d *K8sLeaseDedup) SeenRecently(ctx context.Context, key string) bool {
 	callCtx, cancel := context.WithTimeout(ctx, leaseAPITimeout)
 	defer cancel()
 
-	if _, err := d.client.Create(callCtx, d.buildLease(leaseName), metav1.CreateOptions{}); err == nil {
+	if _, err := d.client.Create(callCtx, d.buildLease(leaseName)); err == nil {
 		return false
-	} else if !apierrors.IsAlreadyExists(err) {
+	} else if !isAlreadyExists(err) {
 		logger.WithFields(logger.Fields{
 			logFieldKey:       key,
 			logFieldLeaseName: leaseName,
@@ -281,13 +273,13 @@ func (d *K8sLeaseDedup) SeenRecently(ctx context.Context, key string) bool {
 
 	// `AlreadyExists` — inspect the holder to decide between "live
 	// lease, real duplicate" and "stale lease from a crashed pod".
-	existing, err := d.client.Get(callCtx, leaseName, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
+	existing, err := d.client.Get(callCtx, leaseName)
+	if isNotFound(err) {
 		// Race: the holder Delete'd between our Create and Get. Retry
 		// Create — most of the time this succeeds because the slot is
 		// free; if a third pod beat us to it the second Create returns
 		// AlreadyExists and we treat the delivery as a duplicate.
-		if _, retryErr := d.client.Create(callCtx, d.buildLease(leaseName), metav1.CreateOptions{}); retryErr == nil {
+		if _, retryErr := d.client.Create(callCtx, d.buildLease(leaseName)); retryErr == nil {
 			return false
 		}
 		return true
@@ -307,9 +299,7 @@ func (d *K8sLeaseDedup) SeenRecently(ctx context.Context, key string) bool {
 
 	// Stale lease — take it over with a UID precondition so a renewer
 	// that just refreshed it cannot lose its work to our cleanup.
-	uid := existing.UID
-	deleteOpts := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}
-	if delErr := d.client.Delete(callCtx, leaseName, deleteOpts); delErr != nil && !apierrors.IsNotFound(delErr) {
+	if delErr := d.client.Delete(callCtx, leaseName, existing.Metadata.UID); delErr != nil && !isNotFound(delErr) {
 		logger.WithFields(logger.Fields{
 			logFieldKey:       key,
 			logFieldLeaseName: leaseName,
@@ -317,7 +307,7 @@ func (d *K8sLeaseDedup) SeenRecently(ctx context.Context, key string) bool {
 		}).Warnf("dedup-lease: takeover Delete failed (%v) — treating as duplicate; the next delivery will retry", delErr)
 		return true
 	}
-	if _, retryErr := d.client.Create(callCtx, d.buildLease(leaseName), metav1.CreateOptions{}); retryErr == nil {
+	if _, retryErr := d.client.Create(callCtx, d.buildLease(leaseName)); retryErr == nil {
 		logger.WithFields(logger.Fields{
 			logFieldKey:       key,
 			logFieldLeaseName: leaseName,
@@ -332,13 +322,15 @@ func (d *K8sLeaseDedup) SeenRecently(ctx context.Context, key string) bool {
 // buildLease constructs the canonical `Lease` payload this pod tries
 // to `Create`. Pulled out so the takeover-retry path uses the exact
 // same shape (with a fresh `acquireTime`) as the first attempt.
-func (d *K8sLeaseDedup) buildLease(name string) *coordinationv1.Lease {
+func (d *K8sLeaseDedup) buildLease(name string) *Lease {
 	duration := leaseDurationSeconds
-	now := metav1.NewMicroTime(time.Now())
+	now := MicroTime{Time: time.Now()}
 	holder := d.holderIdentity
-	return &coordinationv1.Lease{
-		Name: name,
-		Spec: coordinationv1.LeaseSpec{
+	return &Lease{
+		APIVersion: leaseAPIVersion,
+		Kind:       leaseKind,
+		Metadata:   LeaseMeta{Name: name},
+		Spec: LeaseSpec{
 			HolderIdentity:       &holder,
 			LeaseDurationSeconds: &duration,
 			AcquireTime:          &now,
@@ -354,7 +346,7 @@ func (d *K8sLeaseDedup) buildLease(name string) *coordinationv1.Lease {
 // the takeover path can recover from a malformed object — that
 // shape is "shouldn't happen" but the safe behaviour is to let
 // recovery proceed rather than block forever.
-func leaseExpired(lease *coordinationv1.Lease, now time.Time) bool {
+func leaseExpired(lease *Lease, now time.Time) bool {
 	if lease == nil || lease.Spec.LeaseDurationSeconds == nil {
 		return true
 	}
@@ -389,8 +381,8 @@ func (d *K8sLeaseDedup) Forget(ctx context.Context, key string) {
 	callCtx, cancel := context.WithTimeout(ctx, leaseAPITimeout)
 	defer cancel()
 
-	err := d.client.Delete(callCtx, leaseName, metav1.DeleteOptions{})
-	if err == nil || apierrors.IsNotFound(err) {
+	err := d.client.Delete(callCtx, leaseName, "")
+	if err == nil || isNotFound(err) {
 		return
 	}
 	logger.WithFields(logger.Fields{
@@ -429,8 +421,8 @@ func (d *K8sLeaseDedup) Renew(ctx context.Context, key string) {
 	// interface kept the surface small — `Get` + `Update` is well under
 	// one second of latency in practice and matches the shape
 	// `SeenRecently` already uses for the takeover path.
-	existing, err := d.client.Get(callCtx, leaseName, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
+	existing, err := d.client.Get(callCtx, leaseName)
+	if isNotFound(err) {
 		logger.WithFields(logger.Fields{
 			logFieldKey:       key,
 			logFieldLeaseName: leaseName,
@@ -442,14 +434,14 @@ func (d *K8sLeaseDedup) Renew(ctx context.Context, key string) {
 		return
 	}
 
-	now := metav1.NewMicroTime(time.Now())
+	now := MicroTime{Time: time.Now()}
 	existing.Spec.RenewTime = &now
 
-	if _, updateErr := d.client.Update(callCtx, existing, metav1.UpdateOptions{}); updateErr != nil {
+	if _, updateErr := d.client.Update(callCtx, existing); updateErr != nil {
 		// Update racing with Forget / takeover Delete returns NotFound;
 		// that is the expected shape, not a fault. Drop to debug so
 		// shutdown / takeover scenarios stay quiet in operator logs.
-		if apierrors.IsNotFound(updateErr) {
+		if isNotFound(updateErr) {
 			logger.WithFields(logger.Fields{
 				logFieldKey:       key,
 				logFieldLeaseName: leaseName,

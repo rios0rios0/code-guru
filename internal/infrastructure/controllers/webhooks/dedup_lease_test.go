@@ -11,20 +11,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	coordinationv1 "k8s.io/api/coordination/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers/webhooks"
 )
 
-// fakeLeaseClient is a hand-rolled stand-in for
-// `coordination/v1.LeaseInterface`. We do NOT pull in
-// `client-go/kubernetes/typed/coordination/v1/fake` because that
-// package drags in `client-go/testing` and the rest of the fake-action
-// machinery (a heavy transitive cost for a single dedup contract).
+// fakeLeaseClient is a hand-rolled in-memory implementation of the
+// `LeaseClient` port. The dedup dance is the unit under test here, so it
+// runs against this double; the REST adapter that speaks to a real API
+// server is covered separately in `dedup_lease_client_test.go` against
+// an `httptest` server.
 //
 // The fake holds an in-memory map keyed by lease name and exposes:
 //   - the K8s API server's optimistic-concurrency contract on Create
@@ -36,7 +31,7 @@ import (
 //     call did go to the API server, it just got the dup back".
 type fakeLeaseClient struct {
 	mu          sync.Mutex
-	leases      map[string]*coordinationv1.Lease
+	leases      map[string]*webhooks.Lease
 	uidCounter  int
 	createErr   error // when non-nil AND not AlreadyExists, every Create returns this
 	deleteErr   error // when non-nil AND not NotFound, every Delete returns this
@@ -49,38 +44,55 @@ type fakeLeaseClient struct {
 }
 
 func newFakeLeaseClient() *fakeLeaseClient {
-	return &fakeLeaseClient{leases: map[string]*coordinationv1.Lease{}}
+	return &fakeLeaseClient{leases: map[string]*webhooks.Lease{}}
 }
 
-func (f *fakeLeaseClient) Create(
-	_ context.Context,
-	lease *coordinationv1.Lease,
-	_ metav1.CreateOptions,
-) (*coordinationv1.Lease, error) {
+// cloneLease copies a lease so the fake never hands out a pointer into
+// its own map — the real client always returns freshly decoded objects,
+// and a shared pointer would let a caller mutate stored state without
+// going through Update.
+func cloneLease(lease *webhooks.Lease) *webhooks.Lease {
+	copied := *lease
+	copied.Spec = webhooks.LeaseSpec{}
+	if lease.Spec.HolderIdentity != nil {
+		holder := *lease.Spec.HolderIdentity
+		copied.Spec.HolderIdentity = &holder
+	}
+	if lease.Spec.LeaseDurationSeconds != nil {
+		duration := *lease.Spec.LeaseDurationSeconds
+		copied.Spec.LeaseDurationSeconds = &duration
+	}
+	if lease.Spec.AcquireTime != nil {
+		acquire := *lease.Spec.AcquireTime
+		copied.Spec.AcquireTime = &acquire
+	}
+	if lease.Spec.RenewTime != nil {
+		renew := *lease.Spec.RenewTime
+		copied.Spec.RenewTime = &renew
+	}
+	return &copied
+}
+
+func (f *fakeLeaseClient) Create(_ context.Context, lease *webhooks.Lease) (*webhooks.Lease, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.createCalls++
 	if f.createErr != nil {
 		return nil, f.createErr
 	}
-	if _, exists := f.leases[lease.Name]; exists {
-		// Mirror the real K8s API server's 409 AlreadyExists shape so
-		// the production path's `apierrors.IsAlreadyExists` check
-		// returns true. Building it via the typed constructor avoids
-		// embedding wire bytes in the test.
-		return nil, apierrors.NewAlreadyExists(
-			schema.GroupResource{Group: "coordination.k8s.io", Resource: "leases"},
-			lease.Name,
-		)
+	if _, exists := f.leases[lease.Metadata.Name]; exists {
+		// Mirror the real API server's 409 AlreadyExists shape so the
+		// production path's `isAlreadyExists` check returns true.
+		return nil, webhooks.NewAlreadyExistsErrorForTest()
 	}
-	stored := lease.DeepCopy()
+	stored := cloneLease(lease)
 	f.uidCounter++
-	stored.UID = types.UID(fmt.Sprintf("uid-%d", f.uidCounter))
-	f.leases[lease.Name] = stored
-	return stored, nil
+	stored.Metadata.UID = fmt.Sprintf("uid-%d", f.uidCounter)
+	f.leases[lease.Metadata.Name] = stored
+	return cloneLease(stored), nil
 }
 
-func (f *fakeLeaseClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*coordinationv1.Lease, error) {
+func (f *fakeLeaseClient) Get(_ context.Context, name string) (*webhooks.Lease, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.getCalls++
@@ -89,15 +101,12 @@ func (f *fakeLeaseClient) Get(_ context.Context, name string, _ metav1.GetOption
 	}
 	lease, ok := f.leases[name]
 	if !ok {
-		return nil, apierrors.NewNotFound(
-			schema.GroupResource{Group: "coordination.k8s.io", Resource: "leases"},
-			name,
-		)
+		return nil, webhooks.NewNotFoundErrorForTest()
 	}
-	return lease.DeepCopy(), nil
+	return cloneLease(lease), nil
 }
 
-func (f *fakeLeaseClient) Delete(_ context.Context, name string, opts metav1.DeleteOptions) error {
+func (f *fakeLeaseClient) Delete(_ context.Context, name, uid string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deleteCalls++
@@ -106,53 +115,39 @@ func (f *fakeLeaseClient) Delete(_ context.Context, name string, opts metav1.Del
 	}
 	existing, ok := f.leases[name]
 	if !ok {
-		return apierrors.NewNotFound(
-			schema.GroupResource{Group: "coordination.k8s.io", Resource: "leases"},
-			name,
-		)
+		return webhooks.NewNotFoundErrorForTest()
 	}
 	// Honour the UID precondition the takeover path sends — the real
-	// API server returns 409 Conflict if the UID does not match. The
-	// test surfaces this as IsConflict so the production code's
-	// "another pod renewed → treat as duplicate" branch is exercised.
-	if opts.Preconditions != nil && opts.Preconditions.UID != nil && *opts.Preconditions.UID != existing.UID {
-		return apierrors.NewConflict(
-			schema.GroupResource{Group: "coordination.k8s.io", Resource: "leases"},
-			name,
-			errors.New("uid mismatch"),
-		)
+	// API server returns 409 Conflict if the UID does not match, which
+	// drives the production code's "another pod renewed → treat as
+	// duplicate" branch.
+	if uid != "" && uid != existing.Metadata.UID {
+		return webhooks.NewConflictErrorForTest()
 	}
 	delete(f.leases, name)
 	return nil
 }
 
-func (f *fakeLeaseClient) Update(
-	_ context.Context,
-	lease *coordinationv1.Lease,
-	_ metav1.UpdateOptions,
-) (*coordinationv1.Lease, error) {
+func (f *fakeLeaseClient) Update(_ context.Context, lease *webhooks.Lease) (*webhooks.Lease, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.updateCalls++
 	if f.updateErr != nil {
 		return nil, f.updateErr
 	}
-	existing, ok := f.leases[lease.Name]
+	existing, ok := f.leases[lease.Metadata.Name]
 	if !ok {
-		return nil, apierrors.NewNotFound(
-			schema.GroupResource{Group: "coordination.k8s.io", Resource: "leases"},
-			lease.Name,
-		)
+		return nil, webhooks.NewNotFoundErrorForTest()
 	}
-	// Mirror the K8s API server: Update writes the supplied spec on top
-	// of the existing object's identity (UID stays). The renewal path
-	// only mutates `RenewTime`, but the fake honours whatever the
-	// caller wrote so a future test that wants to assert the full spec
+	// Mirror the API server: Update writes the supplied spec on top of
+	// the existing object's identity (UID stays). The renewal path only
+	// mutates `RenewTime`, but the fake honours whatever the caller
+	// wrote so a future test that wants to assert the full spec
 	// round-trip can do so.
-	stored := lease.DeepCopy()
-	stored.UID = existing.UID
-	f.leases[lease.Name] = stored
-	return stored, nil
+	stored := cloneLease(lease)
+	stored.Metadata.UID = existing.Metadata.UID
+	f.leases[lease.Metadata.Name] = stored
+	return cloneLease(stored), nil
 }
 
 func (f *fakeLeaseClient) WithCreateError(err error) *fakeLeaseClient { f.createErr = err; return f }
@@ -166,7 +161,7 @@ func (f *fakeLeaseClient) WithUpdateError(err error) *fakeLeaseClient { f.update
 func (f *fakeLeaseClient) AgeAllLeases(ageSeconds int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	old := metav1.NewMicroTime(time.Now().Add(-time.Duration(ageSeconds) * time.Second))
+	old := webhooks.MicroTime{Time: time.Now().Add(-time.Duration(ageSeconds) * time.Second)}
 	for _, lease := range f.leases {
 		lease.Spec.AcquireTime = &old
 		lease.Spec.RenewTime = &old
@@ -184,13 +179,13 @@ func (f *fakeLeaseClient) StoredCount() int {
 // `sanitizeLeaseName` produces a hash-suffixed name that the test does
 // not need to recompute). Fails the test if zero or multiple leases are
 // stored, so the caller can assume there is exactly one to inspect.
-func (f *fakeLeaseClient) findLeaseByKey(t *testing.T, _ string) *coordinationv1.Lease {
+func (f *fakeLeaseClient) findLeaseByKey(t *testing.T, _ string) *webhooks.Lease {
 	t.Helper()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	require.Len(t, f.leases, 1, "test expected exactly one lease in the fake")
 	for _, lease := range f.leases {
-		return lease.DeepCopy()
+		return cloneLease(lease)
 	}
 	return nil
 }
