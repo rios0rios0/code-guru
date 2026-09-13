@@ -340,6 +340,30 @@ func TestServiceAccountTokenSource(t *testing.T) {
 		assert.Equal(t, "projected-token", token, "a trailing newline would corrupt the Authorization header")
 	})
 
+	t.Run("should pick up a rotated token instead of serving the one read at startup", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the kubelet rewrites the projected token in place, well
+		// before the old one expires. Serving the startup value forever
+		// would authenticate fine for an hour and then 401 every call —
+		// the failure this whole type exists to prevent, and one no
+		// amount of code reading catches once the re-read is dropped.
+		path := filepath.Join(t.TempDir(), "token")
+		require.NoError(t, os.WriteFile(path, []byte("first-token"), 0o600))
+		read := webhooks.TokenSourceForTest(path)
+		first, err := read()
+		require.NoError(t, err)
+		require.Equal(t, "first-token", first)
+
+		// when: the token rotates on disk
+		require.NoError(t, os.WriteFile(path, []byte("rotated-token"), 0o600))
+		second, err := read()
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "rotated-token", second, "a rotated token must reach the Authorization header")
+	})
+
 	t.Run("should keep serving the last good token when a later read fails", func(t *testing.T) {
 		t.Parallel()
 

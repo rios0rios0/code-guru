@@ -192,17 +192,23 @@ func isAlreadyExists(err error) bool {
 // the kubelet replaces the file atomically, but a transient failure
 // must not turn into a hard authentication outage on the hot path.
 type tokenSource struct {
-	path   string
-	mu     sync.Mutex
-	cached string
-	readAt time.Time
+	path string
+	// refreshAfter is how long a cached token is served before the file is
+	// re-read. Injected rather than read from the constant so a test can
+	// pass zero and force every call to go to disk — otherwise the cache
+	// short-circuits before the filesystem is ever touched and both the
+	// rotation and the read-failure fallback go untested.
+	refreshAfter time.Duration
+	mu           sync.Mutex
+	cached       string
+	readAt       time.Time
 }
 
 func (s *tokenSource) get() (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.cached != "" && time.Since(s.readAt) < tokenRefreshInterval {
+	if s.cached != "" && time.Since(s.readAt) < s.refreshAfter {
 		return s.cached, nil
 	}
 	raw, err := os.ReadFile(s.path)
@@ -252,7 +258,8 @@ func newInClusterLeaseClient(namespace string) (*leaseRESTClient, error) {
 	// net.JoinHostPort brackets IPv6 literals; a dual-stack cluster hands
 	// out a bare IPv6 address in KUBERNETES_SERVICE_HOST.
 	base := "https://" + net.JoinHostPort(host, port)
-	return newLeaseRESTClient(base, namespace, client, &tokenSource{path: podTokenFile}), nil
+	token := &tokenSource{path: podTokenFile, refreshAfter: tokenRefreshInterval}
+	return newLeaseRESTClient(base, namespace, client, token), nil
 }
 
 // newLeaseRESTClient assembles a client against an arbitrary base URL so

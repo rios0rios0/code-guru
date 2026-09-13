@@ -154,14 +154,22 @@ var (
 // URL (an `httptest` server) with a fixed bearer token, so the wire
 // contract can be exercised without a cluster.
 func newLeaseRESTClientForTest(baseURL, namespace, token string) LeaseClient {
-	source := &tokenSource{path: "", cached: token, readAt: time.Now()}
+	source := &tokenSource{
+		path:         "",
+		refreshAfter: tokenRefreshInterval,
+		cached:       token,
+		readAt:       time.Now(),
+	}
 	return newLeaseRESTClient(baseURL, namespace, http.DefaultClient, source)
 }
 
-// tokenSourceForTest exposes the ServiceAccount token reader so its
-// rotation and fallback behaviour can be tested against a real file.
+// tokenSourceForTest exposes the ServiceAccount token reader with a zero
+// refresh window, so every call re-reads the file. That is what makes the
+// rotation and read-failure paths reachable from a test — with the
+// production window the cache answers first and the filesystem is never
+// touched.
 func tokenSourceForTest(path string) func() (string, error) {
-	source := &tokenSource{path: path}
+	source := &tokenSource{path: path, refreshAfter: 0}
 	return source.get
 }
 
