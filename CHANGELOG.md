@@ -22,6 +22,18 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.19.1] - 2026-09-14
+
+### Changed
+
+- changed the Go module dependencies to their latest versions
+- corrected the `CLAUDE.md` feature catalog to state the 1 MiB project-guidelines and 64 KiB PR-description bounds, matching the code and the rest of the document
+- replaced `k8s.io/client-go` with a direct `coordination.k8s.io/v1` REST adapter over `net/http` for the cross-pod webhook dedup Lease backend, removing ~40 transitive modules, the recurring `structured-merge-diff` version skew, and two permanent `govulncheck` false positives; the RBAC the bot needs is unchanged
+
+### Fixed
+
+- pinned k8s.io/kube-openapi to the version compatible with the pinned k8s.io/apimachinery and k8s.io/client-go release, resolving a structured-merge-diff v6/v7 type mismatch that broke the build
+
 ## [1.19.0] - 2026-09-09
 
 ### Added

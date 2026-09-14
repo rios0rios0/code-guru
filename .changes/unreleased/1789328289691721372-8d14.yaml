@@ -1,3 +1,0 @@
-kind: 'Fixed'
-body: 'pinned k8s.io/kube-openapi to the version compatible with the pinned k8s.io/apimachinery and k8s.io/client-go release, resolving a structured-merge-diff v6/v7 type mismatch that broke the build'
-time: '2026-09-13T19:38:09.691654926Z'
