@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'replaced `k8s.io/client-go` with a direct `coordination.k8s.io/v1` REST adapter over `net/http` for the cross-pod webhook dedup Lease backend, removing ~40 transitive modules, the recurring `structured-merge-diff` version skew, and two permanent `govulncheck` false positives; the RBAC the bot needs is unchanged'
-time: '2026-09-13T20:58:22.824019637Z'
