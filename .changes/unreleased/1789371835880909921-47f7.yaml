@@ -1,0 +1,3 @@
+kind: 'Changed'
+body: 'corrected the `CLAUDE.md` feature catalog to state the 1 MiB project-guidelines and 64 KiB PR-description bounds, matching the code and the rest of the document'
+time: '2026-09-14T07:43:55.88083661Z'
