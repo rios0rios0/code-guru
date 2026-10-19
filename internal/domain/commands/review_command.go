@@ -47,7 +47,7 @@ type ReviewOptions struct {
 	Verbose  bool
 	CIPassed bool
 
-	// MaxGuidelinesBytes bounds the reviewed repository's own CLAUDE.md
+	// MaxGuidelinesBytes bounds the reviewed repository's own guidelines file (`AGENTS.md`, else `CLAUDE.md`)
 	// before it reaches the prompt. Zero (the "unset" state, used by
 	// hand-built commands and tests) falls back to
 	// entities.AIConfig.GuidelinesBytes()'s default, so a caller that
@@ -146,11 +146,11 @@ type ReviewOptions struct {
 	BotIdentities []string
 
 	// LoadProjectGuidelines, when true, fetches the reviewed
-	// repository's own root `CLAUDE.md` via the provider's file-access
+	// repository's own root guidelines file (`AGENTS.md`, else `CLAUDE.md`) via the provider's file-access
 	// API and forwards it to the LLM as project-specific review context
 	// (`ReviewRequest.ProjectGuidelines`), so the review honours the
 	// project's own conventions on any provider. The fetch is skipped
-	// when the PR itself modifies CLAUDE.md — the diff already shows it
+	// when the PR itself modifies a guidelines file — the diff already shows it
 	// — and is best-effort otherwise: a missing file or provider error
 	// logs and the review proceeds without guidelines. Wired from
 	// `settings.AI.ProjectGuidelinesEnabled()` at each call site, which
@@ -308,6 +308,7 @@ func (c *ReviewCommand) Execute(
 	// First-pass reviews leave Conversation nil so the prompt is
 	// byte-for-byte the same as before this change landed.
 	conversation := c.buildConversation(ctx, provider, repo, pr.ID, opts)
+	projectGuidelines, projectGuidelinesSource := c.loadProjectGuidelines(ctx, provider, repo, pr.ID, paths, opts)
 	request := entities.ReviewRequest{
 		Repository:   repo,
 		PullRequest:  pr,
@@ -315,10 +316,11 @@ func (c *ReviewCommand) Execute(
 		Rules:        rules,
 		Conversation: conversation,
 		// Best-effort project context: the reviewed repository's own
-		// CLAUDE.md, so the LLM judges the diff against the project's
-		// conventions. Empty (and the prompt unchanged) when disabled,
-		// unavailable, or when the PR itself modifies the file.
-		ProjectGuidelines: c.loadProjectGuidelines(ctx, provider, repo, pr.ID, paths, opts),
+		// AGENTS.md (or CLAUDE.md), so the LLM judges the diff against the
+		// project's conventions. Empty (and the prompt unchanged) when
+		// disabled, unavailable, or when the PR itself modifies the file.
+		ProjectGuidelines:       projectGuidelines,
+		ProjectGuidelinesSource: projectGuidelinesSource,
 		// Best-effort intent context: the PR's description and commit
 		// count, so the LLM judges whether the diff does what the
 		// author claims. Zero (and the prompt unchanged) when disabled

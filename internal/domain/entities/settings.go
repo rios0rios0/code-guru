@@ -100,7 +100,8 @@ type AIConfig struct {
 	MaxAttempts int `yaml:"max_attempts"`
 
 	// ProjectGuidelines, when set, controls whether the bot loads the
-	// reviewed repository's own root `CLAUDE.md` and forwards it to the
+	// reviewed repository's own root guidelines file (`AGENTS.md`, else
+	// `CLAUDE.md`) and forwards it to the
 	// LLM as project-specific review context, so the review honours the
 	// project's own conventions in addition to the operator-configured
 	// rules. Works on every provider that supports API file access
@@ -134,7 +135,8 @@ type AIConfig struct {
 	PRMetadata *bool `yaml:"pr_metadata"`
 
 	// MaxGuidelinesBytes bounds how much of the reviewed repository's own
-	// `CLAUDE.md` is forwarded to the LLM. Resolve via GuidelinesBytes()
+	// root guidelines file (`AGENTS.md`, else `CLAUDE.md`) is forwarded to
+	// the LLM. Resolve via GuidelinesBytes()
 	// (defaults to defaultMaxGuidelinesBytes when unset or non-positive).
 	// Honours CODE_GURU_AI_MAX_GUIDELINES_BYTES.
 	//
@@ -238,7 +240,7 @@ func (a AIConfig) BatchLargeReviewsEnabled() bool {
 // window, leaving the remaining ~75% for the diff and the rest of the
 // prompt.
 //
-// It is a ceiling, not an allocation: real `CLAUDE.md` files are tens of
+// It is a ceiling, not an allocation: real guidelines files are tens of
 // kilobytes, so for almost every repository this bound never binds and the
 // whole document is sent. The previous 32 KiB ceiling was sized for a 200K
 // window and silently truncated large, well-maintained guidelines files
@@ -300,7 +302,7 @@ func (a AIConfig) NativeReviewSubmissionEnabled() bool {
 // ProjectGuidelinesEnabled resolves the tri-state ProjectGuidelines pointer
 // into a single boolean. nil (the YAML / env "unset" state) returns true so
 // deployments that never wire the flag pick up the reviewed repository's
-// CLAUDE.md automatically; an explicit `project_guidelines: false` in YAML
+// guidelines file (`AGENTS.md`, else `CLAUDE.md`) automatically; an explicit `project_guidelines: false` in YAML
 // or `CODE_GURU_AI_PROJECT_GUIDELINES=false` returns false. Callers should
 // always go through this helper rather than dereferencing the pointer.
 func (a AIConfig) ProjectGuidelinesEnabled() bool {

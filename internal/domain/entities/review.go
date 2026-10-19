@@ -139,7 +139,7 @@ type ReviewRequest struct {
 	Attempt int
 
 	// ProjectGuidelines carries the reviewed repository's own AI
-	// guidance file (its root `CLAUDE.md`), fetched from the provider at
+	// guidance file (its root `AGENTS.md`, else `CLAUDE.md`), fetched from the provider at
 	// review time so the LLM judges the diff against the project's OWN
 	// conventions rather than only the operator-configured rules. Empty
 	// when the repository has no such file, when the fetch failed (the
@@ -149,6 +149,13 @@ type ReviewRequest struct {
 	// copy is not fetched on top). Content is truncated at load time so
 	// a pathological guidelines file cannot blow the prompt budget.
 	ProjectGuidelines string
+
+	// ProjectGuidelinesSource is the file name ProjectGuidelines was
+	// loaded from (`AGENTS.md` or `CLAUDE.md`), so the prompt tells the
+	// model which document it is reading. Empty falls back to `CLAUDE.md`
+	// in the prompt, the only name callers could produce before the
+	// `AGENTS.md` lookup existed.
+	ProjectGuidelinesSource string
 }
 
 // ReviewThread is one inline review conversation: the bot's original

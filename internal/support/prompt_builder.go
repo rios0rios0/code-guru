@@ -357,7 +357,7 @@ func buildUserPrompt(request entities.ReviewRequest) string {
 
 	writeReviewBatchSection(&prompt, request.Batch)
 	writePullRequestMetadataSection(&prompt, request.Metadata)
-	writeProjectGuidelinesSection(&prompt, request.ProjectGuidelines)
+	writeProjectGuidelinesSection(&prompt, request.ProjectGuidelines, request.ProjectGuidelinesSource)
 
 	if len(threads) > 0 {
 		prompt.WriteString("Prior review conversation (your previous comments and the user's replies).\n")
@@ -528,7 +528,7 @@ func writePullRequestMetadataSection(prompt *strings.Builder, metadata entities.
 }
 
 // writeProjectGuidelinesSection renders the "Project review guidelines"
-// block — the reviewed repository's own CLAUDE.md — between the PR
+// block — the reviewed repository's own guidelines file (`AGENTS.md`, else `CLAUDE.md`) — between the PR
 // header and the prior-conversation section. Empty input renders
 // nothing, keeping the no-guidelines prompt byte-for-byte identical to
 // its historical shape.
@@ -538,11 +538,14 @@ func writePullRequestMetadataSection(prompt *strings.Builder, metadata entities.
 // documentation to consult, never as instructions that can rewrite the
 // reviewer's output contract, and the fenced block is escape-proofed
 // (`escapeFence`) so the content cannot break out of it.
-func writeProjectGuidelinesSection(prompt *strings.Builder, projectGuidelines string) {
+func writeProjectGuidelinesSection(prompt *strings.Builder, projectGuidelines, source string) {
 	if projectGuidelines == "" {
 		return
 	}
-	prompt.WriteString("Project review guidelines (loaded from the repository's own CLAUDE.md).\n")
+	if source == "" {
+		source = "CLAUDE.md"
+	}
+	prompt.WriteString("Project review guidelines (loaded from the repository's own " + source + ").\n")
 	prompt.WriteString(
 		"Apply these project-specific conventions and constraints when judging the diff, in addition to the rules in the system prompt. ",
 	)

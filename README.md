@@ -22,7 +22,7 @@ A CLI tool that leverages AI (Claude Code CLI or OpenAI API) to automatically re
 - Dual AI backend: Claude Code CLI (`claude --print`) or OpenAI Chat Completions API
 - Rule-based reviews using Markdown files from [guide](https://github.com/rios0rios0/guide) (or any directory)
 - YAML `frontmatter` in rules for file-glob-based filtering (e.g., `paths: ["**/*.go"]`)
-- Project-aware reviews: the reviewed repository's own `CLAUDE.md` is loaded automatically (on any provider) and forwarded to the AI as project-specific context, so the review honours the project's documented conventions — see [Project Guidelines](#project-guidelines-claudemd)
+- Project-aware reviews: the reviewed repository's own `AGENTS.md` (or `CLAUDE.md`) is loaded automatically (on any provider) and forwarded to the AI as project-specific context, so the review honours the project's documented conventions — see [Project Guidelines](#project-guidelines-agentsmd--claudemd)
 - Intent-aware reviews: the PR's title, branch names, description, and commit count are forwarded to the AI so it can judge whether the diff actually does what the author claims and flag undocumented scope creep — see [Pull Request Context](#pull-request-context-intent-aware-reviews)
 - Inline and general PR comments posted back via gitforge
 - Three modes: single PR review, batch review-all, and discover (list open PRs)
@@ -70,8 +70,8 @@ ai:
   # transient-error response before the review is marked failed. Defaults to 3;
   # set to 1 to disable retries.
   max_attempts: 3
-  # When true (the default), the reviewed repository's own root CLAUDE.md is
-  # loaded and forwarded to the AI as project-specific review context. Set to
+  # When true (the default), the reviewed repository's own root AGENTS.md (CLAUDE.md
+  # when there is none) is loaded and forwarded to the AI as project-specific review context. Set to
   # false to opt out.
   project_guidelines: true
   # When true (the default), the PR's description and commit count are fetched
@@ -495,7 +495,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_AI_SUBMIT_NATIVE_REVIEW`   | Records a native review (Approved / Changes Requested) on the platform's reviewer panel; set to `false` to opt out | `true`               |
 | `CODE_GURU_AI_REVIEW_DRAFTS`          | When `true`, the bot reviews draft PRs as well — by default drafts are skipped | `false`              |
 | `CODE_GURU_AI_MAX_ATTEMPTS`           | Times the AI backend is re-sampled per review when it returns a non-JSON or transient-error response before the review is marked failed (`1` disables retries) | `3`                  |
-| `CODE_GURU_AI_PROJECT_GUIDELINES`     | Loads the reviewed repository's own `CLAUDE.md` as project-specific review context; set to `false` to opt out | `true`               |
+| `CODE_GURU_AI_PROJECT_GUIDELINES`     | Loads the reviewed repository's own `AGENTS.md` (or `CLAUDE.md`) as project-specific review context; set to `false` to opt out | `true`               |
 | `CODE_GURU_AI_PR_METADATA`            | Fetches the PR's description and commit count as intent context for the AI; set to `false` to opt out | `true`               |
 | `CODE_GURU_AI_BATCH_LARGE_REVIEWS`    | Reviews a PR too large for the model's context window in batches instead of skipping it; set to `false` to get the "too large" notice and no review | `true`               |
 | `CODE_GURU_AI_MAX_REVIEW_BATCHES`     | Caps how many batches one batched review may consume; files left over are reported as unreviewed | `20`                 |
@@ -536,14 +536,15 @@ Language categories are selected purely from the **extensions** of the files the
 
 A category with no matching `.md` file in the rules directory simply contributes nothing — only the universal rules and the matched languages are sent to the model.
 
-### Project Guidelines (CLAUDE.md)
+### Project Guidelines (AGENTS.md / CLAUDE.md)
 
-On top of the operator-configured rules, Code Guru reads the **reviewed repository's own root `CLAUDE.md`** — the file projects use to document conventions for AI tooling — and forwards it to the AI as project-specific review context. This works on every supported provider (GitHub and Azure DevOps) through the same file-access API the trivial detectors use, and it means the review honours conventions the generic ruleset cannot know about (naming, layering, testing patterns, intentional trade-offs).
+On top of the operator-configured rules, Code Guru reads the **reviewed repository's own root `AGENTS.md`**, falling back to `CLAUDE.md` when there is none — the file projects use to document conventions for AI tooling — and forwards it to the AI as project-specific review context. This works on every supported provider (GitHub and Azure DevOps) through the same file-access API the trivial detectors use, and it means the review honours conventions the generic ruleset cannot know about (naming, layering, testing patterns, intentional trade-offs).
 
 Behaviour details:
 
-- When the PR itself modifies `CLAUDE.md`, the repository fetch is skipped — the model already reads the change in the diff, and layering the pre-change copy on top would present two conflicting versions of the same document.
-- The fetch is best-effort: a repository without a `CLAUDE.md`, a provider without file-access support, or a transient error simply produces a review without project guidelines. It never fails or delays the review beyond a 10-second fetch timeout.
+- `AGENTS.md` wins when both exist, because a migrated repository keeps a `CLAUDE.md` holding only the line `@AGENTS.md`, which would otherwise reach the model as a literal import. The prompt names the file actually loaded. An empty `AGENTS.md` defers to `CLAUDE.md`.
+- When the PR itself modifies `AGENTS.md` or `CLAUDE.md`, the repository fetch is skipped — the model already reads the change in the diff, and layering the pre-change copy on top would present two conflicting versions of the same document.
+- The fetch is best-effort: a repository with neither file, a provider without file-access support, or a transient error simply produces a review without project guidelines. It never fails or delays the review beyond a 10-second fetch timeout.
 - Content is bounded to `ai.max_guidelines_bytes` (default 1 MiB, roughly 256k tokens — about a quarter of a 1M-token context window) so a pathological guidelines file cannot crowd the diff out of the model's context window. A large but legitimate `CLAUDE.md` is sent whole; when the bound does bite, the truncation is logged with the file size and the budget. **The default assumes a 1M-token window** — on a 128K-token model, or on Anthropic with `ai.anthropic.context_1m` disabled, lower it via `ai.max_guidelines_bytes` or `CODE_GURU_AI_MAX_GUIDELINES_BYTES`.
 - The document is framed to the model as documentation, not instructions — it cannot change the output format, the verdict rules, or the reviewer role.
 
@@ -567,7 +568,7 @@ Enabled by default; opt out with `ai.pr_metadata: false` or `CODE_GURU_AI_PR_MET
 
 ## Large pull requests
 
-Every review sends the full diff — plus the rules, the repository's `CLAUDE.md`, the PR metadata, and any prior review conversation — to the AI backend in a single request. When that combined prompt is larger than the model's context window, one pass cannot produce the review, so Code Guru splits the work instead of giving up:
+Every review sends the full diff — plus the rules, the repository's `AGENTS.md`/`CLAUDE.md`, the PR metadata, and any prior review conversation — to the AI backend in a single request. When that combined prompt is larger than the model's context window, one pass cannot produce the review, so Code Guru splits the work instead of giving up:
 
 - **The change is reviewed in batches.** The files are split into chunks that fit the model, reviewed one after another, and merged into a single review: the union of every batch's findings, and the most severe verdict any batch reported (one blocking finding blocks the pull request). The batch size is discovered from the backend's own overflow report and shrinks until it fits, so it adapts to the model, the beta flags in play, and how much of the window the rules and guidelines already consume.
 - **The pull request is told what is happening.** Before the batches run, the PR gets a "reviewing this PR in batches" notice reporting the change's scale (file count and total diff size) and warning that the review **will** arrive but takes several times longer than usual — so nobody reads the delay as a crashed bot and merges early.

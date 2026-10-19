@@ -886,6 +886,7 @@ func TestNewSettingsFromEnvProjectGuidelines(t *testing.T) {
 	})
 }
 
+//nolint:paralleltest // sibling subtests use t.Setenv, which panics under t.Parallel
 func TestNewSettingsProjectGuidelinesEnvOverride(t *testing.T) {
 	// Pins that the project-guidelines kill switch works on the YAML path
 	// too: deployments ship a YAML baseline and flip per-environment
@@ -1034,6 +1035,7 @@ func TestNewSettingsFromEnvPRMetadata(t *testing.T) {
 	})
 }
 
+//nolint:paralleltest // sibling subtests use t.Setenv, which panics under t.Parallel
 func TestNewSettingsPRMetadataEnvOverride(t *testing.T) {
 	// Pins that the PR-metadata kill switch works on the YAML path too,
 	// mirroring the project-guidelines override contract: an operator's
@@ -1182,6 +1184,7 @@ func TestNewSettingsFromEnvTrivialDeleteSourceBranch(t *testing.T) {
 	})
 }
 
+//nolint:paralleltest // sibling subtests use t.Setenv, which panics under t.Parallel
 func TestNewSettingsTrivialDeleteSourceBranchEnvOverride(t *testing.T) {
 	// Pins that the delete-source-branch kill switch works on the YAML path
 	// too: deployments ship a YAML baseline and flip per-environment behaviour
@@ -1309,6 +1312,7 @@ func TestReviewBatches(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // sibling subtests use t.Setenv, which panics under t.Parallel
 func TestNewSettingsBatchingEnvOverrides(t *testing.T) {
 	// Both knobs must be settable per-environment on a YAML-configured pod,
 	// the same contract every other AI kill switch and budget follows.

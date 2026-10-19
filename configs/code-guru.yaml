@@ -16,8 +16,8 @@ ai:
   claude:
     binary_path: 'claude'
     model: 'sonnet'
-  # Load the reviewed repository's own CLAUDE.md as project-specific
-  # review context (default: true; set false to opt out).
+  # Load the reviewed repository's own AGENTS.md (CLAUDE.md when there
+  # is none) as project-specific review context (default: true; set false to opt out).
   project_guidelines: true
   # Fetch the PR's description and commit count as intent context for
   # the AI (default: true; set false to opt out).

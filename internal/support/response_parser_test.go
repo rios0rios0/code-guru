@@ -186,6 +186,8 @@ func TestParseReviewResponse(t *testing.T) {
 // keeps every parse assertion parallel while the log-capture assertions stay
 // serial; making them parallel would require `ParseReviewResponse` to take a
 // logger, which is a production change this test does not justify.
+//
+//nolint:paralleltest // captures the global logrus logger, so it cannot run in parallel
 func TestParseReviewResponseLogging(t *testing.T) {
 	t.Run("should not log raw content at ERROR level on parse failure", func(t *testing.T) {
 		// given: the model occasionally echoes pieces of the prompt back, and

@@ -106,13 +106,13 @@ var (
 	// to a thread state that should auto-close the thread.
 	ShouldCloseResolution = shouldCloseResolution
 
-	// LoadProjectGuidelines re-exports the CLAUDE.md loader so tests
+	// LoadProjectGuidelines re-exports the AGENTS.md/CLAUDE.md loader so tests
 	// can pin its gates (option off, file in diff, no file access,
 	// fetch error, truncation) without driving the full Execute flow.
 	LoadProjectGuidelines = (*ReviewCommand).loadProjectGuidelines
 
 	// DiffTouchesProjectGuidelines is the pure changed-paths check
-	// backing the "the PR already shows CLAUDE.md in its diff" skip.
+	// backing the "the PR already shows AGENTS.md or CLAUDE.md in its diff" skip.
 	DiffTouchesProjectGuidelines = diffTouchesProjectGuidelines
 
 	// LoadPullRequestMetadata re-exports the PR-metadata loader so

@@ -3311,16 +3311,155 @@ func TestLoadProjectGuidelines(t *testing.T) {
 			}
 
 			// when
-			got := commands.LoadProjectGuidelines(
+			got, source := commands.LoadProjectGuidelines(
 				rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
 
 			// then
 			assert.Equal(t, "# Project rules\n\nUse BDD blocks in every test.", got,
 				"the fetched content must be returned trimmed so the prompt does not carry stray blank lines")
-			assert.Equal(t, []string{"CLAUDE.md"}, provider.fetchedPaths,
-				"exactly one fetch for the root CLAUDE.md must be issued")
+			assert.Equal(t, []string{"AGENTS.md", "CLAUDE.md"}, provider.fetchedPaths,
+				"AGENTS.md is tried first and the missing file falls back to the root CLAUDE.md")
+			assert.Equal(t, "CLAUDE.md", source, "the loader must report the file the content came from")
 		},
 	)
+
+	t.Run("should load AGENTS.md when it is the only guidelines file", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"AGENTS.md": "# Agent rules\n\nUse BDD blocks.\n"},
+		}
+
+		// when
+		got, source := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
+
+		// then
+		assert.Equal(t, "# Agent rules\n\nUse BDD blocks.", got)
+		assert.Equal(t, "AGENTS.md", source)
+		assert.Equal(t, []string{"AGENTS.md"}, provider.fetchedPaths,
+			"the first hit must end the lookup, so CLAUDE.md is never fetched")
+	})
+
+	t.Run(
+		"should load AGENTS.md rather than the literal import line when CLAUDE.md only imports it",
+		func(t *testing.T) {
+			t.Parallel()
+
+			// given: a migrated repository keeps a one-line CLAUDE.md that
+			// imports AGENTS.md; forwarding it raw would hand the model
+			// the string "@AGENTS.md" instead of the conventions.
+			rc := commands.NewReviewCommand(nil, nil, nil, nil)
+			provider := &fileAccessRecordingProvider{
+				fileContents: map[string]string{
+					"AGENTS.md": "# Agent rules\n\nUse BDD blocks.\n",
+					"CLAUDE.md": "@AGENTS.md\n",
+				},
+			}
+
+			// when
+			got, source := commands.LoadProjectGuidelines(
+				rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
+
+			// then
+			assert.Equal(t, "# Agent rules\n\nUse BDD blocks.", got)
+			assert.NotContains(t, got, "@AGENTS.md")
+			assert.Equal(t, "AGENTS.md", source)
+		},
+	)
+
+	t.Run("should fall back to CLAUDE.md when AGENTS.md is blank", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"AGENTS.md": "  \n", "CLAUDE.md": "# Legacy rules"},
+		}
+
+		// when
+		got, source := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
+
+		// then
+		assert.Equal(t, "# Legacy rules", got)
+		assert.Equal(t, "CLAUDE.md", source)
+	})
+
+	t.Run("should return empty when the AGENTS.md fetch fails and CLAUDE.md only imports it", func(t *testing.T) {
+		t.Parallel()
+
+		// given: AGENTS.md is absent from the stub (a failed fetch) and
+		// CLAUDE.md is the one-line shim of a migrated repository.
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"CLAUDE.md": "@AGENTS.md\n"},
+		}
+
+		// when
+		got, source := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
+
+		// then
+		assert.Empty(t, got)
+		assert.NotContains(t, got, "@AGENTS.md")
+		assert.Empty(t, source)
+	})
+
+	t.Run("should return empty when AGENTS.md is blank and CLAUDE.md only imports it", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"AGENTS.md": " \n", "CLAUDE.md": "@AGENTS.md\n"},
+		}
+
+		// when
+		got, source := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
+
+		// then
+		assert.Empty(t, got)
+		assert.Empty(t, source)
+	})
+
+	t.Run("should return empty content and source when neither file exists", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &fileAccessRecordingProvider{fileContents: map[string]string{}}
+
+		// when
+		got, source := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
+
+		// then
+		assert.Empty(t, got)
+		assert.Empty(t, source)
+	})
+
+	t.Run("should skip the fetch when the PR diff already touches AGENTS.md", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			fileContents: map[string]string{"AGENTS.md": "# stale pre-change copy"},
+		}
+
+		// when
+		got, source := commands.LoadProjectGuidelines(
+			rc, context.Background(), provider, repo, prID, []string{"AGENTS.md", "internal/foo.go"}, enabled)
+
+		// then
+		assert.Empty(t, got)
+		assert.Empty(t, source)
+		assert.Empty(t, provider.fetchedPaths, "an AGENTS.md-touching diff must skip the provider call")
+	})
 
 	t.Run("should return empty and never fetch when the option is disabled", func(t *testing.T) {
 		t.Parallel()
@@ -3333,7 +3472,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		}
 
 		// when
-		got := commands.LoadProjectGuidelines(
+		got, _ := commands.LoadProjectGuidelines(
 			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"},
 			commands.ReviewOptions{LoadProjectGuidelines: false})
 
@@ -3355,7 +3494,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		}
 
 		// when
-		got := commands.LoadProjectGuidelines(
+		got, _ := commands.LoadProjectGuidelines(
 			rc, context.Background(), provider, repo, prID, []string{"CLAUDE.md", "internal/foo.go"}, enabled)
 
 		// then
@@ -3376,7 +3515,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		}
 
 		// when
-		got := commands.LoadProjectGuidelines(
+		got, _ := commands.LoadProjectGuidelines(
 			rc, context.Background(), provider, repo, prID, []string{"/CLAUDE.md"}, enabled)
 
 		// then
@@ -3393,7 +3532,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		provider := &recordingReviewProvider{}
 
 		// when
-		got := commands.LoadProjectGuidelines(
+		got, _ := commands.LoadProjectGuidelines(
 			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
 
 		// then
@@ -3410,12 +3549,13 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		provider := &fileAccessRecordingProvider{fileErr: errors.New("503 Service Unavailable")}
 
 		// when
-		got := commands.LoadProjectGuidelines(
+		got, _ := commands.LoadProjectGuidelines(
 			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
 
 		// then
 		assert.Empty(t, got)
-		assert.Len(t, provider.fetchedPaths, 1, "the loader must have attempted exactly one fetch before degrading")
+		assert.Equal(t, []string{"AGENTS.md", "CLAUDE.md"}, provider.fetchedPaths,
+			"the loader must have tried both candidates before degrading")
 	})
 
 	t.Run("should return empty when the file is whitespace-only", func(t *testing.T) {
@@ -3429,7 +3569,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		}
 
 		// when
-		got := commands.LoadProjectGuidelines(
+		got, _ := commands.LoadProjectGuidelines(
 			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
 
 		// then
@@ -3450,7 +3590,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		}
 
 		// when
-		got := commands.LoadProjectGuidelines(
+		got, _ := commands.LoadProjectGuidelines(
 			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
 
 		// then
@@ -3475,7 +3615,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		}
 
 		// when
-		got := commands.LoadProjectGuidelines(
+		got, _ := commands.LoadProjectGuidelines(
 			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, enabled)
 
 		// then
@@ -3502,7 +3642,7 @@ func TestLoadProjectGuidelines(t *testing.T) {
 		}
 
 		// when
-		got := commands.LoadProjectGuidelines(
+		got, _ := commands.LoadProjectGuidelines(
 			rc, context.Background(), provider, repo, prID, []string{"internal/foo.go"}, bounded)
 
 		// then
@@ -3523,6 +3663,8 @@ func TestLoadProjectGuidelines(t *testing.T) {
 // (budget, budget+sentinel] band — truncating the project's conventions
 // without ever telling the operator. The condition must key off the
 // ORIGINAL length vs. the budget instead.
+//
+//nolint:paralleltest // captures the global logrus logger, so it cannot run in parallel
 func TestLoadProjectGuidelinesTruncationWarning(t *testing.T) {
 	repo := forgeEntities.Repository{ID: "repo-1", Name: "demo"}
 	const prID = 4242
@@ -3586,6 +3728,9 @@ func TestDiffTouchesProjectGuidelines(t *testing.T) {
 		want  bool
 	}{
 		{name: "should match the root CLAUDE.md", paths: []string{"CLAUDE.md"}, want: true},
+		{name: "should match the root AGENTS.md", paths: []string{"AGENTS.md"}, want: true},
+		{name: "should match the ADO-shape /AGENTS.md", paths: []string{"/AGENTS.md"}, want: true},
+		{name: "should NOT match a nested docs/AGENTS.md", paths: []string{"docs/AGENTS.md"}, want: false},
 		{name: "should match the ADO-shape /CLAUDE.md", paths: []string{"/CLAUDE.md"}, want: true},
 		{name: "should match case-insensitively (claude.md)", paths: []string{"claude.md"}, want: true},
 		{
@@ -3650,7 +3795,39 @@ func TestExecuteLLMPathLoadsProjectGuidelines(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "# Conventions\n\nAlways alias logrus as logger.", ai.LastRequest.ProjectGuidelines,
 			"the reviewed repository's CLAUDE.md must reach the AI request so every backend renders it into the prompt")
-		assert.Equal(t, []string{"CLAUDE.md"}, provider.fetchedPaths)
+		assert.Equal(t, "CLAUDE.md", ai.LastRequest.ProjectGuidelinesSource)
+		assert.Equal(t, []string{"AGENTS.md", "CLAUDE.md"}, provider.fetchedPaths)
+	})
+
+	t.Run("should forward AGENTS.md and its name to the AI request when both files exist", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a migrated repository whose CLAUDE.md only imports AGENTS.md
+		rules := &doubles.StubRulesRepository{}
+		ai := &doubles.StubAIReviewerRepository{
+			NameValue: "stub",
+			Result:    &entities.ReviewResult{Verdict: "approve"},
+		}
+		rc := commands.NewReviewCommand(ai, rules, nil, nil)
+		provider := &fileAccessRecordingProvider{
+			files: []forgeEntities.PullRequestFile{
+				{Path: "internal/foo.go", Patch: "@@ -1 +1 @@\n-old\n+new\n"},
+			},
+			fileContents: map[string]string{
+				"AGENTS.md": "# Conventions\n\nAlways alias logrus as logger.",
+				"CLAUDE.md": "@AGENTS.md",
+			},
+		}
+
+		// when
+		_, err := rc.Execute(context.Background(), provider, repo, pr, commands.ReviewOptions{
+			LoadProjectGuidelines: true,
+		})
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "# Conventions\n\nAlways alias logrus as logger.", ai.LastRequest.ProjectGuidelines)
+		assert.Equal(t, "AGENTS.md", ai.LastRequest.ProjectGuidelinesSource)
 	})
 
 	t.Run("should leave ProjectGuidelines empty when the operator disabled the feature", func(t *testing.T) {
@@ -3892,5 +4069,53 @@ func TestExecuteForwardsPullRequestMetadata(t *testing.T) {
 		require.NoError(t, err, "a metadata fetch failure must never fail the review")
 		require.NotNil(t, result)
 		assert.Zero(t, ai.LastRequest.Metadata)
+	})
+}
+
+//nolint:paralleltest // captures the global logrus logger, so it cannot run in parallel
+func TestLoadProjectGuidelinesSkipLog(t *testing.T) {
+	t.Run("should name the guidelines files the PR touches in the skip log", func(t *testing.T) {
+		// given
+		hook := logrustest.NewLocal(logger.StandardLogger())
+		defer hook.Reset()
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &fileAccessRecordingProvider{fileContents: map[string]string{}}
+		opts := commands.ReviewOptions{LoadProjectGuidelines: true}
+
+		// when
+		commands.LoadProjectGuidelines(rc, context.Background(), provider,
+			forgeEntities.Repository{ID: "repo-1", Name: "demo"}, 4242, []string{"CLAUDE.md", "AGENTS.md"}, opts)
+
+		// then
+		var skip string
+		for _, entry := range hook.AllEntries() {
+			if strings.Contains(entry.Message, "skipping the repository fetch") {
+				skip = entry.Message
+			}
+		}
+		assert.Contains(t, skip, "AGENTS.md, CLAUDE.md")
+		assert.NotContains(t, skip, "AGENTS.md or CLAUDE.md")
+	})
+
+	t.Run("should name only the touched file when the PR touches one", func(t *testing.T) {
+		// given
+		hook := logrustest.NewLocal(logger.StandardLogger())
+		defer hook.Reset()
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &fileAccessRecordingProvider{fileContents: map[string]string{}}
+		opts := commands.ReviewOptions{LoadProjectGuidelines: true}
+
+		// when
+		commands.LoadProjectGuidelines(rc, context.Background(), provider,
+			forgeEntities.Repository{ID: "repo-1", Name: "demo"}, 4242, []string{"internal/foo.go", "CLAUDE.md"}, opts)
+
+		// then
+		var skip string
+		for _, entry := range hook.AllEntries() {
+			if strings.Contains(entry.Message, "skipping the repository fetch") {
+				skip = entry.Message
+			}
+		}
+		assert.Contains(t, skip, "(CLAUDE.md)")
 	})
 }

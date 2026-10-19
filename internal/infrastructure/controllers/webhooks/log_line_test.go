@@ -64,6 +64,8 @@ func TestDeliveryFields(t *testing.T) {
 }
 
 // These tests capture the standard logger, so they do not run in parallel.
+//
+//nolint:paralleltest // captures the global logrus logger, so it cannot run in parallel
 func TestLogHelpers(t *testing.T) {
 	t.Run("should log a message built from delivery data with its line breaks escaped", func(t *testing.T) {
 		// given

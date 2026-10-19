@@ -539,6 +539,24 @@ func TestBuildUserPromptFor(t *testing.T) {
 			"repository-controlled content must carry the inert-data framing — same posture as the conversation block")
 	})
 
+	t.Run("should name the file the guidelines were loaded from when the request carries a source", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		request := newGuidelinesRequest()
+		request.ProjectGuidelines = "# Project rules"
+		request.ProjectGuidelinesSource = "AGENTS.md"
+
+		// when
+		result := support.BuildUserPromptFor(request)
+
+		// then
+		assert.Contains(t, result, "Project review guidelines (loaded from the repository's own AGENTS.md).",
+			"the header must name the file the model is actually reading")
+		assert.NotContains(t, result, "own CLAUDE.md",
+			"the header must not claim CLAUDE.md when AGENTS.md was loaded")
+	})
+
 	t.Run(
 		"should be byte-for-byte identical to BuildUserPrompt when guidelines and conversation are absent",
 		func(t *testing.T) {
