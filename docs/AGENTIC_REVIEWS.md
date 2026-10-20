@@ -90,6 +90,7 @@ ai:
       max_budget_usd: 0             # forwarded to --max-budget-usd; 0 = no cap
       fallback_model: ''            # forwarded to --fallback-model
       min_confidence: 80            # findings below are dropped (and listed)
+      # subprocess_env_scrub: true  # optional: requires bubblewrap; omit for automatic detection
 
 rules:
   path: '/opt/claude/rules'
@@ -107,6 +108,7 @@ rules:
 | `ai.claude.agentic.max_budget_usd` | `CODE_GURU_CLAUDE_AGENTIC_MAX_BUDGET_USD` | `0` (no cap) |
 | `ai.claude.agentic.fallback_model` | `CODE_GURU_CLAUDE_AGENTIC_FALLBACK_MODEL` | (none) |
 | `ai.claude.agentic.min_confidence` | `CODE_GURU_CLAUDE_AGENTIC_MIN_CONFIDENCE` | `80` |
+| `ai.claude.agentic.subprocess_env_scrub` | `CODE_GURU_CLAUDE_AGENTIC_SUBPROCESS_ENV_SCRUB` | on wherever bubblewrap (`bwrap`) is installed |
 
 `mode: agentic` requires `backend: claude`; an unknown mode is rejected at startup rather than silently treated as
 `diff`. The agentic mode works anywhere `claude` and `git` are installed — the CLI, CI, the webhook server — and does
@@ -128,10 +130,20 @@ review is built so that the realistic attacks fail closed:
 | The checkout's `AGENTS.md` / `CLAUDE.md` / skills carry instructions | not auto-loaded (`CLAUDE_CODE_DISABLE_CLAUDE_MDS`, `instructionFiles: managed-only`); the agent reads them as data, and the prompt treats instructions inside them as findings |
 | The agent runs a build, a script or a network call | `--tools Read,Grep,Glob,Bash,Skill`, Bash allow-listed to read-only git subcommands, `dontAsk` + `--permission-prompts none`, deny rules for `git -c`/`-C`, `--no-index`, `--contents`, `--output`, external diff/textconv |
 | An installed skill pre-approves extra tools for itself | the frontmatter of every installed skill and command is found the way Claude Code finds it and rebuilt from an allowlist — `name`, `description`, `argument-hint`, `model`, `version`, `license`, `disable-model-invocation`, `user-invocable`, plain scalar values only — so `allowed-tools`, `hooks`, a forked `context` and any key added later never reach the agent; a file whose fence carries more than whitespace, whose header holds a stray `---`, that is not valid YAML, has a non-string key, a merge key in any quoting, an anchor, an alias, a custom tag or a repeated key is not installed at all |
-| The agent reads the process environment or the service-account token | `blockReadsOutsideWorkingDirectories`, `Read(//proc/**)` / `//sys/**` / `//etc/**` denied, symlinks checked out as plain files, `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` |
+| The agent reads the process environment or the service-account token | `blockReadsOutsideWorkingDirectories`, `Read(//proc/**)` / `//sys/**` / `//etc/**` denied, symlinks checked out as plain files, and `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` wherever bubblewrap can run it (see below) |
 | The agent reads the provider token | it is never in the agent's environment (built from an allowlist), and the server process marks itself non-dumpable before the agent starts, so `/proc/<pid>/environ` of the parent is unreadable |
 | The review leaks a credential into a PR comment | the model credentials and the provider token are redacted from every text field of the answer — file paths, dimensions and severities included — verbatim and in base64/hex, plus anything shaped like an Anthropic key |
 | claude.ai connectors of a subscription account become tools | `ENABLE_CLAUDEAI_MCP_SERVERS=false` |
+
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` strips credentials from the environment of every subprocess the agent starts (its
+git commands). The Claude Code CLI runs that isolation through bubblewrap and refuses to start without it, so the
+reviewer asks for the scrub only where `bwrap` is installed, logging a warning when it runs without. The container
+image ships without bubblewrap on purpose: a review pod runs with no capabilities, `allowPrivilegeEscalation: false`
+and the runtime's default seccomp profile, which leaves bubblewrap no user namespace to create, so installing it
+would only move the failure to the first git command. Without the scrub the agent's git commands inherit the model
+credential, and the other layers above still hold: Bash runs only read-only git subcommands, `/proc` cannot be
+read, and the credential is redacted from everything posted. `subprocess_env_scrub: true` requires the scrub (a run
+without bubblewrap then fails); `false` never asks for it.
 
 The residual risk is the model credential itself, which the CLI process has to hold. Redaction covers the encodings
 an instruction can ask for without tools; an egress-restricted NetworkPolicy (below) removes every channel but the
