@@ -90,7 +90,7 @@ ai:
       max_budget_usd: 0             # forwarded to --max-budget-usd; 0 = no cap
       fallback_model: ''            # forwarded to --fallback-model
       min_confidence: 80            # findings below are dropped (and listed)
-      subprocess_env_scrub: true    # unset = on wherever bubblewrap is installed
+      # subprocess_env_scrub: true  # optional: requires bubblewrap; omit for automatic detection
 
 rules:
   path: '/opt/claude/rules'
