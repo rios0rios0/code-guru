@@ -114,7 +114,7 @@ go test ./...
 the gate. They import the shared targets from
 [rios0rios0/pipelines](https://github.com/rios0rios0/pipelines), which load the correct
 configuration before invoking each tool — so **never invoke the tool binaries directly**
-(`golangci-lint`, `pytest`, `eslint`, `semgrep`, `trivy`, `hadolint`, `gitleaks`). A change
+(`golangci-lint`, `pytest`, `eslint`, `semgrep`, `hadolint`, `shellcheck`, `gitleaks`). A change
 that adds a direct binary invocation to a script or workflow, or that edits a tool
 configuration to make a finding disappear, is itself a finding.
 
@@ -258,8 +258,8 @@ See [Security](https://github.com/rios0rios0/guide/wiki/Security).
   Gitleaks matches the shape, not the value, so a placeholder that merely *looks* like a
   credential fails the pipeline — spelling those prefixes out here would trip it too. Use
   inert placeholders such as `fixture-token-placeholder`.
-- **Suppressions must be justified.** Entries in `.gitleaksignore`, `.trivyignore`,
-  `.semgrepignore`, or `.codeql-false-positives` need a fingerprint, a dated comment, and a
+- **Suppressions must be justified.** Entries in `.gitleaksignore`, `.semgrepignore`,
+  `.semgrepexcluderules`, `.hadolint.yaml`, or `.codeql-false-positives` need a fingerprint, a dated comment, and a
   reason. A suppression added to silence a real finding is a Critical.
 - Validate and sanitise every external input; use parameterised queries; apply least
   privilege; keep secrets out of logs.

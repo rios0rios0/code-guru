@@ -13,7 +13,7 @@ Code Guru is a Go CLI tool and webhook server that uses AI (Anthropic Messages A
 ```bash
 make lint          # Run golangci-lint (via pipelines repo config — always use this, never the binary directly)
 make test          # Run all tests (via pipelines repo)
-make sast          # Run full SAST security suite (CodeQL, Semgrep, Trivy, Hadolint, Gitleaks)
+make sast          # Run full SAST security suite (CodeQL, Semgrep, Hadolint, ShellCheck, Gitleaks)
 
 make build                                      # Build with version ldflags into bin/code-guru
 go build -o bin/code-guru ./cmd/code-guru/      # Direct build
