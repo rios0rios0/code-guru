@@ -5,3 +5,10 @@ package claude
 func SanitizeFrontmatter(content string) (string, error) {
 	return sanitizeFrontmatter(content)
 }
+
+// WithBubblewrapForTest fixes what the reviewer finds when it checks for the
+// bubblewrap install the subprocess environment scrub needs.
+func (r *AgenticReviewerRepository) WithBubblewrapForTest(installed bool) *AgenticReviewerRepository {
+	r.bubblewrapAvailable = func() bool { return installed }
+	return r
+}

@@ -27,6 +27,7 @@ func TestNewSettingsFromEnvAgenticAndExecutor(t *testing.T) {
 		t.Setenv("CODE_GURU_CLAUDE_AGENTIC_MAX_BUDGET_USD", "7.5")
 		t.Setenv("CODE_GURU_CLAUDE_AGENTIC_FALLBACK_MODEL", "claude-sonnet-4-6")
 		t.Setenv("CODE_GURU_CLAUDE_AGENTIC_MIN_CONFIDENCE", "85")
+		t.Setenv("CODE_GURU_CLAUDE_AGENTIC_SUBPROCESS_ENV_SCRUB", "false")
 		t.Setenv("CODE_GURU_SERVER_EXECUTOR", "kubernetes")
 		t.Setenv("CODE_GURU_SERVER_KUBERNETES_NAMESPACE", "reviews")
 		t.Setenv("CODE_GURU_SERVER_KUBERNETES_JOB_TEMPLATE", "/etc/code-guru/review-job.json")
@@ -40,9 +41,11 @@ func TestNewSettingsFromEnvAgenticAndExecutor(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, settings.AI.Claude.AgenticEnabled(), "case and padding from a template must not turn it off")
 		assert.Equal(t, "claude-opus-5-5", settings.AI.Claude.Model)
+		scrubOff := false
 		assert.Equal(t, entities.ClaudeAgenticConfig{
 			ConfigPath: "/claude-config", WorkspaceDir: "/workspace", CloneDepth: 50, Timeout: 25 * time.Minute,
 			MaxTurns: 120, Effort: "high", MaxBudgetUSD: 7.5, FallbackModel: "claude-sonnet-4-6", MinConfidence: 85,
+			SubprocessEnvScrub: &scrubOff,
 		}, settings.AI.Claude.Agentic)
 		assert.True(t, settings.Server.KubernetesExecutorEnabled())
 		assert.Equal(t, entities.KubernetesExecutorConfig{

@@ -67,12 +67,6 @@ var agentPassthroughEnv = []string{
 //
 //nolint:gochecknoglobals // read-only list used as a constant
 var agentHardeningEnv = []string{
-	// Strip credentials from every subprocess the agent starts (its git
-	// commands included); the CLI keeps them for its own API calls. With it
-	// set the CLI switches `--permission-mode dontAsk` back to `default`
-	// (and says so on stderr); `--permission-prompts none` is what keeps
-	// that deny-by-default, so neither flag may be dropped on its own.
-	"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1",
 	// No CLAUDE.md, AGENTS.md or auto-memory is loaded as instructions: the
 	// repository's own guidance is read deliberately, as data, in pass one.
 	"CLAUDE_CODE_DISABLE_CLAUDE_MDS=1",
@@ -88,6 +82,25 @@ var agentHardeningEnv = []string{
 	"GIT_OPTIONAL_LOCKS=0",
 	"GIT_PAGER=cat",
 	"PAGER=cat",
+}
+
+// subprocessEnvScrubEnv strips credentials from every subprocess the agent
+// starts (its git commands included); the CLI keeps them for its own API
+// calls. With it set the CLI switches `--permission-mode dontAsk` back to
+// `default` (and says so on stderr); `--permission-prompts none` is what keeps
+// that deny-by-default, so neither flag may be dropped on its own. The CLI
+// runs the scrub inside bubblewrap and refuses to start without it, so it is
+// set only where ClaudeAgenticConfig.SubprocessEnvScrubEnabled says so.
+const subprocessEnvScrubEnv = "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"
+
+// bubblewrapBinary is the isolation tool the CLI needs to run the scrub.
+const bubblewrapBinary = "bwrap"
+
+// bubblewrapOnPath reports whether bubblewrap is installed where the CLI,
+// which inherits this process's PATH, looks for it.
+func bubblewrapOnPath() bool {
+	_, err := exec.LookPath(bubblewrapBinary)
+	return err == nil
 }
 
 // agentFailureLogLimit caps each captured stream quoted in an error.
@@ -113,6 +126,10 @@ type AgenticReviewerRepository struct {
 	model        string
 	config       entities.ClaudeAgenticConfig
 	configSource string
+
+	// bubblewrapAvailable reports whether the subprocess environment scrub
+	// can run; see ClaudeAgenticConfig.SubprocessEnvScrub.
+	bubblewrapAvailable func() bool
 }
 
 // NewAgenticReviewerRepository builds the agentic reviewer. `configSource` is
@@ -128,10 +145,11 @@ func NewAgenticReviewerRepository(
 		model = defaultModel
 	}
 	return &AgenticReviewerRepository{
-		binaryPath:   binaryPath,
-		model:        model,
-		config:       config,
-		configSource: config.ResolvedConfigPath(),
+		binaryPath:          binaryPath,
+		model:               model,
+		config:              config,
+		configSource:        config.ResolvedConfigPath(),
+		bubblewrapAvailable: bubblewrapOnPath,
 	}
 }
 
@@ -171,10 +189,19 @@ func (r *AgenticReviewerRepository) ReviewDiff(
 	runCtx, cancel := context.WithTimeout(ctx, r.config.ReviewTimeout())
 	defer cancel()
 
+	scrub := r.config.SubprocessEnvScrubEnabled(r.bubblewrapAvailable)
+	if !scrub && r.config.SubprocessEnvScrub == nil {
+		logger.Warnf("PR #%d: bubblewrap (`%s`) is not installed, so the agent runs without "+
+			"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: its git commands inherit the model credential, behind the "+
+			"read-only Bash allow-list, the /proc read denials and the output redaction. Install bubblewrap, "+
+			"or set ai.claude.agentic.subprocess_env_scrub to decide explicitly",
+			request.PullRequest.ID, bubblewrapBinary)
+	}
+
 	//nolint:gosec // G204: the binary path is trusted configuration; every argument is a fixed flag or a value the bot produced
 	cmd := exec.CommandContext(runCtx, r.binaryPath, r.args(sandbox)...)
 	cmd.Dir = workspace.Path
-	cmd.Env = r.environment(sandbox)
+	cmd.Env = r.environment(sandbox, scrub)
 	// When the timeout kills the CLI, a child it started (a git command)
 	// can still hold the output pipes open; without a bound, Run would
 	// wait for that child instead of returning the timeout.
@@ -185,8 +212,14 @@ func (r *AgenticReviewerRepository) ReviewDiff(
 	cmd.Stderr = &stderr
 
 	started := time.Now()
-	logger.Infof("PR #%d: starting the agentic review (model: %s, timeout: %s, max turns: %d)",
-		request.PullRequest.ID, r.model, r.config.ReviewTimeout(), r.config.ReviewMaxTurns())
+	logger.Infof(
+		"PR #%d: starting the agentic review (model: %s, timeout: %s, max turns: %d, subprocess env scrub: %t)",
+		request.PullRequest.ID,
+		r.model,
+		r.config.ReviewTimeout(),
+		r.config.ReviewMaxTurns(),
+		scrub,
+	)
 	runErr := cmd.Run()
 
 	if runCtx.Err() != nil && ctx.Err() == nil {
@@ -248,8 +281,8 @@ func (r *AgenticReviewerRepository) args(sandbox *agentSandbox) []string {
 // environment builds the CLI's environment from allowlists (see the
 // agent*Env lists) plus the sandbox's own home, configuration and temp
 // directories, so the run sees neither the pod's home directory nor any of
-// the server's secrets.
-func (r *AgenticReviewerRepository) environment(sandbox *agentSandbox) []string {
+// the server's secrets. `scrub` adds the subprocess environment scrub.
+func (r *AgenticReviewerRepository) environment(sandbox *agentSandbox, scrub bool) []string {
 	env := []string{
 		"HOME=" + sandbox.homeDir,
 		"CLAUDE_CONFIG_DIR=" + sandbox.configDir,
@@ -260,7 +293,11 @@ func (r *AgenticReviewerRepository) environment(sandbox *agentSandbox) []string 
 			env = append(env, name+"="+value)
 		}
 	}
-	return append(env, agentHardeningEnv...)
+	env = append(env, agentHardeningEnv...)
+	if scrub {
+		env = append(env, subprocessEnvScrubEnv)
+	}
+	return env
 }
 
 // credentialValues returns the values of the credential variables the agent

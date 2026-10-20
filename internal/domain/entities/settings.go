@@ -435,6 +435,19 @@ type ClaudeAgenticConfig struct {
 	// ConfidenceThreshold (defaults to defaultAgenticMinConfidence).
 	// Honours CODE_GURU_CLAUDE_AGENTIC_MIN_CONFIDENCE.
 	MinConfidence int `yaml:"min_confidence"`
+
+	// SubprocessEnvScrub controls CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, which
+	// strips credentials from every subprocess the agent starts (its git
+	// commands). The CLI runs that isolation through bubblewrap and refuses
+	// to start without it, so nil resolves, through
+	// SubprocessEnvScrubEnabled, to "wherever `bwrap` is installed": a
+	// workstation that has it keeps the scrub, and a container image without
+	// it — a hardened pod could not run bubblewrap anyway, having no user
+	// namespaces — reviews without it, behind the read-only Bash allow-list,
+	// the `/proc` read denials and the output redaction. `true` requires the
+	// scrub, so a run without bubblewrap fails; `false` never asks for it.
+	// Honours CODE_GURU_CLAUDE_AGENTIC_SUBPROCESS_ENV_SCRUB.
+	SubprocessEnvScrub *bool `yaml:"subprocess_env_scrub"`
 }
 
 // defaultAgenticTimeout is the wall-clock budget of one agentic run when
@@ -493,6 +506,16 @@ func (c ClaudeAgenticConfig) ConfidenceThreshold() int {
 		return defaultAgenticMinConfidence
 	}
 	return min(c.MinConfidence, maxConfidence)
+}
+
+// SubprocessEnvScrubEnabled resolves SubprocessEnvScrub: an explicit value
+// wins, and unset follows `bubblewrapAvailable`, which reports whether the
+// isolation the CLI runs the scrub in is installed.
+func (c ClaudeAgenticConfig) SubprocessEnvScrubEnabled(bubblewrapAvailable func() bool) bool {
+	if c.SubprocessEnvScrub != nil {
+		return *c.SubprocessEnvScrub
+	}
+	return bubblewrapAvailable()
 }
 
 // AnthropicConfig holds Anthropic API-specific settings.
@@ -947,6 +970,9 @@ func claudeConfigFromEnv() ClaudeConfig {
 			MaxBudgetUSD:  maxBudget,
 			FallbackModel: strings.TrimSpace(os.Getenv("CODE_GURU_CLAUDE_AGENTIC_FALLBACK_MODEL")),
 			MinConfidence: minConfidence,
+			SubprocessEnvScrub: parseOptionalBoolEnv(
+				"CODE_GURU_CLAUDE_AGENTIC_SUBPROCESS_ENV_SCRUB",
+			),
 		},
 	}
 }

@@ -334,7 +334,7 @@ func TestAgenticReviewerEnvironment(t *testing.T) {
 			workspace := agenticWorkspace(t)
 			reviewer := claude.NewAgenticReviewerRepository(cli.binary, "claude-opus-5-5", entities.ClaudeAgenticConfig{
 				MaxTurns: 77, Effort: "high", MaxBudgetUSD: 2.5, FallbackModel: "claude-sonnet-4-6",
-			})
+			}).WithBubblewrapForTest(true)
 
 			// when
 			result, err := reviewer.ReviewDiff(context.Background(), agenticRequestFor(workspace))
@@ -402,6 +402,52 @@ func TestAgenticReviewerEnvironment(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "found [redacted] in env", result.Summary)
 	})
+}
+
+func TestAgenticReviewerSubprocessEnvScrub(t *testing.T) {
+	t.Parallel()
+
+	enabled, disabled := true, false
+	cases := []struct {
+		name      string
+		setting   *bool
+		installed bool
+		wantScrub bool
+	}{
+		{name: "should scrub where bubblewrap is installed", installed: true, wantScrub: true},
+		{
+			name:      "should review without the scrub where bubblewrap is missing, as in the container image",
+			installed: false, wantScrub: false,
+		},
+		{
+			name:    "should ask for the scrub when it is required, even without bubblewrap",
+			setting: &enabled, installed: false, wantScrub: true,
+		},
+		{name: "should never ask for the scrub when it is turned off", setting: &disabled, installed: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			structured := map[string]any{"summary": "s", "verdict": "approve"}
+			cli := newFakeAgentCLI(t, agentEnvelope(t, structured), 0, 0)
+			reviewer := claude.NewAgenticReviewerRepository(
+				cli.binary, "m", entities.ClaudeAgenticConfig{SubprocessEnvScrub: tc.setting},
+			).WithBubblewrapForTest(tc.installed)
+
+			// when
+			_, err := reviewer.ReviewDiff(context.Background(), agenticRequestFor(agenticWorkspace(t)))
+
+			// then
+			require.NoError(t, err)
+			value, set := cli.env(t)["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"]
+			assert.Equal(t, tc.wantScrub, set)
+			if tc.wantScrub {
+				assert.Equal(t, "1", value)
+			}
+		})
+	}
 }
 
 func writeTreeFile(t *testing.T, root, path, content string) {
