@@ -1174,6 +1174,10 @@ var reviewFailureClasses = []struct {
 		support.ErrAgenticReviewIncomplete,
 		"The review agent reached its turn, time or budget limit before it finished",
 	},
+	{
+		support.ErrAgentCredentialUnprotected,
+		"The review agent was not started, because the commands it runs could have read its model credential",
+	},
 }
 
 // postReviewCompleteAnnotation drops a single PR-wide notice after

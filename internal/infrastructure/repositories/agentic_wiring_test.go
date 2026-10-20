@@ -42,7 +42,9 @@ func TestRetryingAIReviewerAgenticBehaviour(t *testing.T) {
 		assert.False(t, diff)
 	})
 
-	for _, sentinel := range []error{support.ErrAgenticReviewIncomplete, support.ErrWorkspaceUnavailable} {
+	for _, sentinel := range []error{
+		support.ErrAgenticReviewIncomplete, support.ErrWorkspaceUnavailable, support.ErrAgentCredentialUnprotected,
+	} {
 		t.Run(fmt.Sprintf("should not retry %v", sentinel), func(t *testing.T) {
 			t.Parallel()
 

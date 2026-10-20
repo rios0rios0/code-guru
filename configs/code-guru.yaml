@@ -24,7 +24,7 @@ ai:
     #   config_path: '${HOME}/.claude'
     #   timeout: '30m'
     #   min_confidence: 80
-    #   # unset = on wherever bubblewrap is installed; true requires it
+    #   # unset = on wherever bubblewrap and socat are installed; true requires it
     #   subprocess_env_scrub: true
   # Load the reviewed repository's own AGENTS.md (CLAUDE.md when there
   # is none) as project-specific review context (default: true; set false to opt out).

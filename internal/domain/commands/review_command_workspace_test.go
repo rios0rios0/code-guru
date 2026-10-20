@@ -3,6 +3,7 @@ package commands_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +120,29 @@ func TestExecuteWithWorkspaceReviewer(t *testing.T) {
 		require.Len(t, recorder.calls, 2, "the reviewing marker, then the failure notice that closes it")
 		assert.Contains(t, recorder.calls[1].body, "**Code Guru review failed.**")
 		assert.Contains(t, recorder.calls[1].body, "could not be checked out")
+	})
+
+	t.Run("should say why when the review agent was not started to protect its credential", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		ai := &doubles.StubAIReviewerRepository{
+			NameValue: "claude", RequiresWorkspaceValue: true,
+			Err: fmt.Errorf("%w: ANTHROPIC_AUTH_TOKEN", support.ErrAgentCredentialUnprotected),
+		}
+		workspaces := &doubles.StubWorkspaceRepository{Workspace: workspaceFixture()}
+		recorder := &recordingReviewProvider{files: []forgeEntities.PullRequestFile{{Path: "/internal/foo.go"}}}
+		cmd := commands.NewReviewCommand(ai, &doubles.StubRulesRepository{}, nil, nil).WithWorkspace(workspaces)
+
+		// when
+		_, err := cmd.Execute(context.Background(), &tokenRecordingProvider{recorder}, repo, workspacePR(),
+			commands.ReviewOptions{})
+
+		// then
+		require.ErrorIs(t, err, support.ErrAgentCredentialUnprotected)
+		assert.Equal(t, []*entities.ReviewWorkspace{workspaces.Workspace}, workspaces.Released)
+		require.Len(t, recorder.calls, 2, "the reviewing marker, then the failure notice that closes it")
+		assert.Contains(t, recorder.calls[1].body, "could have read its model credential")
 	})
 
 	t.Run("should refuse a checkout that changes none of the files the provider lists", func(t *testing.T) {

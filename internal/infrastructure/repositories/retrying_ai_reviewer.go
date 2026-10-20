@@ -130,7 +130,8 @@ func (r *RetryingAIReviewer) ReviewDiff(
 		// futile. Return immediately so the command layer posts the "declined"
 		// guidance instead of burning the budget. (Any per-model recovery has
 		// already happened inside the backend via a configured fallback model.)
-		if errors.Is(err, support.ErrAgenticReviewIncomplete) || errors.Is(err, support.ErrWorkspaceUnavailable) {
+		if errors.Is(err, support.ErrAgenticReviewIncomplete) || errors.Is(err, support.ErrWorkspaceUnavailable) ||
+			errors.Is(err, support.ErrAgentCredentialUnprotected) {
 			logger.Warnf(
 				"AI review (%s) failed on attempt %d/%d: %v; not retrying — a re-run would stop at the same point",
 				r.inner.Name(),

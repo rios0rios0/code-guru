@@ -24,7 +24,8 @@ import (
 // the CLI a scrubbed environment, so nothing can steer the fake through env
 // vars: its whole behaviour — the stdout it prints, the exit code, an optional
 // delay — is baked into the script, and it records its argv (NUL-separated),
-// environment, working directory and stdin into `recordDir`.
+// environment, working directory and stdin into `recordDir`, and what it reads
+// from each credential descriptor (fakeCLIDescriptorProbe).
 type fakeAgentCLI struct {
 	binary    string
 	recordDir string
@@ -42,9 +43,11 @@ func newFakeAgentCLI(t *testing.T, stdout string, exitCode int, delaySeconds int
 	stdoutFile := filepath.Join(dir, "stdout.json")
 	require.NoError(t, os.WriteFile(stdoutFile, []byte(stdout), 0o600))
 	script := "#!/bin/sh\n" +
+		"RECORD='" + record + "'\n" +
 		"printf '%s\\0' \"$@\" > '" + record + "/args'\n" +
 		"env > '" + record + "/env'\n" +
 		"pwd > '" + record + "/cwd'\n" +
+		fakeCLIDescriptorProbe +
 		"cat > '" + record + "/stdin'\n"
 	if delaySeconds > 0 {
 		script += "exec sleep " + strconv.Itoa(delaySeconds) + "\n"
@@ -53,6 +56,29 @@ func newFakeAgentCLI(t *testing.T, stdout string, exitCode int, delaySeconds int
 	binary := filepath.Join(dir, "fake-claude")
 	require.NoError(t, os.WriteFile(binary, []byte(script), 0o755))
 	return fakeAgentCLI{binary: binary, recordDir: record}
+}
+
+// fakeCLIDescriptorProbe records, for each credential descriptor the CLI is
+// told about, the line the descriptor held (in a file named after the
+// variable) and whether it was a socket (`<variable>.type`).
+const fakeCLIDescriptorProbe = `for v in CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR; do
+  eval "fd=\${$v:-}"
+  [ -n "$fd" ] || continue
+  if [ -S "/dev/fd/$fd" ]; then echo socket > "$RECORD/$v.type"; else echo other > "$RECORD/$v.type"; fi
+  eval "IFS= read -r line <&$fd" && printf '%s' "$line" > "$RECORD/$v"
+done
+`
+
+// ran reports whether the fake was started at all.
+func (f fakeAgentCLI) ran() bool {
+	_, err := os.Stat(filepath.Join(f.recordDir, "args"))
+	return err == nil
+}
+
+// newAgenticReviewer builds the reviewer under test with no model credential
+// of the shell the tests run in within reach, so no result depends on it.
+func newAgenticReviewer(binary string, config entities.ClaudeAgenticConfig) *claude.AgenticReviewerRepository {
+	return claude.NewAgenticReviewerRepository(binary, "m", config).WithCredentialsForTest(nil)
 }
 
 func (f fakeAgentCLI) args(t *testing.T) []string {
@@ -139,7 +165,7 @@ func TestAgenticReviewerReviewDiff(t *testing.T) {
 		// given
 		cli := newFakeAgentCLI(t, agentEnvelope(t, map[string]any{"summary": "s", "verdict": "approve"}), 0, 0)
 		workspace := agenticWorkspace(t)
-		reviewer := claude.NewAgenticReviewerRepository(cli.binary, "m", entities.ClaudeAgenticConfig{})
+		reviewer := newAgenticReviewer(cli.binary, entities.ClaudeAgenticConfig{})
 
 		// when
 		_, err := reviewer.ReviewDiff(context.Background(), agenticRequestFor(workspace))
@@ -178,7 +204,7 @@ func TestAgenticReviewerReviewDiff(t *testing.T) {
 		envelope := `{"type":"result","subtype":"success","is_error":false,"result":` +
 			`"{\"summary\":\"s\",\"verdict\":\"approve\",\"comments\":[],\"checked\":{},\"dropped\":[]}"}`
 		cli := newFakeAgentCLI(t, envelope, 0, 0)
-		reviewer := claude.NewAgenticReviewerRepository(cli.binary, "m", entities.ClaudeAgenticConfig{})
+		reviewer := newAgenticReviewer(cli.binary, entities.ClaudeAgenticConfig{})
 
 		// when
 		result, err := reviewer.ReviewDiff(context.Background(), agenticRequestFor(agenticWorkspace(t)))
@@ -193,7 +219,7 @@ func TestAgenticReviewerReviewDiff(t *testing.T) {
 
 		// given
 		cli := newFakeAgentCLI(t, `{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":200}`, 1, 0)
-		reviewer := claude.NewAgenticReviewerRepository(cli.binary, "m", entities.ClaudeAgenticConfig{})
+		reviewer := newAgenticReviewer(cli.binary, entities.ClaudeAgenticConfig{})
 
 		// when
 		_, err := reviewer.ReviewDiff(context.Background(), agenticRequestFor(agenticWorkspace(t)))
@@ -207,7 +233,7 @@ func TestAgenticReviewerReviewDiff(t *testing.T) {
 
 		// given
 		cli := newFakeAgentCLI(t, agentEnvelope(t, map[string]any{}), 0, 5)
-		reviewer := claude.NewAgenticReviewerRepository(cli.binary, "m", entities.ClaudeAgenticConfig{
+		reviewer := newAgenticReviewer(cli.binary, entities.ClaudeAgenticConfig{
 			Timeout: 200 * time.Millisecond,
 		})
 
@@ -228,7 +254,7 @@ func TestAgenticReviewerReviewDiff(t *testing.T) {
 			1,
 			0,
 		)
-		reviewer := claude.NewAgenticReviewerRepository(cli.binary, "m", entities.ClaudeAgenticConfig{})
+		reviewer := newAgenticReviewer(cli.binary, entities.ClaudeAgenticConfig{})
 
 		// when
 		_, err := reviewer.ReviewDiff(context.Background(), agenticRequestFor(agenticWorkspace(t)))
@@ -266,7 +292,7 @@ func TestAgenticReviewerReviewDiff(t *testing.T) {
 		require.NoError(t, os.Symlink("/etc/passwd", filepath.Join(tree, "skills", "leak.md")))
 		cli := newFakeAgentCLI(t, agentEnvelope(t, map[string]any{"summary": "s", "verdict": "approve"}), 0, 0)
 		workspace := agenticWorkspace(t)
-		reviewer := claude.NewAgenticReviewerRepository(cli.binary, "m", entities.ClaudeAgenticConfig{ConfigPath: tree})
+		reviewer := newAgenticReviewer(cli.binary, entities.ClaudeAgenticConfig{ConfigPath: tree})
 
 		// when
 		_, err := reviewer.ReviewDiff(context.Background(), agenticRequestFor(workspace))
@@ -334,7 +360,7 @@ func TestAgenticReviewerEnvironment(t *testing.T) {
 			workspace := agenticWorkspace(t)
 			reviewer := claude.NewAgenticReviewerRepository(cli.binary, "claude-opus-5-5", entities.ClaudeAgenticConfig{
 				MaxTurns: 77, Effort: "high", MaxBudgetUSD: 2.5, FallbackModel: "claude-sonnet-4-6",
-			}).WithBubblewrapForTest(true)
+			}).WithScrubSandboxForTest(true)
 
 			// when
 			result, err := reviewer.ReviewDiff(context.Background(), agenticRequestFor(workspace))
@@ -376,7 +402,13 @@ func TestAgenticReviewerEnvironment(t *testing.T) {
 			assert.Equal(t, wantCwd, cwd, "the agent's working directory is the checkout")
 
 			env := cli.env(t)
-			assert.Equal(t, "fixture-oauth-token-placeholder", env["CLAUDE_CODE_OAUTH_TOKEN"])
+			assert.NotContains(t, env, "CLAUDE_CODE_OAUTH_TOKEN",
+				"the model credential never enters the CLI's environment, where /proc/<pid>/environ exposes it")
+			assert.Equal(t, "3", env["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"])
+			assert.Equal(t, "fixture-oauth-token-placeholder", cli.read(t, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"),
+				"the CLI reads the credential from the descriptor it is told about")
+			assert.Equal(t, "socket", cli.read(t, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR.type"),
+				"a socket, which the CLI reads directly and closes; a pipe it would reopen through /proc")
 			assert.NotContains(t, env, "CODE_GURU_PROVIDER_TOKEN", "the provider token must never reach the agent")
 			assert.NotContains(t, env, "CODE_GURU_WEBHOOK_SECRET")
 			assert.Equal(t, filepath.Join(workspace.Root, "agent", "config"), env["CLAUDE_CONFIG_DIR"])
@@ -390,6 +422,7 @@ func TestAgenticReviewerEnvironment(t *testing.T) {
 
 	t.Run("should redact the model credential from everything it returns", func(t *testing.T) {
 		// given: a review that quotes the credential the agent could have read.
+		t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 		t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "fixture-oauth-token-placeholder")
 		structured := map[string]any{"summary": "found fixture-oauth-token-placeholder in env", "verdict": "comment"}
 		cli := newFakeAgentCLI(t, agentEnvelope(t, structured), 0, 0)
@@ -402,28 +435,74 @@ func TestAgenticReviewerEnvironment(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "found [redacted] in env", result.Summary)
 	})
+
+	t.Run("should never pass CLAUDE_CODE_REMOTE, which makes the CLI write a credential to disk", func(t *testing.T) {
+		// given: with CLAUDE_CODE_REMOTE set, the CLI persists a credential it
+		// read from a descriptor to a well-known file for its subprocesses.
+		t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+		t.Setenv("CLAUDE_CODE_REMOTE", "true")
+		t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "fixture-oauth-token-placeholder")
+		cli := newFakeAgentCLI(t, agentEnvelope(t, map[string]any{"summary": "s", "verdict": "approve"}), 0, 0)
+		reviewer := claude.NewAgenticReviewerRepository(cli.binary, "m", entities.ClaudeAgenticConfig{})
+
+		// when
+		_, err := reviewer.ReviewDiff(context.Background(), agenticRequestFor(agenticWorkspace(t)))
+
+		// then
+		require.NoError(t, err)
+		assert.NotContains(t, cli.env(t), "CLAUDE_CODE_REMOTE")
+		assert.Equal(t, "fixture-oauth-token-placeholder", cli.read(t, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"))
+	})
 }
 
 func TestAgenticReviewerSubprocessEnvScrub(t *testing.T) {
 	t.Parallel()
 
+	oauth := map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "fixture-oauth-token-placeholder"}
+	gateway := map[string]string{"ANTHROPIC_AUTH_TOKEN": "fixture-gateway-token-placeholder"}
 	enabled, disabled := true, false
 	cases := []struct {
-		name      string
-		setting   *bool
-		installed bool
-		wantScrub bool
+		name        string
+		setting     *bool
+		installed   bool
+		credentials map[string]string
+		wantScrub   bool
+		wantRefusal bool
 	}{
-		{name: "should scrub where bubblewrap is installed", installed: true, wantScrub: true},
 		{
-			name:      "should review without the scrub where bubblewrap is missing, as in the container image",
-			installed: false, wantScrub: false,
+			name:      "should scrub where bubblewrap and socat are installed",
+			installed: true, credentials: oauth, wantScrub: true,
 		},
 		{
-			name:    "should ask for the scrub when it is required, even without bubblewrap",
-			setting: &enabled, installed: false, wantScrub: true,
+			name:      "should review without the scrub where they are missing, as in the container image",
+			installed: false, credentials: oauth,
 		},
-		{name: "should never ask for the scrub when it is turned off", setting: &disabled, installed: true},
+		{
+			name:    "should ask for the scrub when it is required, even where it cannot run",
+			setting: &enabled, installed: false, credentials: oauth, wantScrub: true,
+		},
+		{
+			name:    "should never ask for the scrub when it is turned off",
+			setting: &disabled, installed: true, credentials: oauth,
+		},
+		{
+			name:      "should keep a credential the environment carries behind the scrub where it can run",
+			installed: true, credentials: gateway, wantScrub: true,
+		},
+		{
+			name:        "should refuse to start the agent when its commands could read a credential the environment carries",
+			installed:   false,
+			credentials: gateway,
+			wantRefusal: true,
+		},
+		{
+			name:    "should hand the environment a credential without the scrub only when told to",
+			setting: &disabled, installed: false, credentials: gateway,
+		},
+		{
+			name:      "should review without the scrub where no credential is configured at all",
+			installed: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -434,20 +513,77 @@ func TestAgenticReviewerSubprocessEnvScrub(t *testing.T) {
 			cli := newFakeAgentCLI(t, agentEnvelope(t, structured), 0, 0)
 			reviewer := claude.NewAgenticReviewerRepository(
 				cli.binary, "m", entities.ClaudeAgenticConfig{SubprocessEnvScrub: tc.setting},
-			).WithBubblewrapForTest(tc.installed)
+			).WithScrubSandboxForTest(tc.installed).WithCredentialsForTest(tc.credentials)
 
 			// when
 			_, err := reviewer.ReviewDiff(context.Background(), agenticRequestFor(agenticWorkspace(t)))
 
 			// then
+			if tc.wantRefusal {
+				require.ErrorIs(t, err, support.ErrAgentCredentialUnprotected)
+				assert.Contains(t, err.Error(), "ANTHROPIC_AUTH_TOKEN", "the refusal names the credential")
+				assert.NotContains(t, err.Error(), "fixture-gateway-token-placeholder", "and never its value")
+				assert.False(t, cli.ran(), "the agent never starts with its credential exposed")
+				return
+			}
 			require.NoError(t, err)
-			value, set := cli.env(t)["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"]
+			env := cli.env(t)
+			value, set := env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"]
 			assert.Equal(t, tc.wantScrub, set)
 			if tc.wantScrub {
 				assert.Equal(t, "1", value)
 			}
+			assert.NotContains(t, env, "CLAUDE_CODE_OAUTH_TOKEN", "the OAuth token always travels by descriptor")
+			assert.Equal(t, tc.credentials["ANTHROPIC_AUTH_TOKEN"], env["ANTHROPIC_AUTH_TOKEN"],
+				"a credential the CLI reads from nowhere else is still handed over through its environment")
 		})
 	}
+}
+
+// TestAgenticReviewerCredentialHandoff covers the descriptors the CLI is
+// handed its model credential over, end to end through ReviewDiff.
+func TestAgenticReviewerCredentialHandoff(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should hand the API key over its own descriptor, after the OAuth token's", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		cli := newFakeAgentCLI(t, agentEnvelope(t, map[string]any{"summary": "s", "verdict": "approve"}), 0, 0)
+		reviewer := claude.NewAgenticReviewerRepository(cli.binary, "m", entities.ClaudeAgenticConfig{}).
+			WithCredentialsForTest(map[string]string{
+				"CLAUDE_CODE_OAUTH_TOKEN": "fixture-oauth-token-placeholder",
+				"ANTHROPIC_API_KEY":       "fixture-api-key-placeholder",
+			})
+
+		// when
+		_, err := reviewer.ReviewDiff(context.Background(), agenticRequestFor(agenticWorkspace(t)))
+
+		// then
+		require.NoError(t, err)
+		env := cli.env(t)
+		assert.Equal(t, "3", env["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"])
+		assert.Equal(t, "4", env["CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR"])
+		assert.Equal(t, "fixture-api-key-placeholder", cli.read(t, "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR"))
+		assert.NotContains(t, env, "ANTHROPIC_API_KEY", "the API key never enters the CLI's environment either")
+	})
+
+	t.Run("should refuse a credential that spans more than one line, without running the CLI", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the CLI reads a descriptor up to the first newline.
+		cli := newFakeAgentCLI(t, agentEnvelope(t, map[string]any{"summary": "s", "verdict": "approve"}), 0, 0)
+		reviewer := claude.NewAgenticReviewerRepository(cli.binary, "m", entities.ClaudeAgenticConfig{}).
+			WithCredentialsForTest(map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "fixture-first\nfixture-second"})
+
+		// when
+		_, err := reviewer.ReviewDiff(context.Background(), agenticRequestFor(agenticWorkspace(t)))
+
+		// then
+		require.ErrorContains(t, err, "CLAUDE_CODE_OAUTH_TOKEN")
+		assert.NotContains(t, err.Error(), "fixture-first", "an error never quotes the credential")
+		assert.False(t, cli.ran())
+	})
 }
 
 func writeTreeFile(t *testing.T, root, path, content string) {
