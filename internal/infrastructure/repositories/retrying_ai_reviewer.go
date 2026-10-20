@@ -57,6 +57,14 @@ func (r *RetryingAIReviewer) Name() string {
 	return r.inner.Name()
 }
 
+// RequiresWorkspace forwards the wrapped reviewer's answer. Without it the
+// review command would see the decorator, not a workspace reviewer, and call
+// an agentic backend without the checkout it reads.
+func (r *RetryingAIReviewer) RequiresWorkspace() bool {
+	workspaceReviewer, ok := r.inner.(repositories.WorkspaceReviewer)
+	return ok && workspaceReviewer.RequiresWorkspace()
+}
+
 // ReviewDiff invokes the wrapped backend, retrying on any error up to the
 // configured attempt budget. Honours context cancellation: a cancelled or
 // deadline-exceeded context between attempts stops the loop immediately
@@ -122,6 +130,17 @@ func (r *RetryingAIReviewer) ReviewDiff(
 		// futile. Return immediately so the command layer posts the "declined"
 		// guidance instead of burning the budget. (Any per-model recovery has
 		// already happened inside the backend via a configured fallback model.)
+		if errors.Is(err, support.ErrAgenticReviewIncomplete) || errors.Is(err, support.ErrWorkspaceUnavailable) {
+			logger.Warnf(
+				"AI review (%s) failed on attempt %d/%d: %v; not retrying — a re-run would stop at the same point",
+				r.inner.Name(),
+				attempt,
+				r.attempts,
+				support.TruncateForLog(err.Error(), retryErrorLogLimit),
+			)
+
+			return nil, err
+		}
 		if errors.Is(err, support.ErrContentSafetyRefusal) {
 			logger.Warnf(
 				"AI review (%s) failed on attempt %d/%d: the model's content-safety system declined the content; not retrying",

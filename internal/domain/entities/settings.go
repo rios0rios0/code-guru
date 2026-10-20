@@ -336,6 +336,163 @@ type ClaudeConfig struct {
 	BinaryPath string `yaml:"binary_path"`
 	Model      string `yaml:"model"`
 	MaxTurns   int    `yaml:"max_turns"`
+
+	// Mode selects how the Claude CLI reviews a pull request:
+	//
+	//   - `diff` (the default, also selected by an empty value) sends the
+	//     assembled diff, rules and context to the model in ONE tool-less
+	//     turn and reads a JSON review back. Cheap and fast, but the model
+	//     sees nothing beyond the hunks it is handed.
+	//   - `agentic` checks the pull request out into a disposable workspace,
+	//     installs the configured Claude Code rules and skills, and runs
+	//     Claude Code as a read-only agent over the checkout: it reads whole
+	//     files, the git history and the repository's own guidelines, runs
+	//     six review passes and returns findings scored for confidence. It
+	//     takes minutes rather than seconds and needs `git` next to the CLI.
+	//
+	// Honours CODE_GURU_CLAUDE_MODE. Resolve via AgenticEnabled.
+	Mode string `yaml:"mode"`
+
+	// Agentic configures the `agentic` mode. Ignored in `diff` mode.
+	Agentic ClaudeAgenticConfig `yaml:"agentic"`
+}
+
+// claudeModeAgentic and claudeModeDiff are the two accepted ClaudeConfig.Mode
+// values; an empty Mode means claudeModeDiff.
+const (
+	claudeModeAgentic = "agentic"
+	claudeModeDiff    = "diff"
+)
+
+// AgenticEnabled reports whether the Claude backend runs in `agentic` mode.
+// The comparison ignores case and surrounding whitespace so a value rendered by
+// a templating tool (`"Agentic "`) is not silently read as `diff`.
+func (c ClaudeConfig) AgenticEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(c.Mode), claudeModeAgentic)
+}
+
+// ClaudeAgenticConfig configures the agentic Claude Code review: where the
+// pull request is checked out, which Claude Code configuration is installed
+// for the run, and the bounds every run is held to.
+type ClaudeAgenticConfig struct {
+	// ConfigPath is a directory laid out like a Claude Code configuration
+	// directory, typically the tree `aisync` installs into `~/.claude`. Its
+	// `skills/` and `commands/` are installed into the fresh, per-review
+	// configuration directory, with every tool grant stripped from their
+	// frontmatter, so the review can use the same skills a developer's own
+	// Claude Code would. Its `rules/` is the rule corpus when `rules.path`
+	// is empty; either way the rules selected for the pull request's
+	// languages are embedded into the review prompt, never copied into the
+	// configuration directory, where they would be loaded a second time.
+	// Agents, settings, hooks, MCP servers and CLAUDE.md are never
+	// installed, and symlinks are never followed. Environment variables are
+	// expanded, as in `rules.path`. Honours
+	// CODE_GURU_CLAUDE_AGENTIC_CONFIG_PATH.
+	ConfigPath string `yaml:"config_path"`
+
+	// WorkspaceDir is the directory each review's checkout is created
+	// under. Empty means the OS temporary directory. Environment variables
+	// are expanded. Honours CODE_GURU_CLAUDE_AGENTIC_WORKSPACE_DIR.
+	WorkspaceDir string `yaml:"workspace_dir"`
+
+	// CloneDepth limits how much history is fetched for the source and
+	// target branches. 0 (the default) fetches their full history, which
+	// the git-history review pass needs; a positive value fetches that
+	// many commits and deepens on demand until the merge-base is found.
+	// Honours CODE_GURU_CLAUDE_AGENTIC_CLONE_DEPTH.
+	CloneDepth int `yaml:"clone_depth"`
+
+	// Timeout caps one agentic run's wall-clock time. Resolve via
+	// ReviewTimeout (defaults to defaultAgenticTimeout). It must stay
+	// below any external deadline the run sits under — a Kubernetes Job's
+	// `activeDeadlineSeconds`, for instance — so the bot can still post a
+	// "review failed" notice before the process is killed. Honours
+	// CODE_GURU_CLAUDE_AGENTIC_TIMEOUT.
+	Timeout time.Duration `yaml:"timeout"`
+
+	// MaxTurns caps the agent loop. Resolve via ReviewMaxTurns (defaults to
+	// defaultAgenticMaxTurns). Honours CODE_GURU_CLAUDE_AGENTIC_MAX_TURNS.
+	MaxTurns int `yaml:"max_turns"`
+
+	// Effort is forwarded to the CLI's `--effort` flag (`low`, `medium`,
+	// `high`, `xhigh` or `max`) when set; empty leaves the model default.
+	// Honours CODE_GURU_CLAUDE_AGENTIC_EFFORT.
+	Effort string `yaml:"effort"`
+
+	// MaxBudgetUSD caps the spend of one run through the CLI's
+	// `--max-budget-usd`; 0 (the default) sets no cap. Honours
+	// CODE_GURU_CLAUDE_AGENTIC_MAX_BUDGET_USD.
+	MaxBudgetUSD float64 `yaml:"max_budget_usd"`
+
+	// FallbackModel is forwarded to the CLI's `--fallback-model`, used when
+	// the primary model is overloaded. Empty disables it. Honours
+	// CODE_GURU_CLAUDE_AGENTIC_FALLBACK_MODEL.
+	FallbackModel string `yaml:"fallback_model"`
+
+	// MinConfidence is the 0-100 score a finding must reach to be posted.
+	// Findings below it are not discarded silently: they are listed, with
+	// their score and reason, in the completion annotation. Resolve via
+	// ConfidenceThreshold (defaults to defaultAgenticMinConfidence).
+	// Honours CODE_GURU_CLAUDE_AGENTIC_MIN_CONFIDENCE.
+	MinConfidence int `yaml:"min_confidence"`
+}
+
+// defaultAgenticTimeout is the wall-clock budget of one agentic run when
+// ClaudeAgenticConfig.Timeout is unset. Measured agentic reviews of ordinary
+// pull requests finish in three to twelve minutes; thirty leaves room for a
+// large change while still ending a run that has stopped making progress.
+const defaultAgenticTimeout = 30 * time.Minute
+
+// defaultAgenticMaxTurns bounds the agent loop when
+// ClaudeAgenticConfig.MaxTurns is unset. A thorough review of a mid-sized pull
+// request reads a few dozen files and runs a handful of git commands, well
+// under this ceiling; the cap exists to stop a looping run, not to ration a
+// healthy one.
+const defaultAgenticMaxTurns = 200
+
+// defaultAgenticMinConfidence is the confidence a finding must reach to be
+// posted when ClaudeAgenticConfig.MinConfidence is unset. 80 is the bar the
+// review prompt defines as "verified and likely hit in practice".
+const defaultAgenticMinConfidence = 80
+
+// maxConfidence is the top of the 0-100 confidence scale.
+const maxConfidence = 100
+
+// ResolvedConfigPath is ConfigPath with environment variables expanded, so a
+// configuration file can say `${HOME}/.claude` the way `rules.path` can.
+func (c ClaudeAgenticConfig) ResolvedConfigPath() string {
+	return os.ExpandEnv(strings.TrimSpace(c.ConfigPath))
+}
+
+// ResolvedWorkspaceDir is WorkspaceDir with environment variables expanded.
+func (c ClaudeAgenticConfig) ResolvedWorkspaceDir() string {
+	return os.ExpandEnv(strings.TrimSpace(c.WorkspaceDir))
+}
+
+// ReviewTimeout resolves the agentic run's wall-clock budget.
+func (c ClaudeAgenticConfig) ReviewTimeout() time.Duration {
+	if c.Timeout <= 0 {
+		return defaultAgenticTimeout
+	}
+	return c.Timeout
+}
+
+// ReviewMaxTurns resolves the agentic run's turn cap.
+func (c ClaudeAgenticConfig) ReviewMaxTurns() int {
+	if c.MaxTurns <= 0 {
+		return defaultAgenticMaxTurns
+	}
+	return c.MaxTurns
+}
+
+// ConfidenceThreshold resolves the minimum confidence a finding needs to be
+// posted, clamped to the 0-100 scale. An unset (zero) or negative value falls
+// back to defaultAgenticMinConfidence.
+func (c ClaudeAgenticConfig) ConfidenceThreshold() int {
+	if c.MinConfidence <= 0 {
+		return defaultAgenticMinConfidence
+	}
+	return min(c.MinConfidence, maxConfidence)
 }
 
 // AnthropicConfig holds Anthropic API-specific settings.
@@ -461,6 +618,93 @@ type ServerConfig struct {
 	AllowedOrganizations []string      `yaml:"allowed_organizations"`
 	AllowedProjects      []string      `yaml:"allowed_projects"`
 	AllowedSourceCIDRs   []string      `yaml:"allowed_source_cidrs"`
+
+	// Executor selects where a webhook-triggered review runs once the
+	// cheap gates have passed:
+	//
+	//   - `inprocess` (the default, also selected by an empty value) runs
+	//     the whole review inside the server's own worker pool.
+	//   - `kubernetes` keeps the gates (draft, review-once, trivial
+	//     detection) in the server, then hands each review that needs the
+	//     AI to its own Kubernetes Job, built from `kubernetes.job_template`.
+	//     The Job's pod runs `code-guru review` for that one pull request
+	//     and exits; Kubernetes deletes it afterwards. Concurrency is
+	//     capped fleet-wide by `kubernetes.max_concurrent_jobs`.
+	//
+	// Honours CODE_GURU_SERVER_EXECUTOR. Resolve via KubernetesExecutorEnabled.
+	Executor string `yaml:"executor"`
+
+	// Kubernetes configures the `kubernetes` executor. Ignored otherwise.
+	Kubernetes KubernetesExecutorConfig `yaml:"kubernetes"`
+}
+
+// serverExecutorKubernetes and serverExecutorInProcess are the two accepted
+// ServerConfig.Executor values; an empty Executor means serverExecutorInProcess.
+const (
+	serverExecutorKubernetes = "kubernetes"
+	serverExecutorInProcess  = "inprocess"
+)
+
+// KubernetesExecutorEnabled reports whether webhook reviews run as Kubernetes
+// Jobs. Case and surrounding whitespace are ignored, as for AgenticEnabled.
+func (s ServerConfig) KubernetesExecutorEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(s.Executor), serverExecutorKubernetes)
+}
+
+// KubernetesExecutorConfig configures the Kubernetes Job executor.
+type KubernetesExecutorConfig struct {
+	// Namespace is where review Jobs are created. Empty means the
+	// namespace the server pod itself runs in. Honours
+	// CODE_GURU_SERVER_KUBERNETES_NAMESPACE.
+	Namespace string `yaml:"namespace"`
+
+	// JobTemplate is the path of a `batch/v1` Job manifest (YAML or JSON)
+	// every review Job is created from. The operator owns everything about
+	// the pod — image, resources, volumes, security context, environment —
+	// and the bot fills in only the per-review parts: the name, labels,
+	// annotations, the container's arguments, and `spec.suspend`. Required
+	// by the `kubernetes` executor. Honours
+	// CODE_GURU_SERVER_KUBERNETES_JOB_TEMPLATE.
+	JobTemplate string `yaml:"job_template"`
+
+	// MaxConcurrentJobs caps how many review Jobs run at once across every
+	// server replica. Further reviews wait, in arrival order, as suspended
+	// Jobs and start as running ones finish — so a burst of pull requests
+	// queues instead of exhausting the cluster or the AI quota. Resolve via
+	// ConcurrentJobs (defaults to defaultMaxConcurrentReviewJobs). Honours
+	// CODE_GURU_SERVER_KUBERNETES_MAX_CONCURRENT_JOBS.
+	MaxConcurrentJobs int `yaml:"max_concurrent_jobs"`
+
+	// PollInterval is how often the scheduler reconciles queued and failed
+	// Jobs on top of the reconcile every enqueue triggers. Resolve via
+	// SchedulerInterval (defaults to defaultReviewJobPollInterval). Honours
+	// CODE_GURU_SERVER_KUBERNETES_POLL_INTERVAL.
+	PollInterval time.Duration `yaml:"poll_interval"`
+}
+
+// defaultMaxConcurrentReviewJobs is the fleet-wide cap on running review Jobs
+// when KubernetesExecutorConfig.MaxConcurrentJobs is unset.
+const defaultMaxConcurrentReviewJobs = 3
+
+// defaultReviewJobPollInterval is the scheduler's reconcile cadence when
+// KubernetesExecutorConfig.PollInterval is unset. A queued Job starts within
+// one interval of a running one finishing.
+const defaultReviewJobPollInterval = 15 * time.Second
+
+// ConcurrentJobs resolves the fleet-wide cap on running review Jobs.
+func (k KubernetesExecutorConfig) ConcurrentJobs() int {
+	if k.MaxConcurrentJobs <= 0 {
+		return defaultMaxConcurrentReviewJobs
+	}
+	return k.MaxConcurrentJobs
+}
+
+// SchedulerInterval resolves the scheduler's reconcile cadence.
+func (k KubernetesExecutorConfig) SchedulerInterval() time.Duration {
+	if k.PollInterval <= 0 {
+		return defaultReviewJobPollInterval
+	}
+	return k.PollInterval
 }
 
 // GitHubAppConfig holds GitHub App authentication settings.
@@ -614,16 +858,11 @@ func parseTrivialAdaptersEnv() []string {
 
 // NewSettingsFromEnv builds settings entirely from environment variables.
 func NewSettingsFromEnv() (*Settings, error) {
-	maxTurns, _ := strconv.Atoi(envOrDefault("CODE_GURU_CLAUDE_MAX_TURNS", "1"))
 	maxAttempts, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_ATTEMPTS")))
 	maxGuidelines, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_GUIDELINES_BYTES")))
 	maxPRDescription, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_PR_DESCRIPTION_BYTES")))
 	maxReviewBatches, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_AI_MAX_REVIEW_BATCHES")))
-	port, _ := strconv.Atoi(envOrDefault("CODE_GURU_PORT", "8080"))
 	appID, _ := strconv.ParseInt(os.Getenv("CODE_GURU_GITHUB_APP_ID"), 10, 64)
-	queueSize, _ := strconv.Atoi(envOrDefault("CODE_GURU_SERVER_QUEUE_SIZE", "100"))
-	workers, _ := strconv.Atoi(envOrDefault("CODE_GURU_SERVER_WORKERS", strconv.Itoa(runtime.NumCPU())))
-	shutdownTimeout, _ := time.ParseDuration(envOrDefault("CODE_GURU_SERVER_SHUTDOWN_TIMEOUT", "30s"))
 
 	adapters := parseTrivialAdaptersEnv()
 
@@ -634,11 +873,7 @@ func NewSettingsFromEnv() (*Settings, error) {
 				APIKey: os.Getenv("CODE_GURU_OPENAI_API_KEY"),
 				Model:  envOrDefault("CODE_GURU_OPENAI_MODEL", "gpt-4o"),
 			},
-			Claude: ClaudeConfig{
-				BinaryPath: envOrDefault("CODE_GURU_CLAUDE_BINARY_PATH", "claude"),
-				Model:      envOrDefault("CODE_GURU_CLAUDE_MODEL", "sonnet"),
-				MaxTurns:   maxTurns,
-			},
+			Claude: claudeConfigFromEnv(),
 			Anthropic: AnthropicConfig{
 				APIKey:               os.Getenv("CODE_GURU_ANTHROPIC_API_KEY"),
 				Model:                envOrDefault("CODE_GURU_ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
@@ -667,16 +902,7 @@ func NewSettingsFromEnv() (*Settings, error) {
 			AutoMergeAllowedAuthors: splitCSV(os.Getenv("CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS")),
 			DeleteSourceBranch:      parseOptionalBoolEnv("CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH"),
 		},
-		Server: ServerConfig{
-			Port:                 port,
-			WebhookSecret:        os.Getenv("CODE_GURU_WEBHOOK_SECRET"),
-			QueueSize:            queueSize,
-			Workers:              workers,
-			ShutdownTimeout:      shutdownTimeout,
-			AllowedOrganizations: splitCSV(os.Getenv("CODE_GURU_SERVER_ALLOWED_ORGANIZATIONS")),
-			AllowedProjects:      splitCSV(os.Getenv("CODE_GURU_SERVER_ALLOWED_PROJECTS")),
-			AllowedSourceCIDRs:   splitCSV(os.Getenv("CODE_GURU_SERVER_ALLOWED_SOURCE_CIDRS")),
-		},
+		Server: serverConfigFromEnv(),
 		GitHubApp: GitHubAppConfig{
 			AppID:      appID,
 			PrivateKey: os.Getenv("CODE_GURU_GITHUB_PRIVATE_KEY"),
@@ -695,9 +921,74 @@ func NewSettingsFromEnv() (*Settings, error) {
 	return settings, nil
 }
 
+// claudeConfigFromEnv builds the Claude CLI settings, agentic mode included,
+// from CODE_GURU_CLAUDE_* variables. Split out of NewSettingsFromEnv so that
+// function stays within the length budget as the env surface grows.
+func claudeConfigFromEnv() ClaudeConfig {
+	maxTurns, _ := strconv.Atoi(envOrDefault("CODE_GURU_CLAUDE_MAX_TURNS", "1"))
+	cloneDepth, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_CLAUDE_AGENTIC_CLONE_DEPTH")))
+	agenticTimeout, _ := time.ParseDuration(strings.TrimSpace(os.Getenv("CODE_GURU_CLAUDE_AGENTIC_TIMEOUT")))
+	agenticMaxTurns, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_CLAUDE_AGENTIC_MAX_TURNS")))
+	maxBudget, _ := strconv.ParseFloat(strings.TrimSpace(os.Getenv("CODE_GURU_CLAUDE_AGENTIC_MAX_BUDGET_USD")), 64)
+	minConfidence, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_CLAUDE_AGENTIC_MIN_CONFIDENCE")))
+
+	return ClaudeConfig{
+		BinaryPath: envOrDefault("CODE_GURU_CLAUDE_BINARY_PATH", "claude"),
+		Model:      envOrDefault("CODE_GURU_CLAUDE_MODEL", "sonnet"),
+		MaxTurns:   maxTurns,
+		Mode:       strings.TrimSpace(os.Getenv("CODE_GURU_CLAUDE_MODE")),
+		Agentic: ClaudeAgenticConfig{
+			ConfigPath:    strings.TrimSpace(os.Getenv("CODE_GURU_CLAUDE_AGENTIC_CONFIG_PATH")),
+			WorkspaceDir:  strings.TrimSpace(os.Getenv("CODE_GURU_CLAUDE_AGENTIC_WORKSPACE_DIR")),
+			CloneDepth:    cloneDepth,
+			Timeout:       agenticTimeout,
+			MaxTurns:      agenticMaxTurns,
+			Effort:        strings.TrimSpace(os.Getenv("CODE_GURU_CLAUDE_AGENTIC_EFFORT")),
+			MaxBudgetUSD:  maxBudget,
+			FallbackModel: strings.TrimSpace(os.Getenv("CODE_GURU_CLAUDE_AGENTIC_FALLBACK_MODEL")),
+			MinConfidence: minConfidence,
+		},
+	}
+}
+
+// serverConfigFromEnv builds the webhook server settings, the Kubernetes
+// executor included, from CODE_GURU_SERVER_* (and CODE_GURU_PORT /
+// CODE_GURU_WEBHOOK_SECRET) variables. Split out of NewSettingsFromEnv for the
+// same reason as claudeConfigFromEnv.
+func serverConfigFromEnv() ServerConfig {
+	port, _ := strconv.Atoi(envOrDefault("CODE_GURU_PORT", "8080"))
+	queueSize, _ := strconv.Atoi(envOrDefault("CODE_GURU_SERVER_QUEUE_SIZE", "100"))
+	workers, _ := strconv.Atoi(envOrDefault("CODE_GURU_SERVER_WORKERS", strconv.Itoa(runtime.NumCPU())))
+	shutdownTimeout, _ := time.ParseDuration(envOrDefault("CODE_GURU_SERVER_SHUTDOWN_TIMEOUT", "30s"))
+	maxJobs, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("CODE_GURU_SERVER_KUBERNETES_MAX_CONCURRENT_JOBS")))
+	pollInterval, _ := time.ParseDuration(strings.TrimSpace(os.Getenv("CODE_GURU_SERVER_KUBERNETES_POLL_INTERVAL")))
+
+	return ServerConfig{
+		Port:                 port,
+		WebhookSecret:        os.Getenv("CODE_GURU_WEBHOOK_SECRET"),
+		QueueSize:            queueSize,
+		Workers:              workers,
+		ShutdownTimeout:      shutdownTimeout,
+		AllowedOrganizations: splitCSV(os.Getenv("CODE_GURU_SERVER_ALLOWED_ORGANIZATIONS")),
+		AllowedProjects:      splitCSV(os.Getenv("CODE_GURU_SERVER_ALLOWED_PROJECTS")),
+		AllowedSourceCIDRs:   splitCSV(os.Getenv("CODE_GURU_SERVER_ALLOWED_SOURCE_CIDRS")),
+		Executor:             strings.TrimSpace(os.Getenv("CODE_GURU_SERVER_EXECUTOR")),
+		Kubernetes: KubernetesExecutorConfig{
+			Namespace:         strings.TrimSpace(os.Getenv("CODE_GURU_SERVER_KUBERNETES_NAMESPACE")),
+			JobTemplate:       strings.TrimSpace(os.Getenv("CODE_GURU_SERVER_KUBERNETES_JOB_TEMPLATE")),
+			MaxConcurrentJobs: maxJobs,
+			PollInterval:      pollInterval,
+		},
+	}
+}
+
 func validateSettings(settings *Settings) error {
 	if settings.AI.Backend == "" {
 		return errors.New("ai.backend is required (openai, claude, or anthropic)")
+	}
+
+	if err := validateModes(settings); err != nil {
+		return err
 	}
 
 	validBackends := map[string]bool{
@@ -715,6 +1006,30 @@ func validateSettings(settings *Settings) error {
 
 	if settings.AI.Backend == "anthropic" && settings.AI.Anthropic.APIKey == "" {
 		return errors.New("ai.anthropic.api_key is required when backend is anthropic")
+	}
+
+	return nil
+}
+
+// validateModes rejects an unrecognised `ai.claude.mode` or `server.executor`.
+// Both default to their conservative value when empty, so the only way to get
+// here is a typo — and silently treating `agentc` as `diff` would leave an
+// operator believing the agentic review is running when it is not.
+func validateModes(settings *Settings) error {
+	validClaudeModes := map[string]bool{"": true, claudeModeDiff: true, claudeModeAgentic: true}
+	if mode := strings.ToLower(strings.TrimSpace(settings.AI.Claude.Mode)); !validClaudeModes[mode] {
+		return fmt.Errorf("ai.claude.mode %q is not supported (valid: diff, agentic)", settings.AI.Claude.Mode)
+	}
+	if settings.AI.Claude.AgenticEnabled() && settings.AI.Backend != "claude" {
+		return fmt.Errorf("ai.claude.mode agentic requires ai.backend claude, got %q", settings.AI.Backend)
+	}
+
+	validExecutors := map[string]bool{"": true, serverExecutorInProcess: true, serverExecutorKubernetes: true}
+	if executor := strings.ToLower(strings.TrimSpace(settings.Server.Executor)); !validExecutors[executor] {
+		return fmt.Errorf(
+			"server.executor %q is not supported (valid: inprocess, kubernetes)",
+			settings.Server.Executor,
+		)
 	}
 
 	return nil

@@ -40,6 +40,11 @@ var (
 	BuildReviewingMarkerBody = buildReviewingMarkerBody
 	BuildReviewFailedBody    = buildReviewFailedBody
 	BuildReviewCompleteBody  = buildReviewCompleteBody
+	BuildReviewQueuedBody    = buildReviewQueuedBody
+	BuildReReviewQueuedBody  = buildReReviewQueuedBody
+	BuildReviewJobFailedBody = buildReviewJobFailedBody
+	RenderCommentBody        = renderCommentBody
+	BuildReviewReportBlock   = buildReviewReportBlock
 	IsPullRequestClosed      = isPullRequestClosed
 
 	// PostReviewingMarker / PostReviewCompleteAnnotation /

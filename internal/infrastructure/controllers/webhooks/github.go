@@ -206,6 +206,7 @@ func (d *Dispatcher) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job := buildGitHubJob(provider, owner, repoName, event)
+	job.GitHubInstallationID = event.Installation.ID
 
 	dedupKey := fmt.Sprintf("gh:%s/%s:%d", owner, repoName, job.PR.ID)
 	if d.dedupSeen(r.Context(), dedupKey) {
@@ -401,6 +402,7 @@ func (d *Dispatcher) submitGitHubMention(w http.ResponseWriter, r *http.Request,
 	}
 
 	job := buildGitHubMentionJob(provider, owner, repoName, mention)
+	job.GitHubInstallationID = mention.installation
 
 	// A distinct key prefix from the PR-lifecycle path's `gh:` so a
 	// mention arriving right after a push is not swallowed by it.

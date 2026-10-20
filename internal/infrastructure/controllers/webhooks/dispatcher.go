@@ -62,6 +62,11 @@ type Dispatcher struct {
 	// reviews for 12 minutes after a routine `kubectl rollout restart`.
 	inFlightMu sync.Mutex
 	inFlight   map[string]struct{}
+
+	// reviewJobs, when set, hands every review that passes the in-process
+	// gates to its own Kubernetes Job (the `kubernetes` executor). Nil runs
+	// the whole review in-process.
+	reviewJobs *ReviewJobLauncher
 }
 
 // GitHubTokenizer resolves an installation access token for a GitHub App.
@@ -345,24 +350,122 @@ func (d *Dispatcher) Settings() *entities.Settings {
 	return d.settings
 }
 
-// HandlePR performs a review of a single PR. Called by worker goroutines.
-// `userMentioned` signals the comment-event webhook path (a user comment
-// containing `@code-guru` triggered this run); when true, the review-once
-// gate in the command is bypassed so the user's explicit re-review request
-// goes through. Push-triggered jobs pass false so the gate applies.
-func (d *Dispatcher) HandlePR(
-	ctx context.Context,
-	provider forgeEntities.ReviewProvider,
-	repo forgeEntities.Repository,
-	pr forgeEntities.PullRequestDetail,
-	ciPassed bool,
-	userMentioned bool,
-) error {
-	aiReviewer := d.aiFactory.Create(d.settings)
-	rulesRepo := d.rulesFactory.Create(d.settings)
-	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, d.detectorRegistry, d.metadataRepo)
+// SetReviewJobLauncher switches the dispatcher to the Kubernetes executor.
+//
+// **Concurrency contract:** identical to `SetDedup` — must be called during
+// initialisation, before the HTTP server starts handling webhook requests.
+func (d *Dispatcher) SetReviewJobLauncher(launcher *ReviewJobLauncher) {
+	d.reviewJobs = launcher
+}
 
-	result, err := reviewCmd.Execute(ctx, provider, repo, pr, commands.ReviewOptions{
+// HandleJob processes one queued webhook job: the whole review in-process, or
+// — with the Kubernetes executor — the gates in-process and the review in a
+// Job of its own.
+func (d *Dispatcher) HandleJob(ctx context.Context, job Job) error {
+	if d.reviewJobs == nil {
+		return d.HandlePR(ctx, job.Provider, job.Repo, job.PR, job.CIPassed, job.UserMentioned)
+	}
+	return d.enqueueReviewJob(ctx, job)
+}
+
+// enqueueReviewJob runs the review command's gates in-process and, when the
+// pull request still needs an AI review, hands it to a review Job. The gates
+// stay here on purpose: a draft, an already-reviewed pull request or a trivial
+// one is settled in milliseconds, and spending a pod on it — ADO alone fires
+// two deliveries per new pull request and one per push — would be most of
+// what the executor ever ran.
+func (d *Dispatcher) enqueueReviewJob(ctx context.Context, job Job) error {
+	result, needsReview, err := d.newReviewCommand().Triage(
+		ctx, job.Provider, job.Repo, job.PR, d.reviewOptions(job.CIPassed, job.UserMentioned),
+	)
+	if err != nil {
+		return fmt.Errorf("triage failed for PR #%d: %w", job.PR.ID, err)
+	}
+	if !needsReview {
+		logger.Infof("PR #%d settled without an AI review: verdict=%s (%s)", job.PR.ID, result.Verdict, result.Summary)
+		return nil
+	}
+
+	outcome, err := d.reviewJobs.Enqueue(ctx, ReviewJobRequest{
+		Provider:             job.Provider.Name(),
+		Repository:           job.Repo,
+		PullRequestID:        job.PR.ID,
+		UserMentioned:        job.UserMentioned,
+		GitHubInstallationID: job.GitHubInstallationID,
+	})
+	if err != nil {
+		return fmt.Errorf("could not hand PR #%d to a review job: %w", job.PR.ID, err)
+	}
+	switch {
+	case outcome.Duplicate:
+		logger.Infof("PR #%d: review job %s is already queued or running; not starting another",
+			job.PR.ID, outcome.JobName)
+	case outcome.Queued:
+		logger.Infof("PR #%d: review job %s queued at position %d", job.PR.ID, outcome.JobName, outcome.QueuePosition)
+		commands.PostReviewQueuedNotice(
+			ctx, job.Provider, job.Repo, job.PR.ID, outcome.QueuePosition, outcome.BehindOwnPullRequest,
+		)
+	default:
+		logger.Infof("PR #%d: review job %s started", job.PR.ID, outcome.JobName)
+	}
+	return nil
+}
+
+// ReportReviewJobFailure is the review-Job scheduler's failure reporter: it
+// rebuilds the pull request and an authenticated provider from the Job's
+// annotations and posts the "review job failed" notice, unless the review pod
+// already reported the failure itself (see commands.ReportReviewJobFailure).
+func (d *Dispatcher) ReportReviewJobFailure(ctx context.Context, job ReviewJob, reason string) error {
+	request, err := reviewJobRequestFromAnnotations(job.Metadata.Annotations)
+	if err != nil {
+		return err
+	}
+	provider, err := d.reviewJobProvider(ctx, request)
+	if err != nil {
+		return err
+	}
+	posted, err := commands.ReportReviewJobFailure(
+		ctx, provider, request.Repository, request.PullRequestID, reason, job.Metadata.Name,
+	)
+	if err != nil {
+		return err
+	}
+	if posted {
+		logger.Infof("PR #%d: posted the failure of review job %s", request.PullRequestID, job.Metadata.Name)
+	}
+	return nil
+}
+
+// reviewJobProvider builds an authenticated provider for a pull request named
+// by review-Job annotations, with the same token resolution the webhook
+// handlers use.
+func (d *Dispatcher) reviewJobProvider(
+	ctx context.Context, request ReviewJobRequest,
+) (forgeEntities.ReviewProvider, error) {
+	token := d.findToken(request.Provider)
+	if request.Provider == "github" {
+		resolved, err := d.resolveGitHubToken(ctx, request.GitHubInstallationID)
+		if err != nil {
+			return nil, err
+		}
+		token = resolved
+	}
+	if token == "" {
+		return nil, fmt.Errorf("no %s token configured", request.Provider)
+	}
+	return d.providerRegistry.GetReviewProvider(request.Provider, token)
+}
+
+// newReviewCommand builds the review command every job runs.
+func (d *Dispatcher) newReviewCommand() *commands.ReviewCommand {
+	return commands.NewReviewCommand(
+		d.aiFactory.Create(d.settings), d.rulesFactory.Create(d.settings), d.detectorRegistry, d.metadataRepo,
+	).WithWorkspace(infraRepos.NewWorkspaceRepository(d.settings))
+}
+
+// reviewOptions resolves the per-run review options from the settings.
+func (d *Dispatcher) reviewOptions(ciPassed, userMentioned bool) commands.ReviewOptions {
+	return commands.ReviewOptions{
 		CIPassed:                  ciPassed,
 		SubmitNativeReview:        d.settings.AI.NativeReviewSubmissionEnabled(),
 		MaxGuidelinesBytes:        d.settings.AI.GuidelinesBytes(),
@@ -379,7 +482,23 @@ func (d *Dispatcher) HandlePR(
 		LoadPullRequestMetadata:   d.settings.AI.PullRequestMetadataEnabled(),
 		BatchLargeReviews:         d.settings.AI.BatchLargeReviewsEnabled(),
 		MaxReviewBatches:          d.settings.AI.ReviewBatches(),
-	})
+	}
+}
+
+// HandlePR performs a review of a single PR. Called by worker goroutines.
+// `userMentioned` signals the comment-event webhook path (a user comment
+// containing `@code-guru` triggered this run); when true, the review-once
+// gate in the command is bypassed so the user's explicit re-review request
+// goes through. Push-triggered jobs pass false so the gate applies.
+func (d *Dispatcher) HandlePR(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	pr forgeEntities.PullRequestDetail,
+	ciPassed bool,
+	userMentioned bool,
+) error {
+	result, err := d.newReviewCommand().Execute(ctx, provider, repo, pr, d.reviewOptions(ciPassed, userMentioned))
 	if err != nil {
 		return fmt.Errorf("review failed for PR #%d: %w", pr.ID, err)
 	}

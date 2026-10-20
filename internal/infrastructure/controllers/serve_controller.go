@@ -88,6 +88,10 @@ func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
 	}
 
 	c.installDedupBackend()
+	if c.settings.Server.KubernetesExecutorEnabled() {
+		stopScheduler := c.installReviewJobExecutor()
+		defer stopScheduler()
+	}
 
 	pool := webhooks.NewPool(
 		c.settings.Server.Workers,
@@ -116,7 +120,7 @@ func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
 			defer cancelRenew()
 			go c.dispatcher.RenewDedup(renewCtx, job.DedupKey)
 
-			return c.dispatcher.HandlePR(ctx, job.Provider, job.Repo, job.PR, job.CIPassed, job.UserMentioned)
+			return c.dispatcher.HandleJob(ctx, job)
 		},
 	)
 	c.dispatcher.SetSubmitter(pool)
@@ -252,6 +256,33 @@ func (c *ServeController) installDedupBackend() {
 		"serve: K8s-Lease webhook dedup wired (holder=%q) — cross-pod duplicates are now gated by the API server",
 		holder,
 	)
+}
+
+// installReviewJobExecutor switches the dispatcher to the Kubernetes executor
+// and starts the review-Job scheduler, returning the function that stops it.
+// Any misconfiguration is fatal: the operator asked for reviews in Jobs, and
+// silently reviewing in-process instead would run the AI inside the server
+// pod, with the server's credentials and resources, without anyone noticing.
+func (c *ServeController) installReviewJobExecutor() context.CancelFunc {
+	template, err := webhooks.LoadReviewJobTemplate(c.settings.Server.Kubernetes.JobTemplate)
+	if err != nil {
+		logger.Fatalf("serve: invalid review job template: %v", err)
+	}
+	launcher, scheduler, err := webhooks.NewInClusterReviewJobExecutor(
+		c.settings.Server.Kubernetes, template, c.dispatcher.ReportReviewJobFailure,
+	)
+	if err != nil {
+		logger.Fatalf("serve: cannot start the kubernetes executor: %v", err)
+	}
+	c.dispatcher.SetReviewJobLauncher(launcher)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go scheduler.Run(ctx)
+	logger.Infof(
+		"serve: kubernetes executor ready — reviews run as Jobs, at most %d at a time (reconcile every %s)",
+		c.settings.Server.Kubernetes.ConcurrentJobs(), c.settings.Server.Kubernetes.SchedulerInterval(),
+	)
+	return cancel
 }
 
 // validateSettings enforces the minimum configuration required by the webhook

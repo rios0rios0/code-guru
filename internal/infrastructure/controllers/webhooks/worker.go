@@ -37,6 +37,12 @@ type Job struct {
 	// Push-triggered jobs leave this false so the gate applies and
 	// the PR is not flooded on every commit.
 	UserMentioned bool
+	// GitHubInstallationID is the GitHub App installation the delivery
+	// came through (0 for PAT-based deliveries and for Azure DevOps). The
+	// Kubernetes executor forwards it to the review Job, whose pod mints
+	// its own installation token: the one the server resolved for the
+	// delivery could expire while the Job waits in the queue.
+	GitHubInstallationID int64
 }
 
 // JobHandler processes a single Job. Returning an error logs the failure but does not

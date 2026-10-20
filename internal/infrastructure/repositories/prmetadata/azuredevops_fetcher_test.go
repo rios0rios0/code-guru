@@ -151,3 +151,66 @@ func TestAzureDevOpsFetcherGetPullRequestMetadata(t *testing.T) {
 			gotEscapedPath)
 	})
 }
+
+func TestAzureDevOpsFetcherIsFork(t *testing.T) {
+	t.Parallel()
+
+	repo := forgeEntities.Repository{ID: "repo-uuid", Name: "my-repo", Organization: "my-org", Project: "my-project"}
+
+	serve := func(t *testing.T, status int, body string) *prmetadata.AzureDevOpsFetcher {
+		t.Helper()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+		}))
+		t.Cleanup(server.Close)
+		return prmetadata.NewAzureDevOpsFetcher(server.Client()).WithBaseURL(server.URL)
+	}
+
+	t.Run("should report a pull request whose resource carries a fork source", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		fetcher := serve(t, http.StatusOK,
+			`{"pullRequestId": 42, "forkSource": {"name": "refs/heads/feature", "repository": {"name": "fork"}}}`)
+
+		// when
+		fork, err := fetcher.IsFork(context.Background(), "ado-pat", repo, 42)
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, fork)
+	})
+
+	t.Run("should report a same-repository pull request as no fork", func(t *testing.T) {
+		t.Parallel()
+
+		// given: an absent and an explicitly null fork source.
+		absent := serve(t, http.StatusOK, `{"pullRequestId": 42}`)
+		null := serve(t, http.StatusOK, `{"pullRequestId": 42, "forkSource": null}`)
+
+		// when
+		absentFork, absentErr := absent.IsFork(context.Background(), "ado-pat", repo, 42)
+		nullFork, nullErr := null.IsFork(context.Background(), "ado-pat", repo, 42)
+
+		// then
+		require.NoError(t, absentErr)
+		require.NoError(t, nullErr)
+		assert.False(t, absentFork)
+		assert.False(t, nullFork)
+	})
+
+	t.Run("should fail when the pull request resource cannot be read", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		fetcher := serve(t, http.StatusNotFound, `{}`)
+
+		// when
+		_, err := fetcher.IsFork(context.Background(), "ado-pat", repo, 42)
+
+		// then
+		require.ErrorContains(t, err, "fork check")
+	})
+}

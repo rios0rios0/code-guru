@@ -16,6 +16,14 @@ ai:
   claude:
     binary_path: 'claude'
     model: 'sonnet'
+    # 'agentic' checks the PR out and runs Claude Code as a read-only reviewing
+    # agent over the repository (needs `git`); see docs/AGENTIC_REVIEWS.md.
+    # mode: 'agentic'
+    # agentic:
+    #   # environment variables are expanded, as in rules.path
+    #   config_path: '${HOME}/.claude'
+    #   timeout: '30m'
+    #   min_confidence: 80
   # Load the reviewed repository's own AGENTS.md (CLAUDE.md when there
   # is none) as project-specific review context (default: true; set false to opt out).
   project_guidelines: true
@@ -26,3 +34,10 @@ ai:
 rules:
   path: '${HOME}/Development/github.com/rios0rios0/guide/.ai/claude/rules'
   categories: []
+
+# Run each webhook-triggered AI review in its own Kubernetes Job (serve only).
+# server:
+#   executor: 'kubernetes'
+#   kubernetes:
+#     job_template: '/etc/code-guru/review-job.yaml'
+#     max_concurrent_jobs: 3

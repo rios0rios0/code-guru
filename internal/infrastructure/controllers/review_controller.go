@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	configHelpers "github.com/rios0rios0/gitforge/v4/pkg/config/domain/helpers"
 	forgeEntities "github.com/rios0rios0/gitforge/v4/pkg/global/domain/entities"
@@ -14,10 +16,29 @@ import (
 	"github.com/rios0rios0/codeguru/internal/domain/commands"
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	domainRepos "github.com/rios0rios0/codeguru/internal/domain/repositories"
+	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers/webhooks"
 	infraRepos "github.com/rios0rios0/codeguru/internal/infrastructure/repositories"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
 	"github.com/rios0rios0/codeguru/internal/support"
 )
+
+// reviewFailureExitCode is the exit status of a `review` run that could not
+// review the pull request. A non-zero status is what tells a CI step — and a
+// Kubernetes review Job — that the review did not happen: exiting 0 after
+// logging the error made a failed review indistinguishable from a clean one.
+const reviewFailureExitCode = 1
+
+// exitProcess terminates the process; a variable so tests can intercept it.
+//
+//nolint:gochecknoglobals // test seam over os.Exit
+var exitProcess = os.Exit
+
+// failReviewf logs the failure and exits with reviewFailureExitCode. The
+// `return` after each call only matters when a test has replaced exitProcess.
+func failReviewf(format string, args ...any) {
+	logger.Errorf(format, args...)
+	exitProcess(reviewFailureExitCode)
+}
 
 // ReviewController handles reviewing a single PR by URL.
 type ReviewController struct {
@@ -50,18 +71,39 @@ func (c *ReviewController) GetBind() entities.ControllerBind {
 	}
 }
 
+// BindFlags registers the review-only flags.
+//
+// `--mentioned` runs the review as if the bot had been mentioned in a comment:
+// the review-once gate is bypassed and the bot's earlier threads are read back
+// and resolved. The webhook server's Kubernetes executor passes it to the
+// review Job of a mention, which is otherwise the same `review` invocation a
+// person would run.
+//
+// `--job-name` is set by the same executor on every review Job: the name is
+// stamped on the review's completion and failure notices, which is how the
+// server recognises this Job's own outcome when the Job fails afterwards.
+func (c *ReviewController) BindFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("mentioned", false, "review as a requested re-review (bypass the review-once gate)")
+	cmd.Flags().String("job-name", "",
+		"the Kubernetes review Job running this review, stamped on its outcome notices (set by the server)")
+}
+
 // Execute performs the review of a single PR.
 func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 
 	if len(args) == 0 {
-		logger.Error("PR URL is required")
+		failReviewf("PR URL is required")
 		return
 	}
 
 	prURL := args[0]
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	verbose, _ := cmd.Flags().GetBool("verbose")
+	// Only the `review` subcommand defines the flag; the bare
+	// `code-guru <pr-url>` form reads false.
+	mentioned, _ := cmd.Flags().GetBool("mentioned")
+	jobName, _ := cmd.Flags().GetString("job-name")
 
 	if verbose {
 		logger.SetLevel(logger.DebugLevel)
@@ -70,28 +112,31 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 	// parse PR URL
 	parsed, err := support.ParsePullRequestURL(prURL)
 	if err != nil {
-		logger.Errorf("failed to parse PR URL: %v", err)
+		failReviewf("failed to parse PR URL: %v", err)
 		return
 	}
 
 	// load settings
 	settings, err := c.loadSettings(cmd)
 	if err != nil {
-		logger.Errorf("failed to load settings: %v", err)
+		failReviewf("failed to load settings: %v", err)
 		return
 	}
 
 	// find token for the provider
 	token := c.findToken(settings, parsed.ProviderType)
+	if token == "" && parsed.ProviderType == "github" {
+		token = c.githubAppToken(ctx, settings)
+	}
 	if token == "" {
-		logger.Errorf("no token configured for provider %q", parsed.ProviderType)
+		failReviewf("no token configured for provider %q", parsed.ProviderType)
 		return
 	}
 
 	// get review provider
 	reviewProvider, err := c.providerRegistry.GetReviewProvider(parsed.ProviderType, token)
 	if err != nil {
-		logger.Errorf("failed to get review provider: %v", err)
+		failReviewf("failed to get review provider: %v", err)
 		return
 	}
 
@@ -103,22 +148,9 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 	}
 
 	// find the specific PR
-	prs, err := reviewProvider.ListOpenPullRequests(ctx, repo)
+	targetPR, err := findOpenPullRequest(ctx, reviewProvider, repo, parsed.PRID)
 	if err != nil {
-		logger.Errorf("failed to list PRs: %v", err)
-		return
-	}
-
-	var targetPR *forgeEntities.PullRequestDetail
-	for i := range prs {
-		if prs[i].ID == parsed.PRID {
-			targetPR = &prs[i]
-			break
-		}
-	}
-
-	if targetPR == nil {
-		logger.Errorf("PR #%d not found or not open in %s/%s", parsed.PRID, parsed.Organization, parsed.RepoName)
+		failReviewf("%v", err)
 		return
 	}
 
@@ -130,7 +162,9 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 	// create the review command with settings-based dependencies
 	aiReviewer := c.aiReviewerFactory.Create(settings)
 	rulesRepo := c.rulesRepoFactory.Create(settings)
-	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, detectorRegistry, c.metadataRepo)
+	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, detectorRegistry, c.metadataRepo).
+		WithWorkspace(infraRepos.NewWorkspaceRepository(settings)).
+		WithJobName(jobName)
 
 	// TODO: query CI status automatically via provider.GetPullRequestCheckStatus() once gitforge adds this method
 	ciPassed := false
@@ -143,6 +177,7 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 		MaxGuidelinesBytes:        settings.AI.GuidelinesBytes(),
 		MaxPRDescriptionBytes:     settings.AI.PRDescriptionBytes(),
 		ReviewDrafts:              settings.AI.ReviewDrafts,
+		UserMentioned:             mentioned,
 		TrivialAutoMerge:          settings.Trivial.AutoMerge,
 		TrivialMergeStrategy:      settings.Trivial.MergeStrategy,
 		TrivialBypassPolicy:       settings.Trivial.BypassPolicy,
@@ -155,7 +190,7 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 		MaxReviewBatches:          settings.AI.ReviewBatches(),
 	})
 	if err != nil {
-		logger.Errorf("review failed: %v", err)
+		failReviewf("review failed: %v", err)
 		return
 	}
 
@@ -208,6 +243,52 @@ func (c *ReviewController) findToken(settings *entities.Settings, providerType s
 		return token
 	}
 	return ""
+}
+
+// findOpenPullRequest looks the pull request up among the repository's open
+// ones, which is where the review gets its branches, author and draft flag.
+func findOpenPullRequest(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+) (*forgeEntities.PullRequestDetail, error) {
+	prs, err := provider.ListOpenPullRequests(ctx, repo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list PRs: %w", err)
+	}
+	for i := range prs {
+		if prs[i].ID == prID {
+			return &prs[i], nil
+		}
+	}
+	return nil, fmt.Errorf("PR #%d not found or not open in %s/%s", prID, repo.Organization, repo.Name)
+}
+
+// githubAppToken mints a GitHub App installation token when the App is
+// configured and the installation is named by CODE_GURU_GITHUB_INSTALLATION_ID
+// — the variable the webhook server's Kubernetes executor sets on the review
+// Job of a pull request it received through the App. Installation tokens
+// expire after an hour, so the pod mints its own instead of being handed one
+// that might lapse while it waits in the queue. Returns "" when the App is not
+// configured or the exchange fails (logged), which the caller reports as a
+// missing token.
+func (c *ReviewController) githubAppToken(ctx context.Context, settings *entities.Settings) string {
+	installationID, _ := strconv.ParseInt(strings.TrimSpace(os.Getenv("CODE_GURU_GITHUB_INSTALLATION_ID")), 10, 64)
+	if installationID == 0 || settings.GitHubApp.AppID == 0 || settings.GitHubApp.PrivateKey == "" {
+		return ""
+	}
+	tokenizer, err := webhooks.NewGitHubAppTokenizer(settings.GitHubApp.AppID, settings.GitHubApp.PrivateKey)
+	if err != nil {
+		logger.Errorf("failed to initialise the GitHub App tokenizer: %v", err)
+		return ""
+	}
+	token, err := tokenizer.InstallationToken(ctx, installationID)
+	if err != nil {
+		logger.Errorf("failed to mint a GitHub App installation token: %v", err)
+		return ""
+	}
+	return token
 }
 
 func (c *ReviewController) printResult(result *entities.ReviewResult, dryRun bool) {
