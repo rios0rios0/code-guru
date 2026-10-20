@@ -45,3 +45,9 @@ func HandOverCredentialsForTest(lookup func(string) (string, bool)) ([]*os.File,
 // DescriptorHandoffSupported reports whether this platform hands the model
 // credential over a descriptor.
 const DescriptorHandoffSupported = descriptorHandoffSupported
+
+// EnvironmentCredentialNamesForTest exposes which credentials reach the CLI
+// through its environment on this platform.
+func EnvironmentCredentialNamesForTest() []string {
+	return environmentCredentialNames()
+}

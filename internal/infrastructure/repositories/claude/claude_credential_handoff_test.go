@@ -127,3 +127,44 @@ func TestHandOverCredentials(t *testing.T) {
 		require.ErrorContains(t, err, "handing CLAUDE_CODE_OAUTH_TOKEN to the claude CLI")
 	})
 }
+
+func TestEnvironmentCredentialNames(t *testing.T) {
+	t.Parallel()
+
+	t.Run(
+		"should leave only the gateway token to the environment where descriptors can be handed over",
+		func(t *testing.T) {
+			t.Parallel()
+			if !claude.DescriptorHandoffSupported {
+				t.Skip("this platform hands every credential over through the environment")
+			}
+
+			// given / when
+			names := claude.EnvironmentCredentialNamesForTest()
+
+			// then
+			assert.Equal(t, []string{"ANTHROPIC_AUTH_TOKEN"}, names)
+		},
+	)
+
+	t.Run("should treat every credential as an environment credential where they cannot", func(t *testing.T) {
+		t.Parallel()
+		if claude.DescriptorHandoffSupported {
+			t.Skip("this platform hands the OAuth token and API key over by descriptor")
+		}
+
+		// given
+		env := lookupFrom(map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "fixture-oauth-token-placeholder"})
+
+		// when
+		names := claude.EnvironmentCredentialNamesForTest()
+		files, _, closeAll, err := claude.HandOverCredentialsForTest(env)
+
+		// then: the reviewer then holds them to the scrub rule, like
+		// ANTHROPIC_AUTH_TOKEN.
+		require.NoError(t, err)
+		defer closeAll()
+		assert.ElementsMatch(t, []string{"ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"}, names)
+		assert.Empty(t, files)
+	})
+}

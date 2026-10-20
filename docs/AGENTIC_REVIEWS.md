@@ -153,7 +153,8 @@ descendant cannot reach it: reading another process's memory takes ptrace rights
 grants only to the process's ancestors. The server process, which still holds the credential in its own
 environment, marks itself non-dumpable before the agent starts, so its `/proc/<pid>/environ` is unreadable too. If a
 CLI ever stopped reading the descriptor, it would have no credential at all and the review would fail to
-authenticate; it cannot fall back to exposing it.
+authenticate; it cannot fall back to exposing it. Windows has no such inheritance, so there every credential travels
+in the environment and is held to the rule for `ANTHROPIC_AUTH_TOKEN` below.
 
 `ANTHROPIC_AUTH_TOKEN`, the bearer token of an LLM gateway, has no descriptor variant: the CLI reads it only from its
 environment. For it the reviewer relies on `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`, which strips credentials from the

@@ -36,6 +36,11 @@ func newFakeAgentCLI(t *testing.T, stdout string, exitCode int, delaySeconds int
 	if runtime.GOOS == "windows" {
 		t.Skip("fake binary uses /bin/sh")
 	}
+	if !claude.DescriptorHandoffSupported {
+		// Every platform with /bin/sh is a Unix one, where the credential
+		// travels by descriptor; the cases below assume it does.
+		t.Skip("this platform hands the credential over through the environment")
+	}
 	dir := t.TempDir()
 	record := filepath.Join(dir, "record")
 	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission
