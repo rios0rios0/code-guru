@@ -2976,6 +2976,114 @@ func TestApplyThreadResolutions(t *testing.T) {
 			"the anchor must be marked handled even on reply failure so the surrounding postComments still drops the duplicate inline comment",
 		)
 	})
+
+	// answeredThread is a thread an earlier re-review already settled:
+	// the finding, the author's answer, then the bot's verdict, rendered
+	// by the same function the bot posts it with.
+	answeredThread := func(status string, after ...entities.ReviewMessage) []entities.ReviewThread {
+		verdict := commands.BuildResolutionReplyBody(entities.ThreadResolution{Status: status, Explanation: "Done."})
+		messages := []entities.ReviewMessage{
+			{Author: "code-guru[bot]", Body: "[high] possible nil deref", FromBot: true},
+			{Author: "alice", Body: "fixed in abc123"},
+			{Author: "code-guru[bot]", Body: verdict, FromBot: true},
+		}
+		return []entities.ReviewThread{{
+			FilePath: "internal/foo.go",
+			Line:     10,
+			ThreadID: 111,
+			Comments: append(messages, after...),
+		}}
+	}
+
+	t.Run("should not post a verdict the thread already carries when nobody replied since", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &recordingReviewProvider{}
+		resolutions := []entities.ThreadResolution{
+			{FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "Still fixed."},
+		}
+
+		// when
+		handled := commands.ApplyThreadResolutions(
+			rc,
+			context.Background(),
+			provider,
+			repo,
+			prID,
+			answeredThread("resolved"),
+			resolutions,
+		)
+
+		// then
+		assert.Empty(
+			t,
+			provider.replies,
+			"repeating a verdict the thread already shows is the reply flood this guards against",
+		)
+		require.Len(
+			t,
+			provider.threadStatusUpdates,
+			1,
+			"the status is still set: it is idempotent, and an earlier run's update may have failed after its reply was posted",
+		)
+		assert.Equal(t, "fixed", provider.threadStatusUpdates[0].status)
+		assert.Len(t, handled, 1, "the anchor must still be handled so a duplicate new comment on it is dropped")
+	})
+
+	t.Run("should answer again when a person replied after the bot's verdict", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &recordingReviewProvider{}
+		resolutions := []entities.ThreadResolution{
+			{FilePath: "internal/foo.go", Line: 10, Status: "resolved", Explanation: "The nil check is still there."},
+		}
+		thread := answeredThread("resolved", entities.ReviewMessage{Author: "bob", Body: "this regressed in def456"})
+
+		// when
+		commands.ApplyThreadResolutions(
+			rc,
+			context.Background(),
+			provider,
+			repo,
+			prID,
+			thread,
+			resolutions,
+		)
+
+		// then
+		require.Len(t, provider.replies, 1, "a person disputing the verdict must get an answer")
+		assert.Equal(t, 111, provider.replies[0].threadID)
+	})
+
+	t.Run("should answer again when the verdict changed", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		rc := commands.NewReviewCommand(nil, nil, nil, nil)
+		provider := &recordingReviewProvider{}
+		resolutions := []entities.ThreadResolution{
+			{FilePath: "internal/foo.go", Line: 10, Status: "outstanding", Explanation: "The check was removed again."},
+		}
+
+		// when
+		commands.ApplyThreadResolutions(
+			rc,
+			context.Background(),
+			provider,
+			repo,
+			prID,
+			answeredThread("resolved"),
+			resolutions,
+		)
+
+		// then
+		require.Len(t, provider.replies, 1, "a thread whose verdict changed must say so")
+		assert.Contains(t, provider.replies[0].body, "outstanding")
+	})
 }
 
 // TestExecuteMentionPathAppliesThreadResolutions wires the LLM stub to a

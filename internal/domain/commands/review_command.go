@@ -2125,7 +2125,7 @@ func (c *ReviewCommand) applyThreadResolutions(
 	}
 
 	handled := make(map[string]struct{}, len(resolutions))
-	applied := 0
+	applied, unchanged := 0, 0
 	for _, res := range resolutions {
 		thread, ok := matchResolutionThread(res, byID, byAnchor)
 		if !ok {
@@ -2135,7 +2135,6 @@ func (c *ReviewCommand) applyThreadResolutions(
 			)
 			continue
 		}
-		applied++
 
 		// Only suppress overlapping new inline comments when the
 		// resolution closes the prior thread — `outstanding` keeps
@@ -2150,26 +2149,21 @@ func (c *ReviewCommand) applyThreadResolutions(
 			handled[threadAnchorKey(thread.FilePath, thread.Line)] = struct{}{}
 		}
 
-		body := buildResolutionReplyBody(res)
-		if err := c.postResolutionReply(ctx, provider, repo, prID, thread, body); err != nil {
-			logger.Warnf(
-				"PR #%d: failed to post resolution reply on %s:%d (status=%s): %v",
-				prID, thread.FilePath, thread.Line, res.Status, err,
-			)
-			continue
-		}
-
-		if shouldCloseResolution(res.Status) && thread.ThreadID > 0 {
-			status := mapResolutionStatusToThreadState(res.Status)
-			if err := provider.UpdatePullRequestThreadStatus(
-				ctx, repo, prID, int(thread.ThreadID), status,
-			); err != nil {
-				logger.Warnf(
-					"PR #%d: failed to set thread %d on %s:%d to %q: %v — reply was posted, only the auto-close failed",
-					prID, thread.ThreadID, thread.FilePath, thread.Line, status, err,
-				)
+		// The thread already carries this exact verdict from an earlier
+		// run and nobody has replied since, so there is nothing new to
+		// say: re-posting it is how a settled thread used to collect one
+		// more identical confirmation on every re-review. The status is
+		// still set below — it is idempotent, and an earlier run's update
+		// may have failed after its reply was posted.
+		if alreadyAnswered(thread, res.Status) {
+			unchanged++
+		} else {
+			applied++
+			if !c.replyWithResolution(ctx, provider, repo, prID, thread, res) {
+				continue
 			}
 		}
+		closeResolvedThread(ctx, provider, repo, prID, thread, res.Status)
 	}
 
 	if applied > 0 {
@@ -2178,7 +2172,84 @@ func (c *ReviewCommand) applyThreadResolutions(
 			prID, applied,
 		)
 	}
+	if unchanged > 0 {
+		logger.Infof(
+			"PR #%d: %d thread(s) already carried the same verdict with no reply since; not repeated",
+			prID, unchanged,
+		)
+	}
 	return handled
+}
+
+// replyWithResolution posts the verdict on its thread and reports whether
+// it landed. A failure is logged, and the caller then skips the status
+// update, so no thread is closed without a visible reply.
+func (c *ReviewCommand) replyWithResolution(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+	thread entities.ReviewThread,
+	res entities.ThreadResolution,
+) bool {
+	body := buildResolutionReplyBody(res)
+	if err := c.postResolutionReply(ctx, provider, repo, prID, thread, body); err != nil {
+		logger.Warnf(
+			"PR #%d: failed to post resolution reply on %s:%d (status=%s): %v",
+			prID, thread.FilePath, thread.Line, res.Status, err,
+		)
+		return false
+	}
+	return true
+}
+
+// closeResolvedThread sets the platform status of a thread whose verdict
+// closes it (`resolved` → fixed, `outdated` → closed) and leaves any other
+// verdict's thread active. Best-effort: a failure is logged, and the next
+// re-review sets the status again.
+func closeResolvedThread(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	prID int,
+	thread entities.ReviewThread,
+	resolution string,
+) {
+	if !shouldCloseResolution(resolution) || thread.ThreadID <= 0 {
+		return
+	}
+	status := mapResolutionStatusToThreadState(resolution)
+	if err := provider.UpdatePullRequestThreadStatus(
+		ctx, repo, prID, int(thread.ThreadID), status,
+	); err != nil {
+		logger.Warnf(
+			"PR #%d: failed to set thread %d on %s:%d to %q: %v — the verdict reply is on the thread, only the auto-close failed",
+			prID,
+			thread.ThreadID,
+			thread.FilePath,
+			thread.Line,
+			status,
+			err,
+		)
+	}
+}
+
+// alreadyAnswered reports whether the thread's newest message is the
+// bot's own verdict with this status: the answer an earlier re-review
+// gave, with no reply from anyone since. Index 0 is the original
+// finding, never a verdict, so a thread needs at least one reply. A
+// person who answers the verdict becomes the newest message, so a
+// disputed thread is always answered again, and so is one whose verdict
+// changed.
+func alreadyAnswered(thread entities.ReviewThread, status string) bool {
+	if len(thread.Comments) <= 1 {
+		return false
+	}
+	last := thread.Comments[len(thread.Comments)-1]
+	if !last.FromBot {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(last.Body), resolutionHeader(status))
 }
 
 // matchResolutionThread routes one ThreadResolution back to the
