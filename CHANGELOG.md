@@ -22,6 +22,28 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-10-20
+
+### Added
+
+- added the `--mentioned` flag to `review`, which runs the review as a requested re-review (the review-once gate is bypassed and the bot's earlier threads are resolved)
+- added the agentic review mode (`ai.claude.mode: agentic`): the pull request is checked out with git and Claude Code reviews the whole repository as a read-only agent in six passes (guidelines, bugs, git history, code comments, security, design), with every finding scored and the ones below `ai.claude.agentic.min_confidence` (default 80) dropped and listed, and the verdict relaxed to what the surviving findings justify so a dropped error never casts a changes-requested vote; findings post as one thread each headed `**<dimension> (confidence <n>)**`, and the completion notice carries a findings index, what each dimension checked and the dropped list. The run is sandboxed: the checkout's own `.claude` settings, hooks, MCP servers and memory files never load, Bash is limited to read-only git commands, reads outside the checkout are blocked, installed skills and commands keep only an allowlist of harmless frontmatter keys (or are not installed when their frontmatter cannot be read with certainty), the provider token never reaches the agent, the subprocess environment scrub is requested wherever bubblewrap and socat are installed (the Claude Code CLI refuses to run it without them; `ai.claude.agentic.subprocess_env_scrub` decides explicitly) and secrets are redacted from everything posted. On GitHub the head is fetched from `refs/pull/<id>/head`, so a pull request from a fork is reviewed against its own code; on Azure DevOps, which publishes no such ref, a pull request from a fork is refused before anything is cloned; and a checkout that changes none of the files the provider lists is refused rather than reviewed — see `docs/AGENTIC_REVIEWS.md`
+- added the Kubernetes Job executor for the webhook server (`server.executor: kubernetes`): the server keeps the cheap gates (draft, review-once, trivial detection) and hands each review that needs the AI to its own Job, created from an operator-owned `batch/v1` template (`server.kubernetes.job_template`, rejected at startup if its `parallelism` or `completions` would run a review in more than one pod) and deleted after it finishes. Jobs are created suspended and released oldest-first while fewer than `server.kubernetes.max_concurrent_jobs` (default 3) run, with the server replicas taking turns under a Kubernetes Lease so the cap holds across all of them, and a Job whose start the API server refuses hands its slot to the next one in line instead of holding the queue; a waiting pull request gets a "queued" notice, the queue survives server restarts, and a review pod that dies without posting gets its failure reported on the pull request, matched to the Job by the name stamped on its notices (`review --job-name`). The review pod authenticates as the server did: with the GitHub App installation token when the delivery came through the App, ahead of any configured PAT
+
+### Changed
+
+- changed `CLAUDE.md` and the code-review skill to list the SAST suite `make sast` runs today (CodeQL, Semgrep, Hadolint, ShellCheck, Gitleaks) and its suppression files, dropping Trivy, which the pipelines no longer run
+- changed `review` to exit with status 1 when it could not review the pull request, instead of logging the error and exiting 0, so a CI step or a review Job fails visibly
+- changed the container image to keep `git` installed, which the agentic review mode clones with and the reviewing agent reads history with
+- changed the Go module `github.com/rios0rios0/gitforge/v4` from `v4.2.11` to `v4.3.0`, so on Azure DevOps the reviewer finds a pull request among every open one rather than among the first page only, and reads every changed file of a pull request rather than the first 100
+- changed the Go modules `github.com/Microsoft/go-winio` from `v0.6.3` to `v0.6.4`, `github.com/rios0rios0/cliforge` from `v0.5.0` to `v0.5.1`, `github.com/rios0rios0/gitforge/v4` from `v4.2.10` to `v4.2.11`, `github.com/rios0rios0/langforge` from `v1.1.8` to `v1.1.9` and `github.com/rios0rios0/testkit` from `v0.3.5` to `v0.3.6`
+- changed the Go version from `1.27.2` to `1.27.3`
+- changed the project guidelines loader to read the reviewed repository's root `AGENTS.md` first and fall back to `CLAUDE.md`, so a migrated repository whose `CLAUDE.md` only contains `@AGENTS.md` no longer sends that literal import line to the model; the prompt header now names the file actually loaded, and a PR that modifies `AGENTS.md` skips the repository fetch just like one that modifies `CLAUDE.md`
+
+### Security
+
+- handed the agentic reviewer's model credential to the Claude Code CLI over an inherited socket (`CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` / `CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR`) instead of its environment, so neither the CLI's `/proc/<pid>/environ` nor any command the reviewing agent runs can read an OAuth token or API key, even in the container image, where Claude Code's subprocess environment scrub cannot run; made a review holding `ANTHROPIC_AUTH_TOKEN`, which the CLI reads only from its environment, refuse to start where the scrub cannot run unless `ai.claude.agentic.subprocess_env_scrub` is explicitly `false`; and requested the scrub only where both bubblewrap and socat are installed, since without socat every command the agent ran failed
+
 ## [1.19.4] - 2026-10-14
 
 ### Changed

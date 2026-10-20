@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'changed the project guidelines loader to read the reviewed repository''s root `AGENTS.md` first and fall back to `CLAUDE.md`, so a migrated repository whose `CLAUDE.md` only contains `@AGENTS.md` no longer sends that literal import line to the model; the prompt header now names the file actually loaded, and a PR that modifies `AGENTS.md` skips the repository fetch just like one that modifies `CLAUDE.md`'
-time: '2026-10-19T14:42:31.53893576Z'
