@@ -1,3 +1,0 @@
-kind: 'Added'
-body: 'added the `--mentioned` flag to `review`, which runs the review as a requested re-review (the review-once gate is bypassed and the bot''s earlier threads are resolved)'
-time: '2026-10-19T22:21:31.536875145Z'

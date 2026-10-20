@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'changed `CLAUDE.md` and the code-review skill to list the SAST suite `make sast` runs today (CodeQL, Semgrep, Hadolint, ShellCheck, Gitleaks) and its suppression files, dropping Trivy, which the pipelines no longer run'
-time: '2026-10-20T15:34:45.775049863Z'
