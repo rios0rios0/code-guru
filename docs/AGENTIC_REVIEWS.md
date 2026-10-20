@@ -90,7 +90,7 @@ ai:
       max_budget_usd: 0             # forwarded to --max-budget-usd; 0 = no cap
       fallback_model: ''            # forwarded to --fallback-model
       min_confidence: 80            # findings below are dropped (and listed)
-      # subprocess_env_scrub: true  # optional: requires bubblewrap; omit for automatic detection
+      # subprocess_env_scrub: true  # optional: requires bubblewrap and socat; omit for automatic detection
 
 rules:
   path: '/opt/claude/rules'
@@ -108,16 +108,18 @@ rules:
 | `ai.claude.agentic.max_budget_usd` | `CODE_GURU_CLAUDE_AGENTIC_MAX_BUDGET_USD` | `0` (no cap) |
 | `ai.claude.agentic.fallback_model` | `CODE_GURU_CLAUDE_AGENTIC_FALLBACK_MODEL` | (none) |
 | `ai.claude.agentic.min_confidence` | `CODE_GURU_CLAUDE_AGENTIC_MIN_CONFIDENCE` | `80` |
-| `ai.claude.agentic.subprocess_env_scrub` | `CODE_GURU_CLAUDE_AGENTIC_SUBPROCESS_ENV_SCRUB` | on wherever bubblewrap (`bwrap`) is installed |
+| `ai.claude.agentic.subprocess_env_scrub` | `CODE_GURU_CLAUDE_AGENTIC_SUBPROCESS_ENV_SCRUB` | on wherever bubblewrap (`bwrap`) and `socat` are installed |
 
 `mode: agentic` requires `backend: claude`; an unknown mode is rejected at startup rather than silently treated as
 `diff`. The agentic mode works anywhere `claude` and `git` are installed — the CLI, CI, the webhook server — and does
 not need the Kubernetes executor.
 
-The model credential is whatever the Claude CLI reads: `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or
-`ANTHROPIC_AUTH_TOKEN`, optionally with `ANTHROPIC_BASE_URL` (and the `ANTHROPIC_DEFAULT_*_MODEL` pins) for a gateway.
-A workspace-scoped API key with a spend limit narrows the blast radius of a leaked credential more than a
-subscription token does.
+The model credential is whatever the Claude CLI reads — `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or
+`ANTHROPIC_AUTH_TOKEN` — set in the reviewer's own environment, optionally with `ANTHROPIC_BASE_URL` (and the
+`ANTHROPIC_DEFAULT_*_MODEL` pins) for a gateway. The reviewer hands an OAuth token or an API key to the CLI over an
+inherited socket, never through its environment; `ANTHROPIC_AUTH_TOKEN` has no such channel (see
+[The model credential](#the-model-credential)). A workspace-scoped API key with a spend limit narrows the blast
+radius of a leaked credential more than a subscription token does.
 
 ## The sandbox
 
@@ -130,24 +132,54 @@ review is built so that the realistic attacks fail closed:
 | The checkout's `AGENTS.md` / `CLAUDE.md` / skills carry instructions | not auto-loaded (`CLAUDE_CODE_DISABLE_CLAUDE_MDS`, `instructionFiles: managed-only`); the agent reads them as data, and the prompt treats instructions inside them as findings |
 | The agent runs a build, a script or a network call | `--tools Read,Grep,Glob,Bash,Skill`, Bash allow-listed to read-only git subcommands, `dontAsk` + `--permission-prompts none`, deny rules for `git -c`/`-C`, `--no-index`, `--contents`, `--output`, external diff/textconv |
 | An installed skill pre-approves extra tools for itself | the frontmatter of every installed skill and command is found the way Claude Code finds it and rebuilt from an allowlist — `name`, `description`, `argument-hint`, `model`, `version`, `license`, `disable-model-invocation`, `user-invocable`, plain scalar values only — so `allowed-tools`, `hooks`, a forked `context` and any key added later never reach the agent; a file whose fence carries more than whitespace, whose header holds a stray `---`, that is not valid YAML, has a non-string key, a merge key in any quoting, an anchor, an alias, a custom tag or a repeated key is not installed at all |
-| The agent reads the process environment or the service-account token | `blockReadsOutsideWorkingDirectories`, `Read(//proc/**)` / `//sys/**` / `//etc/**` denied, symlinks checked out as plain files, and `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` wherever bubblewrap can run it (see below) |
+| The agent reads the process environment or the service-account token | `blockReadsOutsideWorkingDirectories`, `Read(//proc/**)` / `//sys/**` / `//etc/**` denied, symlinks checked out as plain files, and `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` wherever bubblewrap and socat can run it (see below) |
+| A command the agent runs reads the model credential | an OAuth token or API key reaches the CLI over an inherited socket, so neither the CLI's `/proc/<pid>/environ` nor any subprocess environment holds it, and the CLI's memory takes ptrace rights a descendant does not have; a credential that can only travel in the environment needs the scrub, or an explicit opt-out (see below) |
 | The agent reads the provider token | it is never in the agent's environment (built from an allowlist), and the server process marks itself non-dumpable before the agent starts, so `/proc/<pid>/environ` of the parent is unreadable |
 | The review leaks a credential into a PR comment | the model credentials and the provider token are redacted from every text field of the answer — file paths, dimensions and severities included — verbatim and in base64/hex, plus anything shaped like an Anthropic key |
 | claude.ai connectors of a subscription account become tools | `ENABLE_CLAUDEAI_MCP_SERVERS=false` |
 
-`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` strips credentials from the environment of every subprocess the agent starts (its
-git commands). The Claude Code CLI runs that isolation through bubblewrap and refuses to start without it, so the
-reviewer asks for the scrub only where `bwrap` is installed, logging a warning when it runs without. The container
-image ships without bubblewrap on purpose: a review pod runs with no capabilities, `allowPrivilegeEscalation: false`
-and the runtime's default seccomp profile, which leaves bubblewrap no user namespace to create, so installing it
-would only move the failure to the first git command. Without the scrub the agent's git commands inherit the model
-credential, and the other layers above still hold: Bash runs only read-only git subcommands, `/proc` cannot be
-read, and the credential is redacted from everything posted. `subprocess_env_scrub: true` requires the scrub (a run
-without bubblewrap then fails); `false` never asks for it.
+### The model credential
 
-The residual risk is the model credential itself, which the CLI process has to hold. Redaction covers the encodings
-an instruction can ask for without tools; an egress-restricted NetworkPolicy (below) removes every channel but the
-model API and the provider.
+The CLI has to hold the model credential to call the model, and every command the agent runs is the CLI's child. A
+credential in the CLI's environment is within their reach twice over: they inherit the environment (the CLI drops
+`CLAUDE_CODE_OAUTH_TOKEN` from it, but not `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`), and the CLI's own
+`/proc/<pid>/environ` stays readable by every process of the same user for the whole run.
+
+So the reviewer never puts it there. It hands `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` to the CLI over an
+inherited socket, named by `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` and `CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR`, which
+the CLI reads up to the first newline and then closes. The CLI authenticates exactly as it does from the environment
+variable (the same `Authorization`, `x-api-key` and `anthropic-beta` headers) and keeps the value in memory, where a
+descendant cannot reach it: reading another process's memory takes ptrace rights over it, which Yama's default scope
+grants only to the process's ancestors. The server process, which still holds the credential in its own
+environment, marks itself non-dumpable before the agent starts, so its `/proc/<pid>/environ` is unreadable too. If a
+CLI ever stopped reading the descriptor, it would have no credential at all and the review would fail to
+authenticate; it cannot fall back to exposing it. Windows has no such inheritance, so there every credential travels
+in the environment and is held to the rule for `ANTHROPIC_AUTH_TOKEN` below.
+
+`ANTHROPIC_AUTH_TOKEN`, the bearer token of an LLM gateway, has no descriptor variant: the CLI reads it only from its
+environment. For it the reviewer relies on `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`, which strips credentials from the
+environment of every subprocess the agent starts and runs each one in a bubblewrap sandbox with its own PID
+namespace and `/proc`, so none can read the CLI's environment either. That sandbox needs both bubblewrap and socat:
+without bubblewrap the CLI refuses to start, and without socat every command the agent runs fails. Where they are
+missing and `subprocess_env_scrub` is unset, a review holding `ANTHROPIC_AUTH_TOKEN` is refused rather than run with
+the token in reach of the agent's commands, and `subprocess_env_scrub: false` accepts that exposure explicitly. A
+gateway that also takes the credential as an API key (`x-api-key`) can be given it as `ANTHROPIC_API_KEY`, which
+travels by descriptor.
+
+`subprocess_env_scrub` itself only decides the scrub: unset asks for it wherever bubblewrap and socat are installed,
+`true` requires it (a run without bubblewrap then fails), `false` never asks for it. The container image ships
+without either on purpose. A review pod runs with no capabilities, `allowPrivilegeEscalation: false` and the
+runtime's default seccomp profile, which leaves bubblewrap no user namespace to create, so the first git command
+would fail. Making the sandbox run takes a seccomp profile that re-opens `unshare`, `mount` and `pivot_root`, an
+unmasked `/proc` for the fresh mount (`procMount: Unmasked`, which requires a user-namespaced pod, `hostUsers:
+false`) and, on nodes that enforce AppArmor, a profile without the runtime default's `deny mount`: a wider kernel
+attack surface for a pod that runs an agent over untrusted input, to protect a credential the descriptor already
+keeps out of its commands' reach.
+
+The residual risk is the model credential in the CLI's memory, which it needs to call the model; reading it would
+take ptrace rights over the CLI, which Yama withholds from a descendant and which no read-only git command can use.
+Redaction covers the encodings an instruction can ask for without tools; an egress-restricted NetworkPolicy (below)
+removes every channel but the model API and the provider.
 
 ## The Kubernetes Job executor
 

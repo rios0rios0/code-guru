@@ -404,7 +404,12 @@ multi-stage build (`golang:1.27.0-alpine` builder, `debian:12-slim` runtime
 pinned by digest, with the Claude Code CLI and `git` — which the agentic
 review mode needs — installed) running as the
 non-root user `65532`. The builder tag tracks the `go` directive in
-`go.mod` and must be bumped together with it.
+`go.mod` and must be bumped together with it. The image has no bubblewrap
+or socat, so the agentic review runs in it without Claude Code's subprocess
+environment scrub; the model credential still never reaches the commands
+the reviewing agent runs, because the reviewer hands an OAuth token or API
+key to the CLI over an inherited socket rather than its environment — see
+[the model credential](docs/AGENTIC_REVIEWS.md#the-model-credential).
 
 The image ships with a `HEALTHCHECK` directive that calls `code-guru
 health` against the local listener every 30 seconds. The `health`

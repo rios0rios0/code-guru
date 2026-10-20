@@ -23,6 +23,15 @@ var ErrWorkspaceUnavailable = errors.New("the pull request could not be checked 
 // the same bound again, at the same cost.
 var ErrAgenticReviewIncomplete = errors.New("the agentic review stopped at a limit before finishing")
 
+// ErrAgentCredentialUnprotected marks an agentic review that was never
+// started because its model credential would have sat in the environment
+// every command the agent runs can read, with no subprocess environment scrub
+// to keep it there — a deployment decision, which a re-run cannot change, so
+// it is NOT retried.
+var ErrAgentCredentialUnprotected = errors.New(
+	"the review agent was not started: its model credential would have been readable by the commands it runs",
+)
+
 // redactedPlaceholder replaces every secret found in text that is about to be
 // posted.
 const redactedPlaceholder = "[redacted]"

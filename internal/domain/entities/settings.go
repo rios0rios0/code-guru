@@ -437,15 +437,21 @@ type ClaudeAgenticConfig struct {
 	MinConfidence int `yaml:"min_confidence"`
 
 	// SubprocessEnvScrub controls CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, which
-	// strips credentials from every subprocess the agent starts (its git
-	// commands). The CLI runs that isolation through bubblewrap and refuses
-	// to start without it, so nil resolves, through
-	// SubprocessEnvScrubEnabled, to "wherever `bwrap` is installed": a
-	// workstation that has it keeps the scrub, and a container image without
-	// it — a hardened pod could not run bubblewrap anyway, having no user
-	// namespaces — reviews without it, behind the read-only Bash allow-list,
-	// the `/proc` read denials and the output redaction. `true` requires the
-	// scrub, so a run without bubblewrap fails; `false` never asks for it.
+	// strips credentials from the environment of every subprocess the agent
+	// starts (its git commands) and runs each one in its own PID namespace, so
+	// none can read the CLI's environment through /proc either. The CLI runs it
+	// in a bubblewrap sandbox that also needs socat: without bubblewrap it
+	// refuses to start, without socat every command fails. nil resolves,
+	// through SubprocessEnvScrubEnabled, to "wherever both are installed" — a
+	// workstation that has them keeps the scrub; the container image, whose
+	// hardened pod could not run bubblewrap anyway (no user namespaces),
+	// reviews without it. The model credential does not depend on it: an
+	// OAuth token or an API key reaches the CLI over an inherited descriptor
+	// and never enters an environment. Only ANTHROPIC_AUTH_TOKEN, which the
+	// CLI reads from nowhere else, travels in the environment; with it set and
+	// the scrub unable to run, an unset value refuses to start the agent and
+	// `false` accepts the exposure. `true` requires the scrub, so a run
+	// without bubblewrap fails; `false` never asks for it.
 	// Honours CODE_GURU_CLAUDE_AGENTIC_SUBPROCESS_ENV_SCRUB.
 	SubprocessEnvScrub *bool `yaml:"subprocess_env_scrub"`
 }
@@ -509,13 +515,13 @@ func (c ClaudeAgenticConfig) ConfidenceThreshold() int {
 }
 
 // SubprocessEnvScrubEnabled resolves SubprocessEnvScrub: an explicit value
-// wins, and unset follows `bubblewrapAvailable`, which reports whether the
-// isolation the CLI runs the scrub in is installed.
-func (c ClaudeAgenticConfig) SubprocessEnvScrubEnabled(bubblewrapAvailable func() bool) bool {
+// wins, and unset follows `sandboxAvailable`, which reports whether the
+// sandbox the CLI runs the scrub in (bubblewrap and socat) is installed.
+func (c ClaudeAgenticConfig) SubprocessEnvScrubEnabled(sandboxAvailable func() bool) bool {
 	if c.SubprocessEnvScrub != nil {
 		return *c.SubprocessEnvScrub
 	}
-	return bubblewrapAvailable()
+	return sandboxAvailable()
 }
 
 // AnthropicConfig holds Anthropic API-specific settings.
