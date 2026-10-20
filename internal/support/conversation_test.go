@@ -213,6 +213,120 @@ func TestBuildReviewConversation(t *testing.T) {
 	})
 }
 
+// TestBuildReviewConversationProviderThreads pins the grouping by
+// provider thread. Azure DevOps numbers comments within each thread and
+// stores a reply posted into a thread with no parent, which is how the
+// bot's own re-review verdicts land; grouped by the bare comment ID and
+// the parent pointer, those verdicts each opened a "thread" of their own
+// and every re-review answered all of them again.
+func TestBuildReviewConversationProviderThreads(t *testing.T) {
+	t.Parallel()
+
+	isBot := func(author string) bool { return author == "code-guru@example.com" }
+
+	t.Run("should keep an Azure DevOps thread whole when the bot's replies carry no parent", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the bot's finding, the author's answer (parented on the
+		// finding, as the Azure DevOps UI posts it) and two verdicts the
+		// bot posted on earlier re-reviews, which carry no parent.
+		comments := []forgeEntities.PullRequestComment{
+			{ID: 1, ThreadID: 100, Line: 10, FilePath: "/a.go", Body: "nil-check", Author: "code-guru@example.com"},
+			{ID: 2, ThreadID: 100, Line: 10, FilePath: "/a.go", Body: "fixed", Author: "alice", InReplyToID: 1},
+			{ID: 3, ThreadID: 100, Line: 10, FilePath: "/a.go", Body: "resolved", Author: "code-guru@example.com"},
+			{
+				ID:       4,
+				ThreadID: 100,
+				Line:     10,
+				FilePath: "/a.go",
+				Body:     "resolved again",
+				Author:   "code-guru@example.com",
+			},
+		}
+
+		// when
+		threads := support.BuildReviewConversation(comments, isBot, nil)
+
+		// then
+		require.Len(t, threads, 1, "a parentless bot reply must not open a conversation of its own")
+		require.Len(t, threads[0].Comments, 4)
+		assert.Equal(t, int64(100), threads[0].ThreadID)
+		bodies := []string{}
+		fromBot := []bool{}
+		for _, message := range threads[0].Comments {
+			bodies = append(bodies, message.Body)
+			fromBot = append(fromBot, message.FromBot)
+		}
+		assert.Equal(t, []string{"nil-check", "fixed", "resolved", "resolved again"}, bodies)
+		assert.Equal(t, []bool{true, false, true, true}, fromBot, "every message must say whether the bot wrote it")
+	})
+
+	t.Run("should keep two Azure DevOps threads apart although each numbers its comments from 1", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		comments := []forgeEntities.PullRequestComment{
+			{ID: 1, ThreadID: 100, Line: 10, FilePath: "a.go", Body: "first finding", Author: "code-guru@example.com"},
+			{ID: 1, ThreadID: 200, Line: 20, FilePath: "b.go", Body: "second finding", Author: "code-guru@example.com"},
+			{ID: 2, ThreadID: 200, Line: 20, FilePath: "b.go", Body: "intentional", Author: "alice", InReplyToID: 1},
+		}
+
+		// when
+		threads := support.BuildReviewConversation(comments, isBot, nil)
+
+		// then
+		require.Len(t, threads, 2, "two threads that share comment IDs must not overwrite each other")
+		assert.Equal(t, "a.go", threads[0].FilePath)
+		require.Len(t, threads[0].Comments, 1)
+		assert.Equal(t, "b.go", threads[1].FilePath)
+		require.Len(t, threads[1].Comments, 2)
+		assert.Equal(t, "intentional", threads[1].Comments[1].Body)
+	})
+
+	t.Run("should not open a conversation on a bot reply inside a thread a person started", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		comments := []forgeEntities.PullRequestComment{
+			{ID: 1, ThreadID: 300, Line: 5, FilePath: "c.go", Body: "why is this here?", Author: "alice"},
+			{ID: 2, ThreadID: 300, Line: 5, FilePath: "c.go", Body: "an answer", Author: "code-guru@example.com"},
+		}
+
+		// when
+		threads := support.BuildReviewConversation(comments, isBot, nil)
+
+		// then
+		assert.Empty(t, threads, "a thread a person opened is not one of the bot's conversations")
+	})
+
+	t.Run("should keep a GitHub review thread whole, where every reply points at the root", func(t *testing.T) {
+		t.Parallel()
+
+		// given: GitHub's shape, where the thread is the root comment's ID.
+		comments := []forgeEntities.PullRequestComment{
+			{ID: 10, ThreadID: 10, Line: 7, FilePath: "d.go", Body: "finding", Author: "code-guru@example.com"},
+			{ID: 11, ThreadID: 10, Line: 7, FilePath: "d.go", Body: "reply", Author: "alice", InReplyToID: 10},
+			{
+				ID:          12,
+				ThreadID:    10,
+				Line:        7,
+				FilePath:    "d.go",
+				Body:        "verdict",
+				Author:      "code-guru@example.com",
+				InReplyToID: 10,
+			},
+		}
+
+		// when
+		threads := support.BuildReviewConversation(comments, isBot, nil)
+
+		// then
+		require.Len(t, threads, 1)
+		require.Len(t, threads[0].Comments, 3)
+		assert.Equal(t, "verdict", threads[0].Comments[2].Body)
+	})
+}
+
 func TestIsBotAuthor(t *testing.T) {
 	t.Parallel()
 

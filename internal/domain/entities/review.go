@@ -293,6 +293,11 @@ type ThreadResolution struct {
 type ReviewMessage struct {
 	Author string
 	Body   string
+	// FromBot marks a message the bot itself posted, decided by the same
+	// identity matcher the conversation walk roots threads with. The
+	// post-pipeline reads it to tell whether a thread's newest message is
+	// the bot's own earlier verdict.
+	FromBot bool
 }
 
 // Rule represents a single review rule loaded from a markdown file.

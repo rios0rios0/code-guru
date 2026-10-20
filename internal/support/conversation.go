@@ -35,18 +35,29 @@ import (
 //
 // Algorithm:
 //
-//  1. Collect every comment whose author satisfies isBot AND that is a
-//     top-level inline comment (Line > 0, InReplyToID == 0) AND that
-//     is anchored to a file present in liveFiles. Each becomes a
-//     thread root.
-//  2. For every other inline comment whose InReplyToID points at one of
-//     those roots (directly or transitively via a chain of replies),
-//     append it to that thread's Comments.
+//  1. Collect every comment whose author satisfies isBot AND that opens
+//     an inline conversation (Line > 0, and the first comment of its
+//     provider thread — or, when the provider reports no thread, a
+//     comment with no InReplyToID) AND that is anchored to a file
+//     present in liveFiles. Each becomes a thread root.
+//  2. Attach every other inline comment to the root of its provider
+//     thread; a comment with no thread walks its InReplyToID chain
+//     (directly or transitively) to a root instead.
 //  3. Sort each thread's reply chain by comment ID (stable proxy for
 //     creation order — every provider returns IDs that monotonically
-//     increase by creation time).
+//     increase by creation time within a thread).
 //  4. Sort the resulting threads by FilePath + Line so the prompt's
 //     conversation block reads top-to-bottom alongside the diff.
+//
+// Comments are told apart by thread AND ID, never by ID alone, and a
+// comment carrying a thread joins that thread whatever its InReplyToID
+// says. Both are Azure DevOps facts: it numbers comments within each
+// thread, so every thread's first comment is ID 1, and it stores a reply
+// posted into a thread with no parent at all — which is how the bot's own
+// re-review verdicts land. Keyed on the bare ID, threads overwrote one
+// another, and each of those verdicts opened a "thread" of its own that
+// the next re-review answered again, so a settled thread collected more
+// identical replies on every run.
 //
 // PR-wide comments (Line == 0) are skipped: they are the bot's
 // markers / completion annotations / failure notices, not review
@@ -60,50 +71,59 @@ func BuildReviewConversation(
 		return nil
 	}
 
-	// Index every comment by ID so the reply walk can resolve parent
-	// chains in O(1) per comment.
-	byID := make(map[int64]forgeEntities.PullRequestComment, len(comments))
+	// Index every comment by thread + ID so the reply walk can resolve
+	// parent chains in O(1) per comment.
+	byKey := make(map[commentKey]forgeEntities.PullRequestComment, len(comments))
 	for _, c := range comments {
-		byID[c.ID] = c
+		byKey[keyOf(c)] = c
 	}
 
 	roots := discoverThreadRoots(comments, isBot, liveFiles)
 	if len(roots) == 0 {
 		return nil
 	}
+	rootOfThread := make(map[int64]commentKey, len(roots))
+	for key, root := range roots {
+		if root.ThreadID != 0 {
+			rootOfThread[root.ThreadID] = key
+		}
+	}
 
-	// Append every reply that resolves to one of the bot's thread
-	// roots. Replies can chain (reply-to-a-reply), so walk the
-	// InReplyToID pointer up to the root.
+	// Append every reply that belongs to one of the bot's thread roots:
+	// by provider thread when the comment carries one, else by walking
+	// its InReplyToID chain (a reply can answer a reply) up to the root.
 	type orderedReply struct {
-		rootID int64
-		id     int64
-		msg    entities.ReviewMessage
+		root commentKey
+		id   int64
+		msg  entities.ReviewMessage
 	}
 	var replies []orderedReply
 	for _, c := range comments {
-		if c.Line <= 0 || c.InReplyToID == 0 {
+		if c.Line <= 0 {
 			continue
 		}
-		rootID := walkToRoot(c, byID, roots)
-		if rootID == 0 {
+		if _, isRoot := roots[keyOf(c)]; isRoot {
+			continue
+		}
+		root, ok := rootFor(c, byKey, roots, rootOfThread)
+		if !ok {
 			continue
 		}
 		replies = append(replies, orderedReply{
-			rootID: rootID,
-			id:     c.ID,
-			msg:    entities.ReviewMessage{Author: c.Author, Body: c.Body},
+			root: root,
+			id:   c.ID,
+			msg:  entities.ReviewMessage{Author: c.Author, Body: c.Body, FromBot: isBot(c.Author)},
 		})
 	}
 
 	// Sort replies by ID so the prompt reads chronologically (every
-	// provider issues IDs in creation order — gitforge's int64
-	// normalisation preserves that invariant).
+	// provider issues IDs in creation order within a thread — gitforge's
+	// int64 normalisation preserves that invariant).
 	sort.Slice(replies, func(i, j int) bool {
 		return replies[i].id < replies[j].id
 	})
 	for _, reply := range replies {
-		root := roots[reply.rootID]
+		root := roots[reply.root]
 		root.Comments = append(root.Comments, reply.msg)
 	}
 
@@ -122,20 +142,34 @@ func BuildReviewConversation(
 	return threads
 }
 
-// discoverThreadRoots collects every top-level inline comment authored
-// by the bot — these become the conversation's thread roots. Comments
+// commentKey identifies a comment within a pull request. The ID alone is
+// not enough: Azure DevOps numbers comments per thread, so two threads
+// both have a comment 1. GitHub's IDs are unique on their own, and a
+// comment with no thread keys on its ID exactly as before.
+type commentKey struct {
+	thread int64
+	id     int64
+}
+
+func keyOf(c forgeEntities.PullRequestComment) commentKey {
+	return commentKey{thread: c.ThreadID, id: c.ID}
+}
+
+// discoverThreadRoots collects every inline comment authored by the bot
+// that opens a conversation — these become the thread roots. Comments
 // anchored to a file outside `liveFiles` are dropped (when liveFiles is
 // non-nil) so a re-review's prompt does not include stale anchors. The
-// returned map is keyed by the root comment's ID so the reply walk can
+// returned map is keyed by the root comment's key so the reply walk can
 // match `InReplyToID` chains in O(1).
 func discoverThreadRoots(
 	comments []forgeEntities.PullRequestComment,
 	isBot func(author string) bool,
 	liveFiles map[string]struct{},
-) map[int64]*entities.ReviewThread {
-	roots := map[int64]*entities.ReviewThread{}
+) map[commentKey]*entities.ReviewThread {
+	first := firstCommentOfEachThread(comments)
+	roots := map[commentKey]*entities.ReviewThread{}
 	for _, c := range comments {
-		if c.Line <= 0 || c.InReplyToID != 0 || !isBot(c.Author) {
+		if c.Line <= 0 || !opensConversation(c, first) || !isBot(c.Author) {
 			continue
 		}
 		if liveFiles != nil {
@@ -143,17 +177,59 @@ func discoverThreadRoots(
 				continue
 			}
 		}
-		roots[c.ID] = &entities.ReviewThread{
+		roots[keyOf(c)] = &entities.ReviewThread{
 			FilePath:      c.FilePath,
 			Line:          c.Line,
 			ThreadID:      c.ThreadID,
 			RootCommentID: c.ID,
 			Comments: []entities.ReviewMessage{
-				{Author: c.Author, Body: c.Body},
+				{Author: c.Author, Body: c.Body, FromBot: true},
 			},
 		}
 	}
 	return roots
+}
+
+// firstCommentOfEachThread maps every provider thread to the ID of the
+// comment that opened it, its earliest. Only the order of IDs within one
+// thread is relied on, which every provider guarantees.
+func firstCommentOfEachThread(comments []forgeEntities.PullRequestComment) map[int64]int64 {
+	first := map[int64]int64{}
+	for _, c := range comments {
+		if c.ThreadID == 0 {
+			continue
+		}
+		if id, seen := first[c.ThreadID]; !seen || c.ID < id {
+			first[c.ThreadID] = c.ID
+		}
+	}
+	return first
+}
+
+// opensConversation reports whether c is the comment a conversation
+// starts with: the first comment of its provider thread or, when the
+// provider reports no thread, a comment that replies to nothing.
+func opensConversation(c forgeEntities.PullRequestComment, first map[int64]int64) bool {
+	if c.ThreadID != 0 {
+		return first[c.ThreadID] == c.ID
+	}
+	return c.InReplyToID == 0
+}
+
+// rootFor resolves the thread root a reply belongs to. A comment that
+// carries a provider thread joins that thread's root outright, whatever
+// its InReplyToID says; one without a thread walks its InReplyToID chain.
+func rootFor(
+	c forgeEntities.PullRequestComment,
+	byKey map[commentKey]forgeEntities.PullRequestComment,
+	roots map[commentKey]*entities.ReviewThread,
+	rootOfThread map[int64]commentKey,
+) (commentKey, bool) {
+	if c.ThreadID != 0 {
+		root, ok := rootOfThread[c.ThreadID]
+		return root, ok
+	}
+	return walkToRoot(c, byKey, roots)
 }
 
 // normalizeConversationFilePath strips a leading `/` so ADO-shape
@@ -168,31 +244,33 @@ func normalizeConversationFilePath(p string) string {
 }
 
 // walkToRoot resolves a reply's chain of InReplyToID pointers up to a
-// known thread root. Returns the matching root ID when the chain
-// terminates on one of `roots`; returns 0 when the chain leads to a
-// non-bot top-level comment (a user-only thread the assembler
+// known thread root. A parent is looked up in the reply's own thread,
+// where its InReplyToID points. Returns the matching root's key when the
+// chain terminates on one of `roots`; returns false when the chain leads
+// to a non-bot top-level comment (a user-only thread the assembler
 // intentionally drops). Bounded by `maxReplyChainDepth` so a malformed
 // payload with a self-referential reply cannot loop forever.
 func walkToRoot(
 	c forgeEntities.PullRequestComment,
-	byID map[int64]forgeEntities.PullRequestComment,
-	roots map[int64]*entities.ReviewThread,
-) int64 {
+	byKey map[commentKey]forgeEntities.PullRequestComment,
+	roots map[commentKey]*entities.ReviewThread,
+) (commentKey, bool) {
 	current := c
 	for range maxReplyChainDepth {
 		if current.InReplyToID == 0 {
-			return 0
+			return commentKey{}, false
 		}
-		if _, ok := roots[current.InReplyToID]; ok {
-			return current.InReplyToID
+		parentKey := commentKey{thread: current.ThreadID, id: current.InReplyToID}
+		if _, ok := roots[parentKey]; ok {
+			return parentKey, true
 		}
-		parent, ok := byID[current.InReplyToID]
+		parent, ok := byKey[parentKey]
 		if !ok {
-			return 0
+			return commentKey{}, false
 		}
 		current = parent
 	}
-	return 0
+	return commentKey{}, false
 }
 
 // maxReplyChainDepth bounds the InReplyToID walk so a malformed or
