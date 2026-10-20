@@ -149,6 +149,58 @@ func TestJobRESTClient(t *testing.T) {
 		assert.True(t, webhooks.IsConflictForTest(err))
 		assert.False(t, webhooks.IsAlreadyExistsForTest(err), "Conflict and AlreadyExists share 409 but not meaning")
 	})
+
+	t.Run("should classify only a turned-down write as refused", func(t *testing.T) {
+		t.Parallel()
+
+		cases := []struct {
+			name    string
+			status  int
+			reason  string
+			refused bool
+		}{
+			{
+				name:    "an admission webhook denying the change",
+				status:  http.StatusUnprocessableEntity,
+				reason:  "Invalid",
+				refused: true,
+			},
+			{name: "a missing permission", status: http.StatusForbidden, reason: "Forbidden", refused: true},
+			{name: "a Job deleted since the listing", status: http.StatusNotFound, reason: "NotFound", refused: true},
+			{name: "a stale resourceVersion", status: http.StatusConflict, reason: "Conflict", refused: false},
+			{name: "throttling", status: http.StatusTooManyRequests, reason: "TooManyRequests", refused: false},
+			{name: "a server-side timeout", status: http.StatusGatewayTimeout, reason: "Timeout", refused: false},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				// given
+				api := &fakeJobAPI{status: tc.status, response: `{"kind":"Status","reason":"` + tc.reason + `"}`}
+				client := newFakeJobAPI(t, api)
+
+				// when
+				err := client.Patch(context.Background(), "j1", map[string]any{})
+
+				// then
+				require.Error(t, err)
+				assert.Equal(t, tc.refused, webhooks.IsRefusalForTest(err))
+			})
+		}
+	})
+
+	t.Run("should not classify a failure without the API server's answer as refused", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a request that never got an answer, whose write may have landed.
+		err := context.DeadlineExceeded
+
+		// when
+		refused := webhooks.IsRefusalForTest(err)
+
+		// then
+		assert.False(t, refused)
+	})
 }
 
 func TestReviewJobConditions(t *testing.T) {

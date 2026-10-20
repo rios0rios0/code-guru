@@ -56,6 +56,9 @@ For each pull request the review:
    6. *Design* — fit with the repository's established architecture and contracts.
 4. **Filters every candidate finding by confidence** (0–100; default bar 80). The model applies the bar and the bot
    enforces it again: nothing below it is posted, and every rejected candidate is listed with its score and reason.
+   When the bot drops anything, it also relaxes the verdict to what the surviving findings justify (any error
+   requests changes, warnings or notes alone comment, nothing approves), so a finding that was never posted cannot
+   cast the vote. It never makes the verdict stricter.
 5. **Posts the review**: one inline thread per finding, opening with `**<dimension> (confidence <score>)**`, and a
    completion notice carrying the summary, an index of the findings, what each dimension checked and found clean,
    and the dropped list. A clean review therefore says what was looked at instead of reading as silence.
@@ -172,8 +175,11 @@ server:
    to wait for its own pull request). Its passes are serialised across replicas by a `coordination.k8s.io` Lease:
    whether a slot is free depends on every Job in a listing, so two replicas planning at once from listings taken a
    moment apart could otherwise start one Job each into the same last slot. A replica that finds the lock held skips
-   its pass. Inside a pass every write is still conditional on the Job's `resourceVersion`. A pull request whose Job
-   has to wait gets a "queued" notice with its position.
+   its pass. Inside a pass every write is still conditional on the Job's `resourceVersion`. A start the API server
+   turns down (an admission policy rejecting the Job, say) hands its slot to the next Job in line, so one Job that
+   can never start cannot hold the queue; a start that conflicts or gets no answer keeps its slot until the next
+   pass, since that Job may have started after all. A pull request whose Job has to wait gets a "queued" notice with
+   its position.
 5. The Job's pod runs `code-guru review <pr-url> --job-name <job>` (plus `--mentioned` for a re-review): the gates
    again — the pull request may have changed while it waited — then the review, then it exits. The Job's name is
    stamped on the completion or failure notice it posts (`_Completed at <time> · review job <job>._`).
@@ -207,6 +213,10 @@ executor sets only:
 | `metadata.annotations["code-guru/enqueued-at"]` | the time the Job was queued, to the millisecond, which orders a burst |
 | defaults when absent | `backoffLimit: 0`, `ttlSecondsAfterFinished: 900`, `activeDeadlineSeconds: 3600`, `restartPolicy: Never` |
 
+`spec.parallelism` and `spec.completions` must be unset or `1`, and a template that sets either to anything else is
+rejected at startup. Every pod runs the whole review, so a second pod would post every finding again, and the
+scheduler counts Jobs, not pods, against `max_concurrent_jobs`.
+
 A Job's deadline only runs while it is not suspended, so it bounds a review's run, not its wait in the queue.
 Without one, a pod that never starts — an image it cannot pull, a node pool with no room — would hold a review slot
 forever, which is why the executor sets one when the template does not. Keep it above
@@ -221,7 +231,11 @@ a broken template, a server without the Lease RBAC, or the executor configured o
 than falling back to in-process reviews — or, worse, queueing every review behind a scheduler that can never run.
 
 The review pod needs **no** Kubernetes API access (`automountServiceAccountToken: false`) and none of the server's
-webhook secret — only the provider token and the model credential.
+webhook secret — only the provider token and the model credential. It authenticates the way the server did for the
+same delivery: when the pull request came through the GitHub App (`CODE_GURU_GITHUB_INSTALLATION_ID` is set) and the
+pod has the App's credentials, it mints that installation's token and uses it even if a PAT is configured too, since
+the installation is what received the webhook and has access to the repository. If the token cannot be minted, the
+review fails rather than switching to the PAT, which is a different identity with different access.
 
 ## Example manifests
 

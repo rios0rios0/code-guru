@@ -45,7 +45,10 @@ func TestApplyConfidenceThreshold(t *testing.T) {
 		t.Parallel()
 
 		// given
-		result := &entities.ReviewResult{Comments: []entities.ReviewComment{{FilePath: "a.go", Line: 1, Body: "x"}}}
+		result := &entities.ReviewResult{
+			Verdict:  "request_changes",
+			Comments: []entities.ReviewComment{{FilePath: "a.go", Line: 1, Severity: "warning", Body: "x"}},
+		}
 
 		// when
 		support.ApplyConfidenceThreshold(result, 80)
@@ -53,6 +56,72 @@ func TestApplyConfidenceThreshold(t *testing.T) {
 		// then
 		assert.Len(t, result.Comments, 1)
 		assert.Empty(t, result.Dropped)
+		assert.Equal(t, "request_changes", result.Verdict, "nothing dropped, so the verdict is the model's")
+	})
+
+	t.Run("should relax the verdict to what the surviving findings justify", func(t *testing.T) {
+		t.Parallel()
+
+		cases := []struct {
+			name     string
+			verdict  string
+			comments []entities.ReviewComment
+			want     string
+		}{
+			{
+				name:    "an error below the bar no longer requests changes over a surviving warning",
+				verdict: "request_changes",
+				comments: []entities.ReviewComment{
+					{Dimension: "bug", Confidence: 50, Severity: "error"},
+					{Dimension: "design", Confidence: 90, Severity: "warning"},
+				},
+				want: "comment",
+			},
+			{
+				name:     "nothing surviving approves",
+				verdict:  "request_changes",
+				comments: []entities.ReviewComment{{Dimension: "bug", Confidence: 50, Severity: "error"}},
+				want:     "approve",
+			},
+			{
+				name:    "a surviving error still requests changes",
+				verdict: "request_changes",
+				comments: []entities.ReviewComment{
+					{Dimension: "bug", Confidence: 95, Severity: "error"},
+					{Dimension: "design", Confidence: 40, Severity: "warning"},
+				},
+				want: "request_changes",
+			},
+			{
+				name:    "a verdict more lenient than the survivors is never made stricter",
+				verdict: "approve",
+				comments: []entities.ReviewComment{
+					{Dimension: "bug", Confidence: 95, Severity: "error"},
+					{Dimension: "design", Confidence: 40, Severity: "warning"},
+				},
+				want: "approve",
+			},
+			{
+				name:     "a verdict it does not know is left as it is",
+				verdict:  "",
+				comments: []entities.ReviewComment{{Dimension: "bug", Confidence: 50, Severity: "error"}},
+				want:     "",
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				// given
+				result := &entities.ReviewResult{Verdict: tc.verdict, Comments: tc.comments}
+
+				// when
+				support.ApplyConfidenceThreshold(result, 80)
+
+				// then
+				assert.Equal(t, tc.want, result.Verdict)
+			})
+		}
 	})
 }
 

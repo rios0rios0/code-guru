@@ -101,17 +101,14 @@ func (s *ReviewJobScheduler) Run(ctx context.Context) {
 	}
 }
 
-// reconcilePlan is what one reconcile pass decides from one listing.
+// reconcilePlan is what one reconcile pass reads from one listing.
 type reconcilePlan struct {
-	// start are the queued Jobs to release, oldest first.
-	start []ReviewJob
+	// queue is every queued Job, oldest first.
+	queue []ReviewJob
 	// report are the failed Jobs nobody has reported yet.
 	report []ReviewJob
-	// queued is every queued Job, oldest first, after the start set is
-	// taken out — the order QueuePosition reports.
-	queued []ReviewJob
-	// running counts the Jobs holding a slot.
-	running int
+	// slots counts the free slots: the cap minus the Jobs holding one.
+	slots int
 	// busy names the pull requests (by their label hash) with a running Job.
 	busy map[string]bool
 }
@@ -119,16 +116,10 @@ type reconcilePlan struct {
 // planReconcile classifies a listing. A Job is RUNNING when it is neither
 // suspended nor finished — whether its pod is up yet or still being
 // scheduled, it holds a slot — and QUEUED when it is suspended and not
-// finished. The oldest queued Jobs are released while running ones are below
-// the cap, which makes the queue first-in, first-out — except that a Job
-// whose pull request already has one running waits, and the queue moves past
-// it: two reviews of one pull request at once would post over each other, and
-// the queued one (a re-review a mention asked for) is meant to read what the
-// running one posts.
+// finished.
 func planReconcile(jobs []ReviewJob, maxConcurrent int) reconcilePlan {
 	plan := reconcilePlan{busy: map[string]bool{}}
-	starting := map[string]bool{}
-	var queued []ReviewJob
+	running := 0
 	for _, job := range jobs {
 		switch {
 		case job.Finished():
@@ -136,31 +127,65 @@ func planReconcile(jobs []ReviewJob, maxConcurrent int) reconcilePlan {
 				plan.report = append(plan.report, job)
 			}
 		case job.Suspended():
-			queued = append(queued, job)
+			plan.queue = append(plan.queue, job)
 		default:
 			plan.busy[job.Metadata.Labels[reviewJobPullRequestLabel]] = true
-			plan.running++
+			running++
 		}
 	}
-	sort.SliceStable(queued, func(i, j int) bool {
-		a, b := enqueuedAt(queued[i]), enqueuedAt(queued[j])
+	sort.SliceStable(plan.queue, func(i, j int) bool {
+		a, b := enqueuedAt(plan.queue[i]), enqueuedAt(plan.queue[j])
 		if !a.Equal(b) {
 			return a.Before(b)
 		}
-		return queued[i].Metadata.Name < queued[j].Metadata.Name
+		return plan.queue[i].Metadata.Name < plan.queue[j].Metadata.Name
 	})
-	slots := max(maxConcurrent-plan.running, 0)
-	for _, job := range queued {
-		pullRequest := job.Metadata.Labels[reviewJobPullRequestLabel]
-		if len(plan.start) < slots && !plan.busy[pullRequest] && !starting[pullRequest] {
-			plan.start = append(plan.start, job)
-			starting[pullRequest] = true
-			continue
-		}
-		plan.queued = append(plan.queued, job)
-	}
+	plan.slots = max(maxConcurrent-running, 0)
 	return plan
 }
+
+// startOutcome is what one attempt to release a queued Job came to.
+type startOutcome int
+
+const (
+	// jobStarted means the Job holds a slot now.
+	jobStarted startOutcome = iota
+	// jobRefused means the API server turned the start down, so the Job holds
+	// no slot and the next one in line is offered it.
+	jobRefused
+	// jobUnsettled means the Job may hold a slot — it changed since the
+	// listing, or the request failed without the API server's answer — so the
+	// slot stays taken until the next pass re-plans from a fresh listing.
+	jobUnsettled
+)
+
+// offerSlots offers the plan's free slots to its queued Jobs, oldest first,
+// which makes the queue first-in, first-out, and returns the Jobs left
+// waiting. A Job whose pull request already has one running or starting
+// waits, and the queue moves past it: two reviews of one pull request at once
+// would post over each other, and the queued one (a re-review a mention asked
+// for) is meant to read what the running one posts. A refused start does not
+// use its slot up, so one Job the API server keeps refusing cannot hold the
+// rest of the queue.
+func offerSlots(plan reconcilePlan, start func(ReviewJob) startOutcome) []ReviewJob {
+	free := plan.slots
+	taken := map[string]bool{}
+	var waiting []ReviewJob
+	for _, job := range plan.queue {
+		pullRequest := job.Metadata.Labels[reviewJobPullRequestLabel]
+		eligible := free > 0 && !plan.busy[pullRequest] && !taken[pullRequest]
+		if !eligible || start(job) == jobRefused {
+			waiting = append(waiting, job)
+			continue
+		}
+		free--
+		taken[pullRequest] = true
+	}
+	return waiting
+}
+
+// assumeStarted is the start a planning-only walk of the queue assumes.
+func assumeStarted(ReviewJob) startOutcome { return jobStarted }
 
 // Reconcile runs one pass: release queued Jobs into free slots, then report
 // failed Jobs.
@@ -183,8 +208,11 @@ func (s *ReviewJobScheduler) Reconcile(ctx context.Context) error {
 // Every start is still a merge patch that carries the resourceVersion of the
 // listing it was decided from, so the API server applies it only if the Job
 // has not changed since — the backstop for a lock that expired under a stalled
-// holder. A start that fails for any other reason is logged and the pass moves
-// on: one bad Job must not keep the rest of the queue waiting.
+// holder. A start the API server refuses (an admission policy turning the Job
+// down, say) is logged and its slot offered to the next Job in line: one bad
+// Job must not keep the rest of the queue waiting. A conflict, or a failure
+// that carries no answer from the API server, keeps its slot until the next
+// pass, because that Job may have started after all and the cap must hold.
 func (s *ReviewJobScheduler) startQueued(ctx context.Context) ([]ReviewJob, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -208,19 +236,25 @@ func (s *ReviewJobScheduler) startQueued(ctx context.Context) ([]ReviewJob, erro
 	plan := planReconcile(jobs, s.maxConcurrent)
 
 	var failures []error
-	for _, job := range plan.start {
+	offerSlots(plan, func(job ReviewJob) startOutcome {
 		patch := map[string]any{
 			"metadata": map[string]any{"resourceVersion": job.Metadata.ResourceVersion},
 			"spec":     map[string]any{"suspend": false},
 		}
-		if err = s.client.Patch(ctx, job.Metadata.Name, patch); err != nil {
-			if !isConflict(err) {
-				failures = append(failures, fmt.Errorf("starting review job %s: %w", job.Metadata.Name, err))
-			}
-			continue
+		patchErr := s.client.Patch(ctx, job.Metadata.Name, patch)
+		switch {
+		case patchErr == nil:
+			logger.Infof("review job scheduler: started %s", job.Metadata.Name)
+			return jobStarted
+		case isConflict(patchErr):
+			return jobUnsettled
 		}
-		logger.Infof("review job scheduler: started %s", job.Metadata.Name)
-	}
+		failures = append(failures, fmt.Errorf("starting review job %s: %w", job.Metadata.Name, patchErr))
+		if isRefusal(patchErr) {
+			return jobRefused
+		}
+		return jobUnsettled
+	})
 	return plan.report, errors.Join(failures...)
 }
 
@@ -313,7 +347,7 @@ func (s *ReviewJobScheduler) QueuePosition(ctx context.Context, name string) (Qu
 	}
 	plan := planReconcile(jobs, s.maxConcurrent)
 	// A Job this listing would release is about to start, not waiting.
-	for i, job := range plan.queued {
+	for i, job := range offerSlots(plan, assumeStarted) {
 		if job.Metadata.Name == name {
 			pullRequest := job.Metadata.Labels[reviewJobPullRequestLabel]
 			return QueueState{Queued: true, Position: i + 1, BehindOwnPullRequest: plan.busy[pullRequest]}, nil

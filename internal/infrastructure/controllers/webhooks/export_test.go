@@ -181,6 +181,16 @@ func NewJobRESTClientForTest(baseURL, namespace, token string) ReviewJobClient {
 // IsConflictForTest re-exports the optimistic-concurrency predicate.
 var IsConflictForTest = isConflict
 
+// IsRefusalForTest re-exports the "turned down, certainly not applied"
+// predicate.
+var IsRefusalForTest = isRefusal
+
+// NewAPIStatusErrorForTest builds the error the Kubernetes adapters return for
+// a non-2xx answer, so tests can drive what the callers branch on.
+func NewAPIStatusErrorForTest(verb string, code int, reason string) error {
+	return &apiStatusError{Verb: verb, Code: code, Reason: reason}
+}
+
 // ProbeReviewJobLocksForTest runs the executor's startup lock probe against a
 // Lease client.
 func ProbeReviewJobLocksForTest(client LeaseClient, holder string) error {

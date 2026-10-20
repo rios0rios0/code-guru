@@ -37,6 +37,28 @@ const minRedactableSecretLength = 12
 // caught.
 var anthropicCredentialPattern = regexp.MustCompile(`sk-ant-[A-Za-z0-9_\-]{16,}`)
 
+// severityError is the finding severity that must be fixed before merging.
+const severityError = "error"
+
+// Verdict strictness ranks, from the most lenient up. An unknown verdict
+// ranks `verdictRankUnknown`, which `relaxVerdict` leaves as it is.
+const (
+	verdictRankUnknown        = 0
+	verdictRankApprove        = 1
+	verdictRankComment        = 2
+	verdictRankRequestChanges = 3
+)
+
+// verdictStrictness ranks a review verdict, so comparing two is a lookup
+// rather than a chain of comparisons.
+func verdictStrictness(verdict string) int {
+	return map[string]int{
+		verdictApprove:        verdictRankApprove,
+		verdictComment:        verdictRankComment,
+		verdictRequestChanges: verdictRankRequestChanges,
+	}[verdict]
+}
+
 // ApplyConfidenceThreshold moves every scored finding below `threshold` out of
 // the posted comments and into `Dropped`, with the reason saying so. The
 // agentic prompt asks the model to apply the same bar itself; this is the
@@ -44,10 +66,17 @@ var anthropicCredentialPattern = regexp.MustCompile(`sk-ant-[A-Za-z0-9_\-]{16,}`
 // finding is scored when it carries a dimension — the agentic vocabulary —
 // so a score of 0 is filtered like any other low score, while diff-path
 // comments, which have no dimension, are left alone.
+//
+// A model that skipped the bar also chose its verdict from the findings this
+// drops, so when anything is dropped the verdict is relaxed to the one the
+// surviving findings justify: an error below the bar must not cast a
+// changes-requested vote it never posts. It is only ever relaxed — dropping
+// findings removes reasons to block, it never adds one.
 func ApplyConfidenceThreshold(result *entities.ReviewResult, threshold int) {
 	if result == nil || threshold <= 0 {
 		return
 	}
+	dropped := false
 	kept := result.Comments[:0]
 	for _, comment := range result.Comments {
 		if comment.Dimension != "" && comment.Confidence < threshold {
@@ -58,11 +87,39 @@ func ApplyConfidenceThreshold(result *entities.ReviewResult, threshold int) {
 				Confidence: comment.Confidence,
 				Reason:     fmt.Sprintf("below the confidence threshold of %d", threshold),
 			})
+			dropped = true
 			continue
 		}
 		kept = append(kept, comment)
 	}
 	result.Comments = kept
+	if dropped {
+		result.Verdict = relaxVerdict(result.Verdict, verdictFor(kept))
+	}
+}
+
+// verdictFor is the verdict the agentic prompt asks for these findings:
+// request changes when any is an error, comment when they are only warnings
+// or informational, approve when there are none.
+func verdictFor(comments []entities.ReviewComment) string {
+	verdict := verdictApprove
+	for _, comment := range comments {
+		if comment.Severity == severityError {
+			return verdictRequestChanges
+		}
+		verdict = verdictComment
+	}
+	return verdict
+}
+
+// relaxVerdict returns `justified` when it is more lenient than `verdict`,
+// and `verdict` otherwise — including when `verdict` is not one it knows.
+func relaxVerdict(verdict, justified string) string {
+	current := verdictStrictness(verdict)
+	if current != verdictRankUnknown && verdictStrictness(justified) < current {
+		return justified
+	}
+	return verdict
 }
 
 // RedactSecrets replaces, in every text field of the result — the paths,

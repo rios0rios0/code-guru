@@ -117,6 +117,47 @@ func TestParseReviewJobTemplate(t *testing.T) {
 		require.ErrorContains(t, err, "restartPolicy Always")
 	})
 
+	t.Run("should reject a template that would run a review in more pods than one, or in none", func(t *testing.T) {
+		t.Parallel()
+
+		cases := map[string]string{
+			"parallel pods":    "parallelism: 2",
+			"repeated pods":    "completions: 3",
+			"no pod at all":    "parallelism: 0",
+			"a non-number":     "completions: two",
+			"a quoted one":     "parallelism: '1'",
+			"one of each kind": "parallelism: 1\n  completions: 2",
+		}
+		for name, field := range cases {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				// given
+				manifest := "spec:\n  " + field + "\n  template:\n    spec:\n      containers: [{name: review}]\n"
+
+				// when
+				_, err := webhooks.ParseReviewJobTemplate([]byte(manifest))
+
+				// then
+				require.ErrorContains(t, err, "a review Job runs exactly one pod")
+			})
+		}
+	})
+
+	t.Run("should accept a template that asks for one pod explicitly", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		manifest := "spec:\n  parallelism: 1\n  completions: 1\n  template:\n    spec:\n      containers: [{name: review}]\n"
+
+		// when
+		template, err := webhooks.ParseReviewJobTemplate([]byte(manifest))
+
+		// then
+		require.NoError(t, err)
+		assert.NotNil(t, template)
+	})
+
 	t.Run("should require a template path", func(t *testing.T) {
 		t.Parallel()
 

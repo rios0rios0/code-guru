@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -310,7 +311,10 @@ func TestReviewJobSchedulerReconcile(t *testing.T) {
 		startable := createQueuedJob(t, client, "startable")
 		failed := createQueuedJob(t, client, "failed")
 		client.Finish(failed, "DeadlineExceeded")
-		client.SetPatchError(refused, errors.New("admission webhook denied the request"))
+		client.SetPatchError(
+			refused,
+			webhooks.NewAPIStatusErrorForTest("patch", http.StatusUnprocessableEntity, "Invalid"),
+		)
 		reporter := &recordingReporter{}
 		scheduler := webhooks.NewReviewJobScheduler(client, 2, time.Minute, reporter.report)
 
@@ -322,6 +326,52 @@ func TestReviewJobSchedulerReconcile(t *testing.T) {
 		job, _ := client.Job(startable)
 		assert.False(t, job.Suspended(), "the rest of the queue is not held up")
 		assert.Equal(t, []string{"failed:DeadlineExceeded"}, reporter.all())
+	})
+
+	t.Run("should offer the only slot to the next Job when the oldest one's start is refused", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a cap of one, and an oldest Job an admission policy turns down
+		// on every pass.
+		client := doubles.NewInMemoryReviewJobClient()
+		refused := createQueuedJob(t, client, "refused")
+		next := createQueuedJob(t, client, "next")
+		client.SetPatchError(
+			refused,
+			webhooks.NewAPIStatusErrorForTest("patch", http.StatusUnprocessableEntity, "Invalid"),
+		)
+		scheduler := webhooks.NewReviewJobScheduler(client, 1, time.Minute, nil)
+
+		// when
+		err := scheduler.Reconcile(context.Background())
+
+		// then
+		require.ErrorContains(t, err, "starting review job refused")
+		job, _ := client.Job(next)
+		assert.False(t, job.Suspended(), "a refused start must not hold the only slot")
+		job, _ = client.Job(refused)
+		assert.True(t, job.Suspended())
+		assert.Equal(t, 1, runningJobs(t, client), "the cap still holds")
+	})
+
+	t.Run("should keep the slot of a start that may have landed", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a cap of one, and a start that failed without the API
+		// server's answer.
+		client := doubles.NewInMemoryReviewJobClient()
+		unanswered := createQueuedJob(t, client, "unanswered")
+		next := createQueuedJob(t, client, "next")
+		client.SetPatchError(unanswered, context.DeadlineExceeded)
+		scheduler := webhooks.NewReviewJobScheduler(client, 1, time.Minute, nil)
+
+		// when
+		err := scheduler.Reconcile(context.Background())
+
+		// then
+		require.ErrorContains(t, err, "starting review job unanswered")
+		job, _ := client.Job(next)
+		assert.True(t, job.Suspended(), "starting another could put two Jobs in one slot")
 	})
 
 	t.Run("should surface a listing failure", func(t *testing.T) {

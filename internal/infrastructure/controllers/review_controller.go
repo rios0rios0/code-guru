@@ -46,7 +46,19 @@ type ReviewController struct {
 	aiReviewerFactory *infraRepos.AIReviewerFactory
 	rulesRepoFactory  *infraRepos.RulesRepositoryFactory
 	metadataRepo      domainRepos.PullRequestMetadataRepository
+
+	mintInstallationToken installationTokenMinter
 }
+
+// githubInstallationIDEnv names the GitHub App installation a review Job's
+// pull request came through.
+const githubInstallationIDEnv = "CODE_GURU_GITHUB_INSTALLATION_ID"
+
+// installationTokenMinter mints a token for one installation of the GitHub
+// App.
+type installationTokenMinter func(
+	ctx context.Context, app entities.GitHubAppConfig, installationID int64,
+) (string, error)
 
 // NewReviewController creates a new ReviewController.
 func NewReviewController(
@@ -56,10 +68,11 @@ func NewReviewController(
 	metadataRepo domainRepos.PullRequestMetadataRepository,
 ) *ReviewController {
 	return &ReviewController{
-		providerRegistry:  providerRegistry,
-		aiReviewerFactory: aiReviewerFactory,
-		rulesRepoFactory:  rulesRepoFactory,
-		metadataRepo:      metadataRepo,
+		providerRegistry:      providerRegistry,
+		aiReviewerFactory:     aiReviewerFactory,
+		rulesRepoFactory:      rulesRepoFactory,
+		metadataRepo:          metadataRepo,
+		mintInstallationToken: mintGitHubInstallationToken,
 	}
 }
 
@@ -124,12 +137,9 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 	}
 
 	// find token for the provider
-	token := c.findToken(settings, parsed.ProviderType)
-	if token == "" && parsed.ProviderType == "github" {
-		token = c.githubAppToken(ctx, settings)
-	}
-	if token == "" {
-		failReviewf("no token configured for provider %q", parsed.ProviderType)
+	token, err := c.resolveToken(ctx, settings, parsed.ProviderType, os.Getenv(githubInstallationIDEnv))
+	if err != nil {
+		failReviewf("%v", err)
 		return
 	}
 
@@ -265,30 +275,45 @@ func findOpenPullRequest(
 	return nil, fmt.Errorf("PR #%d not found or not open in %s/%s", prID, repo.Organization, repo.Name)
 }
 
-// githubAppToken mints a GitHub App installation token when the App is
-// configured and the installation is named by CODE_GURU_GITHUB_INSTALLATION_ID
-// — the variable the webhook server's Kubernetes executor sets on the review
-// Job of a pull request it received through the App. Installation tokens
-// expire after an hour, so the pod mints its own instead of being handed one
-// that might lapse while it waits in the queue. Returns "" when the App is not
-// configured or the exchange fails (logged), which the caller reports as a
-// missing token.
-func (c *ReviewController) githubAppToken(ctx context.Context, settings *entities.Settings) string {
-	installationID, _ := strconv.ParseInt(strings.TrimSpace(os.Getenv("CODE_GURU_GITHUB_INSTALLATION_ID")), 10, 64)
-	if installationID == 0 || settings.GitHubApp.AppID == 0 || settings.GitHubApp.PrivateKey == "" {
-		return ""
+// resolveToken picks the credential the webhook server picked for the same
+// pull request (its `resolveGitHubToken`): on GitHub, an App installation
+// token whenever the App is configured and `installationID` names an
+// installation — CODE_GURU_GITHUB_INSTALLATION_ID, which the server's
+// Kubernetes executor sets on the review Job of a pull request it received
+// through the App, so it is the identity that has access to the repository —
+// and the configured token otherwise. A failed exchange fails the review
+// rather than falling back to a token of another identity, with other access
+// and another author name on what it posts. Installation tokens expire after
+// an hour, so the pod mints its own instead of being handed one that might
+// lapse while it waits in the queue.
+func (c *ReviewController) resolveToken(
+	ctx context.Context, settings *entities.Settings, providerType, installationID string,
+) (string, error) {
+	id, _ := strconv.ParseInt(strings.TrimSpace(installationID), 10, 64)
+	app := settings.GitHubApp
+	if providerType == "github" && id != 0 && app.AppID != 0 && app.PrivateKey != "" {
+		return c.mintInstallationToken(ctx, app, id)
 	}
-	tokenizer, err := webhooks.NewGitHubAppTokenizer(settings.GitHubApp.AppID, settings.GitHubApp.PrivateKey)
+	if token := c.findToken(settings, providerType); token != "" {
+		return token, nil
+	}
+	return "", fmt.Errorf("no token configured for provider %q", providerType)
+}
+
+// mintGitHubInstallationToken exchanges the App's credentials for a token of
+// one of its installations.
+func mintGitHubInstallationToken(
+	ctx context.Context, app entities.GitHubAppConfig, installationID int64,
+) (string, error) {
+	tokenizer, err := webhooks.NewGitHubAppTokenizer(app.AppID, app.PrivateKey)
 	if err != nil {
-		logger.Errorf("failed to initialise the GitHub App tokenizer: %v", err)
-		return ""
+		return "", fmt.Errorf("failed to initialise the GitHub App tokenizer: %w", err)
 	}
 	token, err := tokenizer.InstallationToken(ctx, installationID)
 	if err != nil {
-		logger.Errorf("failed to mint a GitHub App installation token: %v", err)
-		return ""
+		return "", fmt.Errorf("failed to mint a GitHub App installation token: %w", err)
 	}
-	return token
+	return token, nil
 }
 
 func (c *ReviewController) printResult(result *entities.ReviewResult, dryRun bool) {

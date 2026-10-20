@@ -207,7 +207,8 @@ func LoadReviewJobTemplate(path string) (*ReviewJobTemplate, error) {
 
 // ParseReviewJobTemplate parses a template given as YAML or JSON (JSON is
 // YAML) and validates that it can produce a runnable Job: a pod template
-// with at least one container, and no restart policy a Job rejects.
+// with at least one container, no restart policy a Job rejects, and one pod
+// per review.
 func ParseReviewJobTemplate(data []byte) (*ReviewJobTemplate, error) {
 	var manifest map[string]any
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
@@ -232,7 +233,36 @@ func ParseReviewJobTemplate(data []byte) (*ReviewJobTemplate, error) {
 	if policy, _ := nestedString(normalised, "spec", "template", "spec", "restartPolicy"); policy == "Always" {
 		return nil, errors.New("the review job template sets restartPolicy Always, which a Job does not allow")
 	}
+	if err = requireOnePod(normalised); err != nil {
+		return nil, err
+	}
 	return &ReviewJobTemplate{manifest: normalised}, nil
+}
+
+// reviewJobPods is how many pods a review Job runs.
+const reviewJobPods = 1
+
+// requireOnePod rejects a template whose `parallelism` or `completions`
+// would run a review in more pods than one, or in none. Every pod runs the
+// whole review, so a second one posts every finding again, and the scheduler
+// counts Jobs, not pods, against the cap.
+func requireOnePod(manifest map[string]any) error {
+	spec, _ := manifest["spec"].(map[string]any)
+	for _, field := range []string{"parallelism", "completions"} {
+		value, set := spec[field]
+		if !set || value == nil {
+			continue
+		}
+		if count, isNumber := value.(float64); isNumber && count == reviewJobPods {
+			continue
+		}
+		return fmt.Errorf(
+			"the review job template sets spec.%s to %v, but a review Job runs exactly one pod: leave it unset or set it to 1",
+			field,
+			value,
+		)
+	}
+	return nil
 }
 
 // Render produces the manifest for one review. On a fresh copy of the

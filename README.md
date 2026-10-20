@@ -532,7 +532,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_CLAUDE_AGENTIC_*`          | Agentic-mode settings: `CONFIG_PATH`, `WORKSPACE_DIR`, `CLONE_DEPTH`, `TIMEOUT`, `MAX_TURNS`, `EFFORT`, `MAX_BUDGET_USD`, `FALLBACK_MODEL`, `MIN_CONFIDENCE` — see [docs/AGENTIC_REVIEWS.md](docs/AGENTIC_REVIEWS.md#configuration) | |
 | `CODE_GURU_SERVER_EXECUTOR`           | `inprocess` or `kubernetes` (each AI review in its own Job) | `inprocess`          |
 | `CODE_GURU_SERVER_KUBERNETES_*`       | Executor settings: `JOB_TEMPLATE` (required), `NAMESPACE`, `MAX_CONCURRENT_JOBS` (default `3`), `POLL_INTERVAL` (default `15s`) | |
-| `CODE_GURU_GITHUB_INSTALLATION_ID`    | Set by the Kubernetes executor on a review Job of a GitHub App delivery; the pod mints its own installation token from the App credentials | |
+| `CODE_GURU_GITHUB_INSTALLATION_ID`    | Set by the Kubernetes executor on a review Job of a GitHub App delivery; the pod mints its own installation token from the App credentials and uses it ahead of a configured PAT, as the server does | |
 
 ## Rules
 

@@ -106,6 +106,21 @@ func isConflict(err error) bool {
 	return status.Reason == reasonConflict
 }
 
+// isRefusal reports a write the API server answered and turned down — an
+// invalid object, a denied admission, a missing permission, an object that is
+// gone — so the change certainly did not land. A conflict is left out (the
+// object changed, and the caller's next read decides what that means), and
+// so are throttling and every failure without the API server's answer, whose
+// write may or may not have landed.
+func isRefusal(err error) bool {
+	var status *apiStatusError
+	if !errors.As(err, &status) {
+		return false
+	}
+	return status.Code >= http.StatusBadRequest && status.Code < http.StatusInternalServerError &&
+		status.Code != http.StatusConflict && status.Code != http.StatusTooManyRequests
+}
+
 // tokenSource serves the pod's ServiceAccount bearer token, re-reading
 // it from disk at most once per `tokenRefreshInterval` so rotation is
 // picked up. A read failure falls back to the last token that worked:
