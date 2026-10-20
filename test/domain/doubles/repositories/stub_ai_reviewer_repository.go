@@ -12,6 +12,14 @@ type StubAIReviewerRepository struct {
 	Result      *entities.ReviewResult
 	Err         error
 	LastRequest entities.ReviewRequest
+	// RequiresWorkspaceValue makes the stub behave as a workspace reviewer
+	// (repositories.WorkspaceReviewer); false keeps it a diff reviewer.
+	RequiresWorkspaceValue bool
+}
+
+// RequiresWorkspace reports the configured RequiresWorkspaceValue.
+func (r *StubAIReviewerRepository) RequiresWorkspace() bool {
+	return r.RequiresWorkspaceValue
 }
 
 // Name returns the configured backend name.

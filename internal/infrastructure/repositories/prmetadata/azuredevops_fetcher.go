@@ -88,6 +88,28 @@ func (f *AzureDevOpsFetcher) GetPullRequestMetadata(
 	return metadata, nil
 }
 
+// IsFork reports whether the pull request's source branch lives in a fork of
+// the target repository: the pull request resource carries a `forkSource`
+// then, and none otherwise. A workspace checkout needs to know, because Azure
+// DevOps publishes no head ref for a pull request on the target repository —
+// fetching a fork's source branch by name from the target would check out a
+// different branch whenever the target has one of the same name.
+func (f *AzureDevOpsFetcher) IsFork(
+	ctx context.Context,
+	token string,
+	repo forgeEntities.Repository,
+	prID int,
+) (bool, error) {
+	prURL := fmt.Sprintf("%s?api-version=%s", f.pullRequestURL(repo, prID), adoAPIVersion)
+	var payload struct {
+		ForkSource json.RawMessage `json:"forkSource"`
+	}
+	if err := f.getJSON(ctx, token, prURL, &payload); err != nil {
+		return false, fmt.Errorf("ADO PR fork check: %w", err)
+	}
+	return len(payload.ForkSource) > 0 && string(payload.ForkSource) != "null", nil
+}
+
 // pullRequestURL builds the PR resource URL, mirroring gitforge's ADO
 // provider conventions: organization reduced to its first path segment
 // and the repository addressed by ID when known, name otherwise. Every

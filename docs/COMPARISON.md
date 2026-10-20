@@ -81,11 +81,11 @@ Legend: ✅ supported · ⚠️ partial / opt-in · ❌ not supported · — not
 | Feature | Code Guru | GitHub Copilot | Claude Code Action |
 |---------|:---------:|:-------------:|:------------------:|
 | Diff hunks of changed files | ✅ | ✅ | ✅ |
-| Surrounding context lines (beyond hunk) | ❌ | ⚠️ (full project context gathering) | ✅ (full repo clone) |
-| Full file contents | ⚠️ (only via trivial detector adapters' `FileContentFetcher`) | ⚠️ | ✅ |
-| Repo-wide cross-file analysis | ❌ | ✅ | ✅ |
+| Surrounding context lines (beyond hunk) | ⚠️ (agentic mode: full checkout) | ⚠️ (full project context gathering) | ✅ (full repo clone) |
+| Full file contents | ⚠️ (agentic mode; diff mode only via trivial detector adapters' `FileContentFetcher`) | ⚠️ | ✅ |
+| Repo-wide cross-file analysis | ⚠️ (agentic mode) | ✅ | ✅ |
 | PR description / linked issues | ⚠️ (title, branches, description, commit count — linked issues not yet parsed) | ✅ | ✅ |
-| Commit history awareness | ⚠️ (commit count as an assembly signal; no per-commit messages) | ⚠️ | ✅ |
+| Commit history awareness | ⚠️ (diff mode: commit count only; agentic mode: `git log` / `git blame` on the touched code) | ⚠️ | ✅ |
 | Related PR / past review awareness | ⚠️ (only this PR's threads) | ⚠️ ("Copilot Memory" preview) | ❌ |
 
 ### Action capabilities
@@ -164,7 +164,7 @@ Each gap below names the missing capability, the peer that has it, and a suggest
 
 **Where peers stand**: Copilot uses "full project context gathering". Claude Code Action has the entire repo cloned.
 
-**Code Guru today**: Only the unified diff is sent to the model. Findings often miss that the surrounding 30 lines already handle the case the bot wants to flag — driving the false-positive rate that the resolution-aware path now has to mop up after the fact.
+**Code Guru today**: Closed by the agentic mode (`ai.claude.mode: agentic`, see [AGENTIC_REVIEWS.md](AGENTIC_REVIEWS.md)): the pull request is checked out and Claude Code reviews it as a read-only agent over the whole repository — whole files, callers, `git log` / `git blame`, the repository's own guidelines and code-review skill — with a confidence filter and a dropped-findings list. The default `diff` mode still sends only the unified diff, which remains the cheaper option; the suggestion below is a lighter middle ground for it.
 
 **Suggested implementation**:
 - Extend `entities.FileDiff` with an optional `Context string` field.

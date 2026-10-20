@@ -2,6 +2,7 @@
 package webhooks
 
 import (
+	"context"
 	"net/http"
 	"time"
 )
@@ -169,3 +170,29 @@ func tokenSourceForTest(path string) func() (string, error) {
 // false); the test analogue avoids the SeenRecently call so the test
 // can assert the populated `ReleaseAllInFlight` path in isolation.
 func (d *Dispatcher) MarkInFlightForTest(key string) { d.trackInFlight(key) }
+
+// NewJobRESTClientForTest points the Job REST adapter at an arbitrary base URL
+// (an `httptest` server) with a fixed bearer token.
+func NewJobRESTClientForTest(baseURL, namespace, token string) ReviewJobClient {
+	source := &tokenSource{refreshAfter: tokenRefreshInterval, cached: token, readAt: time.Now()}
+	return newJobRESTClient(baseURL, namespace, http.DefaultClient, source)
+}
+
+// IsConflictForTest re-exports the optimistic-concurrency predicate.
+var IsConflictForTest = isConflict
+
+// IsRefusalForTest re-exports the "turned down, certainly not applied"
+// predicate.
+var IsRefusalForTest = isRefusal
+
+// NewAPIStatusErrorForTest builds the error the Kubernetes adapters return for
+// a non-2xx answer, so tests can drive what the callers branch on.
+func NewAPIStatusErrorForTest(verb string, code int, reason string) error {
+	return &apiStatusError{Verb: verb, Code: code, Reason: reason}
+}
+
+// ProbeReviewJobLocksForTest runs the executor's startup lock probe against a
+// Lease client.
+func ProbeReviewJobLocksForTest(client LeaseClient, holder string) error {
+	return newLeaseReviewJobLocks(client, holder).probe(context.Background())
+}

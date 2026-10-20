@@ -108,6 +108,27 @@ func TestParseReviewResponse(t *testing.T) {
 		assert.Equal(t, "if err != nil { return err }", result.Comments[0].Suggestion)
 	})
 
+	t.Run("should ignore agentic-only fields of an unexpected type", func(t *testing.T) {
+		t.Parallel()
+
+		// given: a diff-path model volunteering fields the agentic method
+		// uses, in shapes the agentic method never would.
+		content := `{"verdict":"comment","summary":"s","checked":["everything"],"dropped":"none",
+			"comments":[{"file":"a.go","line":1,"severity":"info","body":"b","confidence":0.9,"dimension":7}]}`
+
+		// when
+		result, err := support.ParseReviewResponse(content)
+
+		// then
+		require.NoError(t, err, "fields the diff path does not use must never fail its response")
+		require.Len(t, result.Comments, 1)
+		assert.Equal(t, "b", result.Comments[0].Body)
+		assert.Zero(t, result.Comments[0].Confidence)
+		assert.Empty(t, result.Comments[0].Dimension)
+		assert.True(t, result.Coverage.IsZero())
+		assert.Empty(t, result.Dropped)
+	})
+
 	t.Run("should return ErrUnparseableResponse when content is not JSON", func(t *testing.T) {
 		t.Parallel()
 

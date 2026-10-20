@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -196,6 +197,12 @@ type ReviewCommand struct {
 	rulesRepo        repositories.RulesRepository
 	detectorRegistry repositories.TrivialDetectorRegistry
 	metadataRepo     repositories.PullRequestMetadataRepository
+	workspaceRepo    repositories.WorkspaceRepository
+
+	// jobName is the Kubernetes review Job running this review, empty
+	// everywhere else. It is stamped on the outcome notices (see
+	// WithJobName).
+	jobName string
 }
 
 // NewReviewCommand creates a new ReviewCommand. `metadataRepo` may be
@@ -216,6 +223,26 @@ func NewReviewCommand(
 	}
 }
 
+// WithWorkspace wires the repository that checks pull requests out for AI
+// reviewers that read the repository (see repositories.WorkspaceReviewer).
+// Optional, and set after construction rather than through the constructor so
+// the many callers that never use a workspace reviewer stay untouched; a
+// workspace reviewer run without it fails the review with a clear error.
+func (c *ReviewCommand) WithWorkspace(workspaceRepo repositories.WorkspaceRepository) *ReviewCommand {
+	c.workspaceRepo = workspaceRepo
+	return c
+}
+
+// WithJobName names the Kubernetes review Job running this review. The name
+// is stamped on the completion and failure notices the review posts, which is
+// how the server's scheduler tells this Job's own outcome from an earlier
+// review's when the Job fails and it has to decide whether the pull request
+// already knows. Empty (the default) leaves every notice as it was.
+func (c *ReviewCommand) WithJobName(jobName string) *ReviewCommand {
+	c.jobName = jobName
+	return c
+}
+
 // Execute performs a review of a single pull request.
 func (c *ReviewCommand) Execute(
 	ctx context.Context,
@@ -226,6 +253,51 @@ func (c *ReviewCommand) Execute(
 ) (*entities.ReviewResult, error) {
 	logger.Infof("reviewing PR #%d: %s", pr.ID, pr.Title)
 
+	files, paths, early, err := c.triage(ctx, provider, repo, pr, opts)
+	if err != nil || early != nil {
+		return early, err
+	}
+
+	return c.review(ctx, provider, repo, pr, files, paths, opts)
+}
+
+// Triage runs only the gates that decide whether a pull request needs an AI
+// review at all — draft, review-once, no files, and trivial detection (which
+// posts its own verdict and may auto-merge, exactly as in Execute). It returns
+// the short-circuit result and false when the pull request was settled there,
+// or nil and true when an AI review is still required.
+//
+// The webhook server's Kubernetes executor calls it in-process, so the cheap
+// gates never cost a pod, and hands only the pull requests that pass to a
+// review Job — which then runs Execute, and with it the same gates again
+// against the state of the pull request at the time the Job starts.
+func (c *ReviewCommand) Triage(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	pr forgeEntities.PullRequestDetail,
+	opts ReviewOptions,
+) (*entities.ReviewResult, bool, error) {
+	_, _, early, err := c.triage(ctx, provider, repo, pr, opts)
+	if err != nil {
+		return nil, false, err
+	}
+	if early != nil {
+		return early, false, nil
+	}
+	return nil, true, nil
+}
+
+// triage evaluates the gates that run before any "reviewing" marker is
+// posted. It returns the changed files and their normalised paths when the
+// review should proceed, or a non-nil short-circuit result when it should not.
+func (c *ReviewCommand) triage(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	pr forgeEntities.PullRequestDetail,
+	opts ReviewOptions,
+) ([]forgeEntities.PullRequestFile, []string, *entities.ReviewResult, error) {
 	// Drafts are skipped by default — most teams treat draft PRs as
 	// work-in-progress and do not want to spend AI budget on something
 	// the author has explicitly marked unfinished. Operators that want
@@ -236,18 +308,20 @@ func (c *ReviewCommand) Execute(
 	// is intentionally `comment` (not `approve` / `reject`) so any
 	// downstream native-review submission also short-circuits.
 	if skip := c.shouldSkip(ctx, provider, repo, pr, opts); skip != nil {
-		return skip, nil
+		return nil, nil, skip, nil
 	}
 
 	// fetch changed files
 	files, err := provider.GetPullRequestFiles(ctx, repo, pr.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get PR files: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to get PR files: %w", err)
 	}
 
 	if len(files) == 0 {
 		logger.Infof("PR #%d has no changed files, skipping", pr.ID)
-		return &entities.ReviewResult{PullRequestURL: pr.URL, Verdict: verdictComment, Summary: "no files changed"}, nil
+		return nil, nil, &entities.ReviewResult{
+			PullRequestURL: pr.URL, Verdict: verdictComment, Summary: "no files changed",
+		}, nil
 	}
 
 	// collect file paths. Normalised via `normalizeFilePath` to strip
@@ -268,10 +342,24 @@ func (c *ReviewCommand) Execute(
 	// entire trivial path.
 	if c.detectorRegistry != nil {
 		if result := c.handleTrivialDetection(ctx, provider, repo, pr, paths, opts); result != nil {
-			return result, nil
+			return files, paths, result, nil
 		}
 	}
 
+	return files, paths, nil, nil
+}
+
+// review runs everything after the gates: the "reviewing" marker, the AI
+// review, and the posting of its results.
+func (c *ReviewCommand) review(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	pr forgeEntities.PullRequestDetail,
+	files []forgeEntities.PullRequestFile,
+	paths []string,
+	opts ReviewOptions,
+) (*entities.ReviewResult, error) {
 	// Post a "reviewing" marker so the PR author sees the bot has the
 	// work and is on it — without this, on a complex diff the bot can
 	// take 5-10 minutes (or fail silently mid-review, see PR #98) and
@@ -285,9 +373,22 @@ func (c *ReviewCommand) Execute(
 		c.postReviewingMarker(ctx, provider, repo, pr.ID)
 	}
 
-	// build diffs and run AI review
-	diffs, err := c.buildDiffs(ctx, provider, repo, pr.ID, files)
+	workspace, err := c.prepareWorkspaceOrAnnounce(ctx, provider, repo, pr, paths, opts)
 	if err != nil {
+		return nil, err
+	}
+	if workspace != nil {
+		defer c.workspaceRepo.Release(workspace)
+	}
+
+	// build diffs and run AI review. A workspace reviewer reads the diff
+	// from the checkout with git, so it only needs the file list — the
+	// provider-side diff assembly (one full unified-diff download on Azure
+	// DevOps) is skipped for it.
+	var diffs []entities.FileDiff
+	if workspace != nil {
+		diffs = diffsFromWorkspace(workspace)
+	} else if diffs, err = c.buildDiffs(ctx, provider, repo, pr.ID, files); err != nil {
 		return nil, err
 	}
 
@@ -308,8 +409,15 @@ func (c *ReviewCommand) Execute(
 	// First-pass reviews leave Conversation nil so the prompt is
 	// byte-for-byte the same as before this change landed.
 	conversation := c.buildConversation(ctx, provider, repo, pr.ID, opts)
-	projectGuidelines, projectGuidelinesSource := c.loadProjectGuidelines(ctx, provider, repo, pr.ID, paths, opts)
+	// A workspace reviewer reads AGENTS.md / CLAUDE.md — the root one and
+	// any in the changed directories — from the checkout itself, as one of
+	// its review passes, so the single root file is not fetched on top.
+	var projectGuidelines, projectGuidelinesSource string
+	if workspace == nil {
+		projectGuidelines, projectGuidelinesSource = c.loadProjectGuidelines(ctx, provider, repo, pr.ID, paths, opts)
+	}
 	request := entities.ReviewRequest{
+		Workspace:    workspace,
 		Repository:   repo,
 		PullRequest:  pr,
 		Diffs:        diffs,
@@ -335,7 +443,10 @@ func (c *ReviewCommand) Execute(
 	// several times as long) instead of abandoning exactly the pull
 	// requests that most need a reviewer. Only a run where NOT ONE batch
 	// succeeded falls through to the failure annotation below.
-	if errors.Is(err, support.ErrContextWindowExceeded) && opts.BatchLargeReviews {
+	// A workspace reviewer is never batched: it reads the checkout on its
+	// own terms and compacts its own context, so an overflow there is not
+	// something splitting the file list could fix.
+	if errors.Is(err, support.ErrContextWindowExceeded) && opts.BatchLargeReviews && workspace == nil {
 		result, err = c.reviewLargePullRequest(
 			ctx, provider, repo, pr.ID, request, err, reviewFailureContextFrom(files, diffs), opts,
 		)
@@ -361,6 +472,13 @@ func (c *ReviewCommand) Execute(
 	}
 
 	result.PullRequestURL = pr.URL
+	// Defence in depth for the reviewer that runs with tools over the
+	// checkout: the provider token is never part of its environment, but
+	// nothing the bot posts may contain it, in any encoding, should it ever
+	// have got hold of it. A diff reviewer has no tools and never could.
+	if workspace != nil {
+		support.RedactSecrets(result, provider.AuthToken())
+	}
 
 	if !opts.DryRun {
 		// One PR-status check gates BOTH `postComments` AND the
@@ -604,6 +722,101 @@ func (c *ReviewCommand) autoMergeTrivial(
 	}
 }
 
+// requiresWorkspace reports whether the AI reviewer reviews a checkout of the
+// pull request (see repositories.WorkspaceReviewer).
+func requiresWorkspace(reviewer repositories.AIReviewerRepository) bool {
+	workspaceReviewer, ok := reviewer.(repositories.WorkspaceReviewer)
+	return ok && workspaceReviewer.RequiresWorkspace()
+}
+
+// prepareWorkspace checks the pull request out when the AI reviewer needs it,
+// and returns nil (no error) when it does not. Errors are wrapped with
+// support.ErrWorkspaceUnavailable so the failure notice names the real cause
+// instead of blaming the AI backend. `paths` are the changed files the
+// provider lists for the pull request, which the checkout must agree with.
+func (c *ReviewCommand) prepareWorkspace(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	pr forgeEntities.PullRequestDetail,
+	paths []string,
+) (*entities.ReviewWorkspace, error) {
+	if !requiresWorkspace(c.aiReviewer) {
+		return nil, nil //nolint:nilnil // no workspace is the normal, error-free outcome for a diff reviewer
+	}
+	if c.workspaceRepo == nil {
+		return nil, fmt.Errorf("%w: the %s reviewer needs a checkout but no workspace repository is configured",
+			support.ErrWorkspaceUnavailable, c.aiReviewer.Name())
+	}
+	workspace, err := c.workspaceRepo.Prepare(ctx, provider, repo, pr)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", support.ErrWorkspaceUnavailable, err)
+	}
+	if !checkoutMatchesPullRequest(workspace, paths) {
+		changed := len(workspace.ChangedFiles)
+		c.workspaceRepo.Release(workspace)
+		return nil, fmt.Errorf(
+			"%w: the checkout changes %d file(s), none of them among the %d the provider lists for PR #%d",
+			support.ErrWorkspaceUnavailable, changed, len(paths), pr.ID,
+		)
+	}
+	return workspace, nil
+}
+
+// checkoutMatchesPullRequest reports whether a checkout's changed files share
+// at least one path with the files the provider lists for the pull request.
+//
+// It is a tripwire, not an equality check: a push landing between the two
+// reads can legitimately move a few paths. But a checkout that changes
+// nothing, or nothing the provider lists, is the wrong code — the head of a
+// fork's pull request fetched from a same-named branch of the target
+// repository looks exactly like that — and reviewing it would post a verdict,
+// possibly an approval, on code nobody read.
+func checkoutMatchesPullRequest(workspace *entities.ReviewWorkspace, paths []string) bool {
+	listed := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		listed[normalizeFilePath(path)] = true
+	}
+	for _, change := range workspace.ChangedFiles {
+		if listed[normalizeFilePath(change.Path)] {
+			return true
+		}
+	}
+	return false
+}
+
+// prepareWorkspaceOrAnnounce checks the pull request out for a workspace
+// reviewer (nil for a diff reviewer). A checkout that cannot be made is fatal —
+// that reviewer has nothing to read without it — and, coming after the
+// "reviewing" marker, it is announced like any other failure, or the marker
+// would promise a review that never arrives.
+func (c *ReviewCommand) prepareWorkspaceOrAnnounce(
+	ctx context.Context,
+	provider forgeEntities.ReviewProvider,
+	repo forgeEntities.Repository,
+	pr forgeEntities.PullRequestDetail,
+	paths []string,
+	opts ReviewOptions,
+) (*entities.ReviewWorkspace, error) {
+	workspace, err := c.prepareWorkspace(ctx, provider, repo, pr, paths)
+	if err != nil && !opts.DryRun && !isPullRequestClosed(ctx, provider, repo, pr.ID) {
+		c.postReviewFailedAnnotation(ctx, provider, repo, pr.ID, err, reviewFailureContext{FileCount: len(paths)})
+	}
+	return workspace, err
+}
+
+// diffsFromWorkspace lists the checkout's changed files as FileDiffs without
+// diff text: the workspace reviewer reads the hunks itself, and the rest of
+// the pipeline (rule selection, the failure annotation's scale) needs only
+// the paths and languages.
+func diffsFromWorkspace(workspace *entities.ReviewWorkspace) []entities.FileDiff {
+	diffs := make([]entities.FileDiff, 0, len(workspace.ChangedFiles))
+	for _, change := range workspace.ChangedFiles {
+		diffs = append(diffs, entities.FileDiff{Path: change.Path, Language: support.ClassifyFile(change.Path)})
+	}
+	return diffs
+}
+
 // forgeFileContentFetcherAdapter adapts a ReviewProvider (type-asserted to
 // FileAccessProvider) into the domain FileContentFetcher interface.
 // This lives here in the command layer because it bridges the provider
@@ -689,7 +902,7 @@ func (c *ReviewCommand) postReviewFailedAnnotation(
 	reviewErr error,
 	sizeCtx reviewFailureContext,
 ) {
-	body := buildReviewFailedBody(time.Now().UTC(), reviewErr, sizeCtx)
+	body := support.StampReviewJob(buildReviewFailedBody(time.Now().UTC(), reviewErr, sizeCtx), c.jobName)
 	logger.Infof("PR #%d: posting 'review failed' annotation", prID)
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, reviewingMarkerPostTimeout)
@@ -935,14 +1148,32 @@ func pluralizeFiles(n int) string {
 // `RetryingAIReviewer` wraps the backend error with `%w`, so `errors.Is`
 // still sees `support.ErrUnparseableResponse` through the retry envelope.
 func classifyReviewFailure(reviewErr error) string {
-	switch {
-	case reviewErr == nil:
+	if reviewErr == nil {
 		return "The AI review could not be completed"
-	case errors.Is(reviewErr, support.ErrUnparseableResponse):
-		return "The AI did not return a review in the expected JSON format"
-	default:
-		return "The AI backend errored"
 	}
+	for _, class := range reviewFailureClasses {
+		if errors.Is(reviewErr, class.sentinel) {
+			return class.reason
+		}
+	}
+	return "The AI backend errored"
+}
+
+// reviewFailureClasses maps the classified failure sentinels to the reason the
+// generic failure notice states, checked in order (Mapper pattern: a new class
+// is a new entry).
+//
+//nolint:gochecknoglobals // read-only lookup table used as a constant
+var reviewFailureClasses = []struct {
+	sentinel error
+	reason   string
+}{
+	{support.ErrUnparseableResponse, "The AI did not return a review in the expected JSON format"},
+	{support.ErrWorkspaceUnavailable, "The pull request could not be checked out for the review"},
+	{
+		support.ErrAgenticReviewIncomplete,
+		"The review agent reached its turn, time or budget limit before it finished",
+	},
 }
 
 // postReviewCompleteAnnotation drops a single PR-wide notice after
@@ -976,7 +1207,7 @@ func (c *ReviewCommand) postReviewCompleteAnnotation(
 	result *entities.ReviewResult,
 ) {
 	stats := reviewCompletionStats(result)
-	body := buildReviewCompleteBody(time.Now().UTC(), result)
+	body := support.StampReviewJob(buildReviewCompleteBody(time.Now().UTC(), result), c.jobName)
 	logger.Infof("PR #%d: posting 'review complete' annotation (verdict=%s, inline_comments=%d)",
 		prID, stats.verdict, stats.inlineCommentCount)
 
@@ -1060,13 +1291,126 @@ func buildReviewCompleteBody(now time.Time, result *entities.ReviewResult) strin
 		"\xe2\x9c\x85 **Code Guru review complete.**\n\n"+
 			"Verdict: `%s` \xc2\xb7 %d inline %s.\n\n"+
 			"%s"+
+			"%s"+
 			"_Completed at %s._",
 		stats.verdict,
 		stats.inlineCommentCount,
 		commentsLabel,
 		reasonBlock,
+		buildReviewReportBlock(result),
 		now.UTC().Format(time.RFC3339),
 	)
+}
+
+// Bounds of the review report rendered into the completion annotation. The
+// annotation is one comment, and both providers cap a comment's size (GitHub
+// at 65,536 characters), so a pathological review is listed in part — with
+// the remainder counted — rather than failing to post at all.
+const (
+	maxReportFindings     = 50
+	maxReportDropped      = 40
+	maxReportEntryLength  = 300
+	reportOverflowSummary = "- …and %d more\n"
+)
+
+// buildReviewReportBlock renders the agentic review's report: an index of the
+// findings posted as threads, what each review dimension checked and found
+// clean, and every finding that was raised and then dropped, with its score
+// and reason. A rejected finding is evidence the confidence filter ran; an
+// omitted one is indistinguishable from a check that never happened, which is
+// why the dropped list is not optional.
+//
+// Every section collapses to nothing when its input is empty, so a diff-path
+// review — no scores, no coverage, no dropped findings — renders the
+// completion notice exactly as it did before the report existed.
+func buildReviewReportBlock(result *entities.ReviewResult) string {
+	if result == nil {
+		return ""
+	}
+	var report strings.Builder
+	writeFindingsIndex(&report, result.Comments)
+	writeCoverage(&report, result.Coverage)
+	writeDroppedFindings(&report, result.Dropped)
+	return report.String()
+}
+
+func writeFindingsIndex(report *strings.Builder, comments []entities.ReviewComment) {
+	var scored []entities.ReviewComment
+	for _, comment := range comments {
+		if comment.Dimension != "" {
+			scored = append(scored, comment)
+		}
+	}
+	if len(scored) == 0 {
+		return
+	}
+	report.WriteString("**Findings**\n")
+	for i, comment := range scored {
+		if i == maxReportFindings {
+			fmt.Fprintf(report, reportOverflowSummary, len(scored)-maxReportFindings)
+			break
+		}
+		fmt.Fprintf(report, "%d. %s \xe2\x80\x94 %s (confidence %d), %s\n",
+			i+1, reportAnchor(comment.FilePath, comment.Line), comment.Dimension, comment.Confidence, comment.Severity)
+	}
+	report.WriteString("\n")
+}
+
+func writeCoverage(report *strings.Builder, coverage entities.ReviewCoverage) {
+	if coverage.IsZero() {
+		return
+	}
+	report.WriteString("**Checked**\n")
+	for _, entry := range []struct{ label, text string }{
+		{"Correctness", coverage.Correctness},
+		{"Security", coverage.Security},
+		{"Design", coverage.Design},
+	} {
+		if text := strings.TrimSpace(entry.text); text != "" {
+			fmt.Fprintf(report, "- %s: %s\n", entry.label, support.TruncateRunes(oneLine(text), maxReportEntryLength))
+		}
+	}
+	report.WriteString("\n")
+}
+
+func writeDroppedFindings(report *strings.Builder, dropped []entities.DroppedFinding) {
+	if len(dropped) == 0 {
+		return
+	}
+	report.WriteString("**Dropped** (did not reach the confidence bar)\n")
+	for i, finding := range dropped {
+		if i == maxReportDropped {
+			fmt.Fprintf(report, reportOverflowSummary, len(dropped)-maxReportDropped)
+			break
+		}
+		label := finding.Dimension
+		if label == "" {
+			label = "finding"
+		}
+		fmt.Fprintf(report, "- %s \xe2\x80\x94 %s (confidence %d): %s\n",
+			reportAnchor(finding.FilePath, finding.Line), label, finding.Confidence,
+			support.TruncateRunes(oneLine(finding.Reason), maxReportEntryLength))
+	}
+	report.WriteString("\n")
+}
+
+// reportAnchor renders `path:line` in code formatting, or a placeholder for a
+// finding that is not anchored to a file.
+func reportAnchor(path string, line int) string {
+	path = normalizeFilePath(path)
+	switch {
+	case path == "":
+		return "(pull request)"
+	case line > 0:
+		return fmt.Sprintf("`%s:%d`", path, line)
+	default:
+		return "`" + path + "`"
+	}
+}
+
+// oneLine folds a multi-line text into one list item.
+func oneLine(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 // postReviewingMarker drops a single PR-wide acknowledgement so the
@@ -1242,18 +1586,45 @@ func (c *ReviewCommand) postComments(
 			// ID here is reserved for a future "edit on second push"
 			// feature.
 			_, err := provider.PostPullRequestThreadComment(
-				ctx, repo, prID, comment.FilePath, comment.Line, comment.Body,
+				ctx, repo, prID, comment.FilePath, comment.Line, renderCommentBody(comment),
 			)
 			if err != nil {
 				logger.Errorf("failed to post inline comment on %s:%d: %v", comment.FilePath, comment.Line, err)
 			}
 		} else {
-			body := fmt.Sprintf("**[%s]** %s: %s", comment.Severity, comment.FilePath, comment.Body)
+			body := fmt.Sprintf("**[%s]** %s: %s", comment.Severity, comment.FilePath, renderCommentBody(comment))
+			// A scored finding about the pull request as a whole has no path
+			// to name; the diff path's comments keep their exact old shape.
+			if comment.FilePath == "" && comment.Dimension != "" {
+				body = fmt.Sprintf("**[%s]** %s", comment.Severity, renderCommentBody(comment))
+			}
 			if err := provider.PostPullRequestComment(ctx, repo, prID, body); err != nil {
 				logger.Errorf("failed to post comment: %v", err)
 			}
 		}
 	}
+}
+
+// renderCommentBody renders the body posted for one finding. A scored finding
+// (the agentic reviewer's) opens with `**<dimension> (confidence <score>)**`,
+// so every thread states which review pass raised it and how sure the
+// reviewer was; an unscored one (the diff path) is posted exactly as the model
+// wrote it.
+func renderCommentBody(comment entities.ReviewComment) string {
+	if comment.Dimension == "" {
+		return comment.Body
+	}
+	return fmt.Sprintf("**%s (confidence %d)**\n\n%s", comment.Dimension, comment.Confidence, comment.Body)
+}
+
+// findingHeaderPattern matches the header renderCommentBody prepends.
+var findingHeaderPattern = regexp.MustCompile(`\A\*\*[a-z]+ \(confidence \d+\)\*\*\n\n`)
+
+// stripFindingHeader removes renderCommentBody's header, so the duplicate
+// filter compares a finding by what it says rather than by a confidence score
+// that legitimately moves between runs.
+func stripFindingHeader(body string) string {
+	return findingHeaderPattern.ReplaceAllString(body, "")
 }
 
 // shouldSkip evaluates the early-return gates that fire BEFORE the
@@ -1557,7 +1928,7 @@ const commentDedupBodyPrefix = 200
 // fingerprint shape without driving the full filter.
 func commentDedupKey(filePath string, line int, body string) string {
 	normalisedPath := normalizeFilePath(filePath)
-	prefix := body
+	prefix := stripFindingHeader(body)
 	if len(prefix) > commentDedupBodyPrefix {
 		prefix = prefix[:commentDedupBodyPrefix]
 	}

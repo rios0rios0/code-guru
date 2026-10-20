@@ -24,6 +24,8 @@ A CLI tool that leverages AI (Claude Code CLI or OpenAI API) to automatically re
 - YAML `frontmatter` in rules for file-glob-based filtering (e.g., `paths: ["**/*.go"]`)
 - Project-aware reviews: the reviewed repository's own `AGENTS.md` (or `CLAUDE.md`) is loaded automatically (on any provider) and forwarded to the AI as project-specific context, so the review honours the project's documented conventions — see [Project Guidelines](#project-guidelines-agentsmd--claudemd)
 - Intent-aware reviews: the PR's title, branch names, description, and commit count are forwarded to the AI so it can judge whether the diff actually does what the author claims and flag undocumented scope creep — see [Pull Request Context](#pull-request-context-intent-aware-reviews)
+- Agentic reviews (`ai.claude.mode: agentic`): the pull request is checked out and Claude Code reviews the whole repository as a read-only agent — six passes (guidelines, bugs, git history, code comments, security, design), a confidence filter on every finding, one thread per finding, and a report of what was checked and what was dropped — inside a hardened sandbox — see [docs/AGENTIC_REVIEWS.md](docs/AGENTIC_REVIEWS.md)
+- Reviews in Kubernetes Jobs (`server.executor: kubernetes`): the webhook server runs the cheap gates itself and hands each review that needs the AI to its own Job, created from a template you own, with a fleet-wide concurrency cap, a durable FIFO queue, and a guaranteed notice when a review pod dies — see [docs/AGENTIC_REVIEWS.md](docs/AGENTIC_REVIEWS.md#the-kubernetes-job-executor)
 - Inline and general PR comments posted back via gitforge
 - Three modes: single PR review, batch review-all, and discover (list open PRs)
 - Reviews each PR exactly once — subsequent pushes are no-ops. To request a re-review, post a PR comment that mentions `@code-guru` (case-insensitive), the account the bot itself posts under when that account is listed in `bot_identities`, or — on Azure DevOps, with no configuration — the bot picked straight out of the comment box's `@`-autocomplete — see [Mentioning the bot](#mentioning-the-bot). On GitHub the mention works both in a PR-wide comment and inside an inline review thread. On a re-review the bot acts as a reviewer who reads the existing conversation: it loads every prior bot inline thread plus every reply, classifies each as `resolved` / `outstanding` / `outdated`, posts one short reply **nested inside each prior thread** (via the provider's `ReplyToThread`, so the answer lands below the author's reply like a human reviewer rather than as a separate same-line comment), and auto-closes the threads it considers resolved (Azure DevOps thread state `fixed`). Net-new findings only land if the diff genuinely warrants one and it does NOT overlap a thread the bot already addressed — replacing the pre-existing failure mode where every re-review flooded the PR with reworded duplicates of every prior comment. The bot recognises its own prior comments by the built-in `code-guru` login shape, by self-detecting the account that posted its PR-wide review annotations on the PR, and by any identity listed in `bot_identities` (env `CODE_GURU_BOT_IDENTITIES`) — so re-reviews still read and resolve prior threads when the deployment posts under a service account
@@ -145,7 +147,11 @@ code-guru review-all -c .code-guru.yaml
 ```bash
 code-guru review https://github.com/org/repo/pull/123
 code-guru review https://dev.azure.com/org/project/_git/repo/pullrequest/456
+code-guru review --mentioned https://github.com/org/repo/pull/123   # as a requested re-review
 ```
+
+`review` exits non-zero when it could not review the pull request, so a CI step (or a Kubernetes review Job) fails
+visibly instead of passing silently.
 
 ### Flags
 
@@ -156,6 +162,8 @@ code-guru review https://dev.azure.com/org/project/_git/repo/pullrequest/456
 | `--rules-path`  | Path to rules directory                        |
 | `--dry-run`     | Run review without posting comments            |
 | `-v, --verbose` | Enable debug logging                           |
+| `--mentioned`   | (`review` only) Review as a requested re-review: bypass the review-once gate and resolve the bot's earlier threads |
+| `--job-name`    | (`review` only) The Kubernetes review Job running this review, stamped on its outcome notices; set by the server's Kubernetes executor, not by hand |
 
 ## Supported Providers
 
@@ -170,6 +178,7 @@ code-guru review https://dev.azure.com/org/project/_git/repo/pullrequest/456
 |-------------|-------------|----------------------------------------------------------|
 | Anthropic   | `anthropic` | Calls the Anthropic Messages API directly via Go SDK     |
 | Claude Code | `claude`    | Invokes `claude --print` CLI as a subprocess             |
+| Claude Code (agentic) | `claude` + `ai.claude.mode: agentic` | Checks the PR out and runs Claude Code as a read-only reviewing agent over it ([details](docs/AGENTIC_REVIEWS.md)) |
 | OpenAI      | `openai`    | Calls the Chat Completions API with JSON response format |
 
 ## AI Verdict
@@ -392,7 +401,8 @@ docker run --rm -p 8080:8080 \
 
 The Dockerfile lives at `.ci/stages/40-delivery/app.Dockerfile` and uses a
 multi-stage build (`golang:1.27.0-alpine` builder, `debian:12-slim` runtime
-pinned by digest, with the Claude Code CLI installed) running as the
+pinned by digest, with the Claude Code CLI and `git` — which the agentic
+review mode needs — installed) running as the
 non-root user `65532`. The builder tag tracks the `go` directive in
 `go.mod` and must be bumped together with it.
 
@@ -476,6 +486,21 @@ back to the per-pod in-memory cache: still safe, but cross-pod
 duplicates will not be suppressed. Outside a pod (local CLI runs,
 unit tests) no Kubernetes API is contacted.
 
+### Reviews in Kubernetes Jobs
+
+With `server.executor: kubernetes` the server keeps the webhook handling and the cheap gates (draft, review-once,
+trivial detection) and hands every review that needs the AI to a Job of its own, built from a `batch/v1` template you
+own (`server.kubernetes.job_template`). The Job's pod runs `code-guru review <pr-url>` for that one pull request and
+exits; Kubernetes deletes it afterwards. Jobs are created suspended and released oldest-first while fewer than
+`server.kubernetes.max_concurrent_jobs` run — the replicas take turns under a Lease, so the cap holds across all of
+them — and a burst of pull requests queues (with a "queued" notice on each) instead of exhausting the cluster; the
+queue survives server restarts. A review pod that dies without posting — deadline, out of memory — gets its failure
+reported on the pull request by the server.
+
+The server needs `create`, `list` and `patch` on `batch/jobs` in the Job namespace on top of the lease
+rule above, which the executor's own locks use too; the review pod needs no Kubernetes API access at all. The template contract, example manifests (Job
+template, RBAC, NetworkPolicy) and operations are in [docs/AGENTIC_REVIEWS.md](docs/AGENTIC_REVIEWS.md#the-kubernetes-job-executor).
+
 ## Environment Variable Configuration
 
 For CI/CD environments without a config file, all settings can be provided via `CODE_GURU_*` environment variables:
@@ -502,6 +527,12 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_ANTHROPIC_CONTEXT_1M`      | Requests the Anthropic 1M-token context window (`context-1m-2025-08-07` beta) so larger PRs fit in one review pass; set to `false` for accounts/models that cannot use the beta | `true`               |
 | `CODE_GURU_ANTHROPIC_REFUSAL_FALLBACK_MODEL` | Anthropic model to re-issue the review against when the primary model declines the content on content-safety grounds (`stop_reason: refusal`); empty disables the fallback | (empty)              |
 | `CODE_GURU_BOT_IDENTITIES`            | Comma-separated account identities the bot posts under — used both so re-reviews recognise its own prior threads and as extra `@`-mention triggers; the built-in `code-guru` shape and self-detection apply when unset |                      |
+| `CODE_GURU_CLAUDE_MODEL`              | Model the Claude CLI backend uses (alias or full id, e.g. `claude-opus-5-5`) | `sonnet`             |
+| `CODE_GURU_CLAUDE_MODE`               | `diff` (one tool-less turn over the diff) or `agentic` (a read-only Claude Code agent over a checkout of the PR) | `diff`               |
+| `CODE_GURU_CLAUDE_AGENTIC_*`          | Agentic-mode settings: `CONFIG_PATH`, `WORKSPACE_DIR`, `CLONE_DEPTH`, `TIMEOUT`, `MAX_TURNS`, `EFFORT`, `MAX_BUDGET_USD`, `FALLBACK_MODEL`, `MIN_CONFIDENCE` — see [docs/AGENTIC_REVIEWS.md](docs/AGENTIC_REVIEWS.md#configuration) | |
+| `CODE_GURU_SERVER_EXECUTOR`           | `inprocess` or `kubernetes` (each AI review in its own Job) | `inprocess`          |
+| `CODE_GURU_SERVER_KUBERNETES_*`       | Executor settings: `JOB_TEMPLATE` (required), `NAMESPACE`, `MAX_CONCURRENT_JOBS` (default `3`), `POLL_INTERVAL` (default `15s`) | |
+| `CODE_GURU_GITHUB_INSTALLATION_ID`    | Set by the Kubernetes executor on a review Job of a GitHub App delivery; the pod mints its own installation token from the App credentials and uses it ahead of a configured PAT, as the server does | |
 
 ## Rules
 

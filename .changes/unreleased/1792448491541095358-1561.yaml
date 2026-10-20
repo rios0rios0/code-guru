@@ -1,0 +1,3 @@
+kind: 'Changed'
+body: 'changed the container image to keep `git` installed, which the agentic review mode clones with and the reviewing agent reads history with'
+time: '2026-10-19T22:21:31.541058835Z'

@@ -1,6 +1,9 @@
 package repositories
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 	anthropicRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/anthropic"
@@ -10,6 +13,7 @@ import (
 	rulesRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/rules"
 	selfupdateRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/selfupdate"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
+	workspaceRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/workspace"
 	"github.com/rios0rios0/gitforge/v4/pkg/providers/infrastructure/azuredevops"
 	"github.com/rios0rios0/gitforge/v4/pkg/providers/infrastructure/github"
 	registry "github.com/rios0rios0/gitforge/v4/pkg/registry/infrastructure"
@@ -112,6 +116,11 @@ func (f *AIReviewerFactory) createBackend(settings *entities.Settings) repositor
 			anthropicRepo.WithRefusalFallbackModel(settings.AI.Anthropic.RefusalFallbackModel),
 		)
 	case "claude":
+		if settings.AI.Claude.AgenticEnabled() {
+			return claudeRepo.NewAgenticReviewerRepository(
+				settings.AI.Claude.BinaryPath, settings.AI.Claude.Model, settings.AI.Claude.Agentic,
+			)
+		}
 		return claudeRepo.NewAIReviewerRepository(
 			settings.AI.Claude.BinaryPath, settings.AI.Claude.Model, settings.AI.Claude.MaxTurns,
 		)
@@ -129,6 +138,27 @@ func NewRulesRepositoryFactory() *RulesRepositoryFactory {
 }
 
 // Create returns a rules repository configured from settings.
+//
+// In agentic mode an operator may point `ai.claude.agentic.config_path` at a
+// whole Claude Code configuration tree and leave `rules.path` empty; the
+// tree's `rules/` directory is then the rule corpus, so the review is not
+// silently run without the standards the operator installed.
 func (f *RulesRepositoryFactory) Create(settings *entities.Settings) repositories.RulesRepository {
-	return rulesRepo.NewFilesystemRulesRepository(settings.Rules.Path, settings.Rules.Categories)
+	path := settings.Rules.Path
+	if configPath := settings.AI.Claude.Agentic.ResolvedConfigPath(); path == "" &&
+		settings.AI.Claude.AgenticEnabled() && configPath != "" {
+		if info, err := os.Stat(filepath.Join(configPath, "rules")); err == nil && info.IsDir() {
+			path = filepath.Join(configPath, "rules")
+		}
+	}
+	return rulesRepo.NewFilesystemRulesRepository(path, settings.Rules.Categories)
+}
+
+// NewWorkspaceRepository returns the repository that checks pull requests out
+// for workspace reviewers, configured from the agentic settings. Every review
+// command is given one; a diff reviewer never calls it.
+func NewWorkspaceRepository(settings *entities.Settings) repositories.WorkspaceRepository {
+	return workspaceRepo.NewGitWorkspaceRepository(
+		settings.AI.Claude.Agentic.ResolvedWorkspaceDir(), settings.AI.Claude.Agentic.CloneDepth,
+	)
 }

@@ -61,3 +61,22 @@ func TruncateBytesForLog(b []byte, n int) string {
 
 	return strconv.Quote(string(b[:n])) + truncationSentinel
 }
+
+// ellipsis ends a value TruncateRunes cut short.
+const ellipsis = "…"
+
+// TruncateRunes returns s cut to at most n runes, ending in an ellipsis when it
+// was cut. It is for text a reader sees on the pull request rather than in a
+// log: the cut never splits a multi-byte character, and the marker reads as
+// prose instead of as the log sentinel.
+func TruncateRunes(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	if n <= 1 {
+		return ellipsis
+	}
+
+	return string(runes[:n-1]) + ellipsis
+}

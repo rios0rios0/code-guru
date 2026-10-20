@@ -63,15 +63,23 @@ var ErrUnparseableResponse = errors.New("ai response is not valid JSON, even aft
 // stores. Operators who need the raw output for diagnosis can drop the log
 // level to `DEBUG` on a single pod.
 func ParseReviewResponse(content string) (*entities.ReviewResult, error) {
+	result, _, err := parseReviewDocument(content)
+	return result, err
+}
+
+// parseReviewDocument runs ParseReviewResponse's strategy and also returns the
+// JSON text that parsed — the whole content, the fenced block or the repaired
+// content — so a caller can decode fields of its own out of the same document.
+func parseReviewDocument(content string) (*entities.ReviewResult, string, error) {
 	// 1. strict parse
 	if result, ok := tryUnmarshal(content); ok {
-		return result, nil
+		return result, content, nil
 	}
 
 	// 2. fenced JSON
 	if matches := jsonCodeBlockPattern.FindStringSubmatch(content); len(matches) > 1 {
 		if result, ok := tryUnmarshal(matches[1]); ok {
-			return result, nil
+			return result, matches[1], nil
 		}
 	}
 
@@ -80,7 +88,7 @@ func ParseReviewResponse(content string) (*entities.ReviewResult, error) {
 	if repaired != content {
 		if result, ok := tryUnmarshal(repaired); ok {
 			logger.Warn("AI response required JSON repair before parsing succeeded")
-			return result, nil
+			return result, repaired, nil
 		}
 	}
 
@@ -92,7 +100,7 @@ func ParseReviewResponse(content string) (*entities.ReviewResult, error) {
 	logger.WithField("raw", TruncateForLog(content, rawResponseLogLimit)).
 		Debug("unparseable AI response (raw, truncated) — gated behind DEBUG to avoid leaking diff content")
 
-	return nil, fmt.Errorf("%w (length=%d)", ErrUnparseableResponse, len(content))
+	return nil, "", fmt.Errorf("%w (length=%d)", ErrUnparseableResponse, len(content))
 }
 
 // fingerprintContent returns the first `fingerprintHexLen` hex chars of the

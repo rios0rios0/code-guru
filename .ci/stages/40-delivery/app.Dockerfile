@@ -64,9 +64,15 @@ SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
 # build log) so operators can correlate runtime behavior with the exact CLI
 # version installed at build time -- otherwise the floating channel makes
 # version-specific debugging significantly harder.
+#
+# `git` stays in the image (unlike `curl`): the agentic review mode clones the
+# pull request with it, and the reviewing agent reads the history it needs
+# with `git log`, `git blame` and `git diff`. `--no-install-recommends` keeps
+# out `openssh-client` and the pager, neither of which the HTTPS-only,
+# non-interactive clone uses.
 RUN set -euxo pipefail; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl libstdc++6; \
+    apt-get install -y --no-install-recommends ca-certificates curl git libstdc++6; \
     groupadd --system --gid 65532 nonroot; \
     useradd --system --gid nonroot --uid 65532 --create-home \
         --home-dir /home/nonroot --shell /sbin/nologin nonroot; \

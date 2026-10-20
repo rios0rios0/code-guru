@@ -17,6 +17,55 @@ type ReviewComment struct {
 	Body       string `json:"body"`
 	Severity   string `json:"severity"`
 	Suggestion string `json:"suggestion,omitempty"`
+
+	// Dimension names the review dimension the finding belongs to (`bug`,
+	// `security` or `design`). Only the agentic reviewer emits it — its
+	// prompt runs one pass per dimension — so it is empty on the diff path,
+	// and an empty value keeps the posted body exactly as it was before the
+	// field existed.
+	//
+	// It, Confidence, ReviewResult.Coverage and ReviewResult.Dropped are
+	// kept out of JSON (`json:"-"`) and decoded by the agentic parser alone
+	// (`support.ParseAgenticReviewResponse`). The diff path's parser decodes
+	// this entity directly, and a diff-path model that volunteers a
+	// `"confidence": 0.9` or a `"checked": [...]` must keep being ignored,
+	// not fail the whole response on a type mismatch.
+	Dimension string `json:"-"`
+
+	// Confidence is the 0-100 score the agentic reviewer assigned the
+	// finding before filtering. Findings below the configured threshold
+	// never reach this slice — they are moved to `ReviewResult.Dropped` — so
+	// a posted comment always carries a score at or above it. Zero on the
+	// diff path, which has no confidence vocabulary.
+	Confidence int `json:"-"`
+}
+
+// DroppedFinding is a candidate finding the agentic reviewer raised and then
+// rejected — either by its own confidence filter or by the bot's threshold.
+// Listing them is what makes the filter auditable: a rejected finding is
+// evidence the check ran, while an omitted one is indistinguishable from a
+// check that never happened.
+type DroppedFinding struct {
+	FilePath   string `json:"file,omitempty"`
+	Line       int    `json:"line,omitempty"`
+	Dimension  string `json:"dimension,omitempty"`
+	Confidence int    `json:"confidence"`
+	Reason     string `json:"reason"`
+}
+
+// ReviewCoverage records, per review dimension, what the agentic reviewer
+// checked and found clean. It is rendered in the completion annotation so a
+// clean review states what was looked at instead of reading as silence.
+type ReviewCoverage struct {
+	Correctness string `json:"correctness,omitempty"`
+	Security    string `json:"security,omitempty"`
+	Design      string `json:"design,omitempty"`
+}
+
+// IsZero reports whether no dimension carries a statement, which is the case
+// for every diff-path review.
+func (c ReviewCoverage) IsZero() bool {
+	return c.Correctness == "" && c.Security == "" && c.Design == ""
 }
 
 // ReviewResult aggregates all review output for a single PR.
@@ -25,6 +74,16 @@ type ReviewResult struct {
 	Verdict        string          `json:"verdict,omitempty"`
 	Comments       []ReviewComment `json:"comments"`
 	Summary        string          `json:"summary"`
+
+	// Coverage carries the agentic reviewer's per-dimension "checked and
+	// clean" statements. Zero on the diff path. Agentic-only, so kept out
+	// of JSON (see ReviewComment.Dimension).
+	Coverage ReviewCoverage `json:"-"`
+
+	// Dropped lists the candidate findings the agentic reviewer rejected,
+	// each with its score and the reason. Empty on the diff path.
+	// Agentic-only, so kept out of JSON (see ReviewComment.Dimension).
+	Dropped []DroppedFinding `json:"-"`
 
 	// ThreadResolutions carries the AI's per-thread verdict on every
 	// prior bot review thread that was surfaced in the conversation
@@ -156,6 +215,12 @@ type ReviewRequest struct {
 	// in the prompt, the only name callers could produce before the
 	// `AGENTS.md` lookup existed.
 	ProjectGuidelinesSource string
+
+	// Workspace is the local checkout of the pull request, populated only
+	// for reviewers that read the repository itself (see
+	// `repositories.WorkspaceReviewer`). Nil on the diff path, which never
+	// clones anything.
+	Workspace *ReviewWorkspace
 }
 
 // ReviewThread is one inline review conversation: the bot's original
