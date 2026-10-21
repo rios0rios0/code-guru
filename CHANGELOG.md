@@ -22,6 +22,16 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.20.1] - 2026-10-21
+
+### Changed
+
+- changed the Go module `github.com/rios0rios0/gitforge/v4` from `v4.3.0` to `v4.3.1`
+
+### Fixed
+
+- fixed re-reviews on Azure DevOps answering every earlier answer again: the bot's in-thread replies, which Azure DevOps stores with no parent, each opened a conversation of their own, and threads overwrote each other because Azure DevOps numbers comments per thread, so a settled thread collected more identical "Resolved by Code Guru re-review" replies on every run. The conversation walk now groups comments by provider thread, and a verdict a thread already carries is not posted again until someone replies or the verdict changes
+
 ## [1.20.0] - 2026-10-20
 
 ### Added
