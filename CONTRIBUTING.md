@@ -20,14 +20,14 @@ development practices, refer to the **[Development Guide](https://github.com/rio
    ```
 4. Build the binary:
    ```bash
-   go build -o bin/code-guru .
+   go build -o bin/code-guru ./cmd/code-guru/
    ```
 5. Make your changes
 6. Run tests:
    ```bash
    go test ./...
    ```
-7. Commit following the [commit conventions](https://github.com/rios0rios0/guide/wiki/Life-Cycle/Git-Flow)
+7. Commit following the [commit conventions](https://github.com/rios0rios0/guide/wiki/Git-Flow)
 8. Open a pull request against `main`
 
 ## Local Environment

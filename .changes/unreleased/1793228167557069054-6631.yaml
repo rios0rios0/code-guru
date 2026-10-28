@@ -1,0 +1,3 @@
+kind: 'Changed'
+body: 'corrected stale symbols, flags, build commands and file references in `AGENTS.md`, `.github/copilot-instructions.md`, the code-review skill, `README.md` and `CONTRIBUTING.md`'
+time: '2026-10-28T22:56:07.557005209Z'

@@ -115,7 +115,7 @@ paths:
 
 **Pull request metadata**: The review command also loads the PR's description and commit count (`internal/domain/commands/pull_request_metadata.go`, via the `prmetadata` fetcher registry) and forwards them on `ReviewRequest.Metadata`; the prompt builder renders them — together with the title and branch names already in the PR header — as an intent-context section instructing the model to verify the diff against the stated intent and flag scope creep. Best-effort (an unsupported provider or API error never fails the review); the description is bounded to `ai.max_pr_description_bytes` (default 64 KiB, `AIConfig.PRDescriptionBytes()`) and escape-proofed like every other untrusted block.
 
-**Batched reviews (context-window fallback)**: When the assembled prompt exceeds the model's context window (`support.ErrContextWindowExceeded`) and `ai.batch_large_reviews` is on (default), `internal/domain/commands/review_batches.go` posts a "reviewing this PR in batches" notice on the pull request and then splits the files into batches that fit, reviewing them sequentially and merging the results (union of comments, most severe verdict, joined summaries, thread resolutions re-keyed from batch-local to run-global ids). The batch size is derived from the token figures in the backend's own error (`support.ParseContextWindowOverage`) and halved on any batch that still overflows. Each batch's request carries `ReviewRequest.Batch`, which makes the prompt state that only part of the change is visible — without it the model reports the files it cannot see as missing tests, unused symbols, or an incomplete change. Files that never reach the model (one file larger than the window, a failed batch, or the `ai.max_review_batches` cap) are named in the merged summary, and such a review never returns `approve`. If not one batch succeeds, the command falls back to the historical "PR too large" annotation.
+**Batched reviews (context-window fallback)**: When the assembled prompt exceeds the model's context window (`support.ErrContextWindowExceeded`) and `ai.batch_large_reviews` is on (default), `internal/domain/commands/review_batches.go` posts a "reviewing this PR in batches" notice on the pull request and then splits the files into batches that fit, reviewing them sequentially and merging the results (union of comments, most severe verdict, joined summaries, thread resolutions re-keyed from batch-local to run-global ids). The batch size is derived from the token figures in the backend's own error (`support.ParseContextWindowOverage`) and halved on any batch that still overflows. Each batch's request carries `ReviewRequest.Batch`, which makes the prompt state that only part of the change is visible — without it the model reports the files it cannot see as missing tests, unused symbols, or an incomplete change. Files that never reach the model (one file larger than the window, a failed batch, or the `ai.max_review_batches` cap) are named in the merged summary, and such a review never returns `approve`. If not one batch succeeds, the command posts the "PR too large" annotation.
 
 ## CLI Usage
 
@@ -133,13 +133,15 @@ Available subcommands:
 
 The `auth` controller and its filesystem token store exist in the tree but are **not** DI-registered (login is a TODO), so `auth` is not an available subcommand.
 
-Common flags (all commands):
+Persistent flags (accepted by every command; each controller reads only the ones it uses):
 
 | Flag              | Description                                     |
 |-------------------|-------------------------------------------------|
 | `-c, --config`    | Path to config file (default: auto-discover)    |
 | `-v, --verbose`   | Enable debug logging                            |
-| `--dry-run`       | Perform review without posting comments (`review-all` only) |
+| `--dry-run`       | Show the result without posting comments (read by `review`, `review-all`, and `self-update`) |
+| `--backend`       | Override `ai.backend` (`openai`, `claude`, `anthropic`; read by `review`) |
+| `--rules-path`    | Override `rules.path` (read by `review`)        |
 
 ## Build and CI
 

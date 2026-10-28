@@ -1,0 +1,3 @@
+kind: 'Changed'
+body: 'moved the agent instructions from `CLAUDE.md` to `AGENTS.md`, keeping a `CLAUDE.md` that imports it'
+time: '2026-10-28T22:56:05.946155973Z'

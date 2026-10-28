@@ -14,12 +14,12 @@
         <img src="https://img.shields.io/cii/level/12023?style=for-the-badge&logo=opensourceinitiative" alt="OpenSSF Best Practices"/></a>
 </p>
 
-A CLI tool that leverages AI (Claude Code CLI or OpenAI API) to automatically review pull requests across GitHub and Azure DevOps, enforcing coding standards from configurable rule files.
+A CLI tool that leverages AI (Anthropic Messages API, Claude Code CLI, or OpenAI API) to automatically review pull requests across GitHub and Azure DevOps, enforcing coding standards from configurable rule files.
 
 ## Features
 
 - Multi-provider support via [gitforge](https://github.com/rios0rios0/gitforge): GitHub and Azure DevOps
-- Dual AI backend: Claude Code CLI (`claude --print`) or OpenAI Chat Completions API
+- Three AI backends: Anthropic Messages API, Claude Code CLI (`claude --print`), or OpenAI Chat Completions API
 - Rule-based reviews using Markdown files from [guide](https://github.com/rios0rios0/guide) (or any directory)
 - YAML `frontmatter` in rules for file-glob-based filtering (e.g., `paths: ["**/*.go"]`)
 - Project-aware reviews: the reviewed repository's own `AGENTS.md` (or `CLAUDE.md`) is loaded automatically (on any provider) and forwarded to the AI as project-specific context, so the review honours the project's documented conventions — see [Project Guidelines](#project-guidelines-agentsmd--claudemd)
@@ -176,7 +176,7 @@ visibly instead of passing silently.
 
 | Backend     | Key         | How It Works                                             |
 |-------------|-------------|----------------------------------------------------------|
-| Anthropic   | `anthropic` | Calls the Anthropic Messages API directly via Go SDK     |
+| Anthropic   | `anthropic` | Calls the Anthropic Messages API directly over HTTP      |
 | Claude Code | `claude`    | Invokes `claude --print` CLI as a subprocess             |
 | Claude Code (agentic) | `claude` + `ai.claude.mode: agentic` | Checks the PR out and runs Claude Code as a read-only reviewing agent over it ([details](docs/AGENTIC_REVIEWS.md)) |
 | OpenAI      | `openai`    | Calls the Chat Completions API with JSON response format |
@@ -400,7 +400,7 @@ docker run --rm -p 8080:8080 \
 ```
 
 The Dockerfile lives at `.ci/stages/40-delivery/app.Dockerfile` and uses a
-multi-stage build (`golang:1.27.0-alpine` builder, `debian:12-slim` runtime
+multi-stage build (`golang:<version>-alpine` builder, `debian:13-slim` runtime
 pinned by digest, with the Claude Code CLI and `git` — which the agentic
 review mode needs — installed) running as the
 non-root user `65532`. The builder tag tracks the `go` directive in
