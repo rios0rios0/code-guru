@@ -5,9 +5,9 @@ go 1.27.3
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/rios0rios0/cliforge v0.5.2
-	github.com/rios0rios0/gitforge/v4 v4.3.1
-	github.com/rios0rios0/langforge v1.1.10
-	github.com/rios0rios0/testkit v0.3.7
+	github.com/rios0rios0/gitforge/v4 v4.3.2
+	github.com/rios0rios0/langforge v1.1.11
+	github.com/rios0rios0/testkit v0.3.8
 	github.com/sashabaranov/go-openai v1.43.0
 	github.com/sirupsen/logrus v1.10.2
 	github.com/spf13/cobra v1.10.2
@@ -28,7 +28,7 @@ require (
 	github.com/go-git/go-billy/v5 v5.9.2 // indirect
 	github.com/go-git/go-git/v5 v5.19.3 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
-	github.com/google/go-github/v66 v66.0.0 // indirect
+	github.com/google/go-github/v93 v93.0.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
