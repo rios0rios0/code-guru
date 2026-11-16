@@ -1,0 +1,3 @@
+kind: 'Added'
+body: 'added `trivial.approve_only_adapters` (`CODE_GURU_TRIVIAL_APPROVE_ONLY_ADAPTERS`): the adapters it lists settle a pull request without the LLM like any other, but never auto-merge it, so a release can be approved without spending AI tokens and still be shipped by a human; they run before the other adapters, and listing only them turns trivial detection on'
+time: '2026-11-16T17:40:11.115022297Z'

@@ -31,9 +31,12 @@ const (
 // sits in every detector's allowed set, so without this guard a bump PR
 // is swallowed by whichever non-bump detector runs first. With the
 // guard, a CHANGELOG-only change is matched solely by the bump-*
-// detectors, so disabling those adapters reliably keeps version bumps
-// out of trivial auto-merge. The CHANGELOG may still ACCOMPANY a docs or
-// update PR; it just can never be the sole trigger.
+// detectors. The CHANGELOG may still ACCOMPANY a docs or update PR; it
+// just can never be the sole trigger. It is one half of
+// declinesAsRelease, which also declines a CHANGELOG that gains a release
+// heading: a Node bump edits `package.json` too, and `update-node` would
+// otherwise take it for a dependency update. Together they keep version
+// bumps out of trivial auto-merge when the bump-* adapters are disabled.
 func isChangelogOnly(files []string) bool {
 	if len(files) == 0 {
 		return false
@@ -83,11 +86,16 @@ func NewDetectorRegistry(enabled []string) *DetectorRegistry {
 // shipped an empty registry to the dispatcher path. An empty / disabled
 // config yields an empty registry which short-circuits in
 // `handleTrivialDetection`.
+//
+// The approve-only adapters are registered ahead of the rest (see
+// `TrivialConfig.EnabledAdapters`): `Detect` settles a pull request with
+// the first adapter that claims it, so a pull request an approve-only
+// adapter claims never reaches an adapter whose approval may auto-merge.
 func NewDetectorRegistryFromConfig(cfg entities.TrivialConfig) *DetectorRegistry {
-	if !cfg.Enabled || len(cfg.Adapters) == 0 {
+	if !cfg.Enabled {
 		return NewDetectorRegistry(nil)
 	}
-	return NewDetectorRegistry(cfg.Adapters)
+	return NewDetectorRegistry(cfg.EnabledAdapters())
 }
 
 // Detect checks the file list against all enabled detectors.

@@ -501,6 +501,128 @@ func TestNewSettingsFromEnvTrivialAutoMerge(t *testing.T) {
 	})
 }
 
+func TestNewSettingsTrivialApproveOnlyAdapters(t *testing.T) {
+	// Pins the approve-only adapter list on both settings paths. These
+	// adapters settle a pull request like the others but never auto-merge
+	// it, which is what lets a release be approved without the LLM while a
+	// human still decides when it ships.
+
+	writeYAML := func(t *testing.T, trivial string) string {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "code-guru.yaml")
+		body := "ai:\n  backend: openai\n  openai:\n    api_key: yaml-key\ntrivial:\n" + trivial
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		return path
+	}
+
+	t.Run("should parse CODE_GURU_TRIVIAL_APPROVE_ONLY_ADAPTERS from the env-only path", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+		t.Setenv("CODE_GURU_TRIVIAL_APPROVE_ONLY_ADAPTERS", "bump-go, bump-node")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, settings.Trivial.Enabled,
+			"approve-only adapters alone must turn trivial detection on, as CODE_GURU_TRIVIAL_ADAPTERS does")
+		assert.Empty(t, settings.Trivial.Adapters)
+		assert.Equal(t, []string{"bump-go", "bump-node"}, settings.Trivial.ApproveOnlyAdapters)
+	})
+
+	t.Run("should leave trivial detection off when neither adapter list is set", func(t *testing.T) {
+		// given
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+
+		// when
+		settings, err := entities.NewSettingsFromEnv()
+
+		// then
+		require.NoError(t, err)
+		assert.False(t, settings.Trivial.Enabled)
+		assert.Empty(t, settings.Trivial.ApproveOnlyAdapters)
+	})
+
+	t.Run("should read approve_only_adapters from the YAML", func(t *testing.T) {
+		// given
+		path := writeYAML(t, "  enabled: true\n  adapters:\n    - docs-only\n  approve_only_adapters:\n    - bump-go\n")
+		t.Setenv("CODE_GURU_TRIVIAL_APPROVE_ONLY_ADAPTERS", "")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, []string{"docs-only"}, settings.Trivial.Adapters)
+		assert.Equal(t, []string{"bump-go"}, settings.Trivial.ApproveOnlyAdapters)
+	})
+
+	t.Run("should override the YAML list when CODE_GURU_TRIVIAL_APPROVE_ONLY_ADAPTERS is set", func(t *testing.T) {
+		// given
+		path := writeYAML(t, "  enabled: false\n  adapters:\n    - docs-only\n")
+		t.Setenv("CODE_GURU_TRIVIAL_APPROVE_ONLY_ADAPTERS", "bump-go,bump-python")
+
+		// when
+		settings, err := entities.NewSettings(path)
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, settings.Trivial.Enabled)
+		assert.Equal(t, []string{"docs-only"}, settings.Trivial.Adapters,
+			"the approve-only override must not touch the auto-merging adapter list")
+		assert.Equal(t, []string{"bump-go", "bump-python"}, settings.Trivial.ApproveOnlyAdapters)
+	})
+}
+
+func TestTrivialConfigEnabledAdapters(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		cfg  entities.TrivialConfig
+		want []string
+	}{
+		{
+			name: "should list the approve-only adapters before the others",
+			cfg: entities.TrivialConfig{
+				Adapters:            []string{"docs-only", "update-go"},
+				ApproveOnlyAdapters: []string{"bump-go"},
+			},
+			want: []string{"bump-go", "docs-only", "update-go"},
+		},
+		{
+			name: "should list an adapter named in both lists once, among the approve-only ones",
+			cfg: entities.TrivialConfig{
+				Adapters:            []string{"docs-only", "bump-go"},
+				ApproveOnlyAdapters: []string{"bump-go"},
+			},
+			want: []string{"bump-go", "docs-only"},
+		},
+		{
+			name: "should return nothing when no adapter is configured",
+			cfg:  entities.TrivialConfig{},
+			want: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			cfg := tc.cfg
+
+			// when
+			adapters := cfg.EnabledAdapters()
+
+			// then
+			assert.Equal(t, tc.want, adapters)
+		})
+	}
+}
+
 func TestReviewAttempts(t *testing.T) {
 	t.Parallel()
 

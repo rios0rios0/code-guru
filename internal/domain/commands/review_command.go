@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -123,6 +124,15 @@ type ReviewOptions struct {
 	// trivial PR (including a human's docs PR) past `Required reviewers`.
 	// Wired from `Settings.Trivial.AutoMergeAllowedAuthors`.
 	TrivialAutoMergeAuthors []string
+
+	// TrivialApproveOnlyAdapters names the trivial adapters whose approvals
+	// never auto-merge: a pull request one of them claims is approved
+	// without the LLM and left for a human to merge, even with
+	// `TrivialAutoMerge` on and an allow-listed author. Release pull
+	// requests are the case it exists for — cheap to verify mechanically,
+	// but merging one ships a release. Wired from
+	// `Settings.Trivial.ApproveOnlyAdapters`.
+	TrivialApproveOnlyAdapters []string
 
 	// TrivialDeleteSourceBranch, when true, asks the provider to delete the
 	// PR's source branch after a successful trivial auto-merge (gitforge's
@@ -341,7 +351,7 @@ func (c *ReviewCommand) triage(
 	// CIPassed=false, so any gate on it would silently disable the
 	// entire trivial path.
 	if c.detectorRegistry != nil {
-		if result := c.handleTrivialDetection(ctx, provider, repo, pr, paths, opts); result != nil {
+		if result := c.handleTrivialDetection(ctx, provider, repo, pr, files, paths, opts); result != nil {
 			return files, paths, result, nil
 		}
 	}
@@ -537,13 +547,26 @@ func (c *ReviewCommand) handleTrivialDetection(
 	provider forgeEntities.ReviewProvider,
 	repo forgeEntities.Repository,
 	pr forgeEntities.PullRequestDetail,
+	files []forgeEntities.PullRequestFile,
 	paths []string,
 	opts ReviewOptions,
 ) *entities.ReviewResult {
+	// A detector settles a pull request on its file list, so it never runs
+	// on a list that may be incomplete. See hasUnnamedFile.
+	if hasUnnamedFile(files) {
+		logger.Infof(
+			"PR #%d: the provider listed a changed file without its path, so the file list may be incomplete; skipping trivial detection",
+			pr.ID,
+		)
+		return nil
+	}
+
 	// build detection context with file content fetcher if available
 	dctx := repositories.DetectionContext{
-		Files:    paths,
-		RepoName: repo.Name,
+		Files:           paths,
+		DeletedFiles:    deletedFilePaths(files),
+		RepoName:        repo.Name,
+		FileDiffFetcher: newPullRequestDiffFetcher(provider, repo, pr.ID, files),
 	}
 	if fap, ok := provider.(forgeEntities.FileAccessProvider); ok {
 		dctx.FileContentFetcher = &forgeFileContentFetcherAdapter{provider: fap, repo: repo}
@@ -590,29 +613,41 @@ func (c *ReviewCommand) handleTrivialDetection(
 		// (autobump / autoupdate / config refresh) merges on its own.
 		// Best-effort: a merge failure logs at warn and the verdict still
 		// stands; anyone can complete the merge manually from the UI.
+		// An approve-only adapter's verdict never merges (see
+		// `ReviewOptions.TrivialApproveOnlyAdapters`).
 		if detection.Verdict == verdictApprove && opts.TrivialAutoMerge {
-			c.maybeAutoMergeTrivial(ctx, provider, repo, pr, opts)
+			c.maybeAutoMergeTrivial(ctx, provider, repo, pr, detector.Name(), opts)
 		}
 	}
 
 	return result
 }
 
-// maybeAutoMergeTrivial applies the author-allowlist gate and then
-// either auto-merges the trivial-approved PR or declines and logs why.
-// Pulled out of handleTrivialDetection so the branches stay flat (the
-// `nestif` linter rejects the inline 3-level form) and so the
+// maybeAutoMergeTrivial applies the approve-only and author-allowlist
+// gates and then either auto-merges the trivial-approved PR or declines
+// and logs why. Pulled out of handleTrivialDetection so the branches stay
+// flat (the `nestif` linter rejects the inline 3-level form) and so the
 // "approved-only, left for a human" decision has one obvious home.
 //
 // Caller guarantees the verdict is approve and TrivialAutoMerge is on;
-// this method only decides the AUTHOR-trust half of the gate.
+// this method only decides whether the ADAPTER that approved may merge
+// and whether the AUTHOR is trusted to merge unattended.
 func (c *ReviewCommand) maybeAutoMergeTrivial(
 	ctx context.Context,
 	provider forgeEntities.ReviewProvider,
 	repo forgeEntities.Repository,
 	pr forgeEntities.PullRequestDetail,
+	adapter string,
 	opts ReviewOptions,
 ) {
+	if slices.Contains(opts.TrivialApproveOnlyAdapters, adapter) {
+		logger.Infof(
+			"PR #%d: trivial-approve by the approve-only %q adapter; approved only, leaving the merge to a human",
+			pr.ID,
+			adapter,
+		)
+		return
+	}
 	if !autoMergeAuthorAllowed(pr.Author, opts.TrivialAutoMergeAuthors) {
 		logger.Infof(
 			"PR #%d: trivial-approve by author %q is not in the auto-merge allowlist; approved only, leaving the merge to a human",
