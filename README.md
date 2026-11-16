@@ -258,11 +258,13 @@ There are two categories of trivial adapters:
 
 These detect dependency update PRs and auto-approve them.
 
-| Adapter          | Matches When                                                  |
-|------------------|---------------------------------------------------------------|
-| `update-go`      | Only `go.mod`, `go.sum`, `CHANGELOG.md` changed              |
-| `update-node`    | Only `package.json`, lock files, `CHANGELOG.md` changed      |
-| `update-python`  | Only `pyproject.toml`, `requirements*.txt`, `CHANGELOG.md`   |
+| Adapter          | Dependency files                                                                  |
+|------------------|-----------------------------------------------------------------------------------|
+| `update-go`      | `go.mod`, `go.sum`, `go.work`, `go.work.sum`                                      |
+| `update-node`    | `package.json`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`                |
+| `update-python`  | `pyproject.toml`, `requirements*.txt`, `pdm.lock`, `poetry.lock`, `uv.lock`       |
+
+A PR matches when it changes at least one of the adapter's dependency files and nothing else besides the `CHANGELOG.md` and the pending [chlog](https://github.com/luizjhonata/chlog) fragments that record the update (added or edited directly under `.changes/unreleased/`). A deleted fragment means a release compiled it, so a PR that deletes one is never a dependency update.
 
 ### Bump Adapters (Version Bumps / Releases)
 

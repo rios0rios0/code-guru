@@ -1,0 +1,3 @@
+kind: 'Added'
+body: 'added `pdm.lock`, `poetry.lock` and `uv.lock` to the dependency files of `update-python`, and `go.work` and `go.work.sum` to those of `update-go`'
+time: '2026-11-16T17:57:01.585199695Z'

@@ -1,0 +1,3 @@
+kind: 'Changed'
+body: 'changed the `update-go`, `update-node` and `update-python` detectors to accept the pending chlog fragments a dependency update adds or edits under `.changes/unreleased/`, so a dependency update in a chlog repository is settled without the LLM again; at least one dependency file must still change, and a deleted fragment, which only a release produces, still rules the pull request out'
+time: '2026-11-16T17:57:01.583471357Z'

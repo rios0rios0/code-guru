@@ -2,17 +2,20 @@ package trivial
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 )
 
+// updateGoDependencyFiles are the Go module and workspace files a dependency
+// update edits.
+//
 //nolint:gochecknoglobals // constant lookup map
-var updateGoAllowed = map[string]bool{
+var updateGoDependencyFiles = map[string]bool{
 	"go.mod":      true,
 	"go.sum":      true,
-	changelogFile: true,
+	"go.work":     true,
+	"go.work.sum": true,
 }
 
 // UpdateGoDetector detects Go dependency update PRs.
@@ -23,32 +26,15 @@ func (d *UpdateGoDetector) Name() string {
 	return "update-go"
 }
 
-// Detect checks whether all changed files are Go dependency files.
+// Detect checks whether the PR only updates Go dependencies. See
+// detectDependencyUpdate for the files it may change besides them.
 func (d *UpdateGoDetector) Detect(
 	ctx context.Context,
 	dctx repositories.DetectionContext,
 ) repositories.DetectionResult {
-	if len(dctx.Files) == 0 {
-		return repositories.DetectionResult{}
-	}
-	for _, f := range dctx.Files {
-		if !updateGoAllowed[filepath.Base(f)] {
-			return repositories.DetectionResult{}
-		}
-	}
-	// A release is not a dependency update, even when its files would
-	// pass for one (a Node bump edits `package.json` + `CHANGELOG.md`): it
-	// must carry no release heading and be more than a CHANGELOG edit to
-	// count here. See declinesAsRelease.
-	if declinesAsRelease(ctx, dctx) {
-		return repositories.DetectionResult{}
-	}
-	return repositories.DetectionResult{
-		Detected: true,
-		Verdict:  verdictApprove,
-		Summary: fmt.Sprintf(
-			"Go dependency update detected (%d files). Auto-approved by trivial PR policy.",
-			len(dctx.Files),
-		),
-	}
+	return detectDependencyUpdate(ctx, dctx, isGoDependencyFile, "Go dependency update detected")
+}
+
+func isGoDependencyFile(filePath string) bool {
+	return updateGoDependencyFiles[filepath.Base(filePath)]
 }

@@ -2,19 +2,20 @@ package trivial
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 )
 
+// updateNodeDependencyFiles are the npm, Yarn and pnpm manifest and lock
+// files a dependency update edits.
+//
 //nolint:gochecknoglobals // constant lookup map
-var updateNodeAllowed = map[string]bool{
+var updateNodeDependencyFiles = map[string]bool{
 	"package.json":      true,
 	"package-lock.json": true,
 	"yarn.lock":         true,
 	"pnpm-lock.yaml":    true,
-	changelogFile:       true,
 }
 
 // UpdateNodeDetector detects Node.js dependency update PRs.
@@ -25,32 +26,15 @@ func (d *UpdateNodeDetector) Name() string {
 	return "update-node"
 }
 
-// Detect checks whether all changed files are Node.js dependency files.
+// Detect checks whether the PR only updates Node.js dependencies. See
+// detectDependencyUpdate for the files it may change besides them.
 func (d *UpdateNodeDetector) Detect(
 	ctx context.Context,
 	dctx repositories.DetectionContext,
 ) repositories.DetectionResult {
-	if len(dctx.Files) == 0 {
-		return repositories.DetectionResult{}
-	}
-	for _, f := range dctx.Files {
-		if !updateNodeAllowed[filepath.Base(f)] {
-			return repositories.DetectionResult{}
-		}
-	}
-	// A release is not a dependency update, even when its files would
-	// pass for one (a Node bump edits `package.json` + `CHANGELOG.md`): it
-	// must carry no release heading and be more than a CHANGELOG edit to
-	// count here. See declinesAsRelease.
-	if declinesAsRelease(ctx, dctx) {
-		return repositories.DetectionResult{}
-	}
-	return repositories.DetectionResult{
-		Detected: true,
-		Verdict:  verdictApprove,
-		Summary: fmt.Sprintf(
-			"Node.js dependency update detected (%d files). Auto-approved by trivial PR policy.",
-			len(dctx.Files),
-		),
-	}
+	return detectDependencyUpdate(ctx, dctx, isNodeDependencyFile, "Node.js dependency update detected")
+}
+
+func isNodeDependencyFile(filePath string) bool {
+	return updateNodeDependencyFiles[filepath.Base(filePath)]
 }
