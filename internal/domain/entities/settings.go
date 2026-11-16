@@ -580,6 +580,17 @@ type RulesConfig struct {
 type TrivialConfig struct {
 	Enabled  bool     `yaml:"enabled"`
 	Adapters []string `yaml:"adapters"`
+	// ApproveOnlyAdapters lists adapters that settle a pull request exactly
+	// like the ones in Adapters (the LLM is skipped and the verdict posts at
+	// once) but whose approvals NEVER auto-merge, whatever AutoMerge and the
+	// author allowlist say: the pull request is approved and left for a
+	// human to merge. Built for release pull requests, which a detector can
+	// verify mechanically but whose merge ships a release. These adapters
+	// run before the ones in Adapters, so a pull request both kinds would
+	// claim is settled by the approve-only one, and an adapter listed in
+	// both is approve-only. Honours `CODE_GURU_TRIVIAL_APPROVE_ONLY_ADAPTERS`
+	// (comma-separated); setting it also turns trivial detection on.
+	ApproveOnlyAdapters []string `yaml:"approve_only_adapters"`
 	// AutoMerge, when true, calls the provider's merge endpoint after a
 	// trivial-approve verdict. Off by default — this bypasses human
 	// review and merges cross-system, so the gate is "operator must
@@ -622,6 +633,26 @@ type TrivialConfig struct {
 	// CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH=false to keep the branch. Branch
 	// deletion is best-effort in gitforge: a failure never fails the merge.
 	DeleteSourceBranch *bool `yaml:"delete_source_branch"`
+}
+
+// EnabledAdapters returns every adapter trivial detection runs, in the order
+// it runs them: the approve-only adapters first, then the rest, each name
+// once. Approve-only adapters go first because the registry settles a pull
+// request with the first adapter that claims it, and a pull request an
+// approve-only adapter claims must never reach one that may auto-merge it.
+func (t TrivialConfig) EnabledAdapters() []string {
+	seen := make(map[string]bool, len(t.ApproveOnlyAdapters)+len(t.Adapters))
+	var names []string
+	for _, list := range [][]string{t.ApproveOnlyAdapters, t.Adapters} {
+		for _, name := range list {
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // DeleteSourceBranchEnabled resolves the tri-state DeleteSourceBranch pointer
@@ -775,6 +806,10 @@ func NewSettings(path string) (*Settings, error) {
 		settings.Trivial.Enabled = true
 		settings.Trivial.Adapters = envAdapters
 	}
+	if approveOnly := splitCSV(os.Getenv(trivialApproveOnlyAdaptersEnv)); len(approveOnly) > 0 {
+		settings.Trivial.Enabled = true
+		settings.Trivial.ApproveOnlyAdapters = approveOnly
+	}
 	if raw := strings.TrimSpace(os.Getenv("CODE_GURU_TRIVIAL_AUTO_MERGE")); raw != "" {
 		if v, parseErr := strconv.ParseBool(raw); parseErr == nil {
 			settings.Trivial.AutoMerge = v
@@ -867,6 +902,10 @@ func applyTristateAIEnvOverrides(ai *AIConfig) {
 	}
 }
 
+// trivialApproveOnlyAdaptersEnv names the comma-separated list of trivial
+// adapters whose approvals never auto-merge (`TrivialConfig.ApproveOnlyAdapters`).
+const trivialApproveOnlyAdaptersEnv = "CODE_GURU_TRIVIAL_APPROVE_ONLY_ADAPTERS"
+
 // parseTrivialAdaptersEnv parses `CODE_GURU_TRIVIAL_ADAPTERS` into a
 // trimmed slice of adapter names. Returns nil when unset or empty.
 // Lives at the package level so `NewSettings` (YAML path) and
@@ -894,6 +933,7 @@ func NewSettingsFromEnv() (*Settings, error) {
 	appID, _ := strconv.ParseInt(os.Getenv("CODE_GURU_GITHUB_APP_ID"), 10, 64)
 
 	adapters := parseTrivialAdaptersEnv()
+	approveOnlyAdapters := splitCSV(os.Getenv(trivialApproveOnlyAdaptersEnv))
 
 	settings := &Settings{
 		AI: AIConfig{
@@ -923,8 +963,9 @@ func NewSettingsFromEnv() (*Settings, error) {
 			Path: os.Getenv("CODE_GURU_RULES_PATH"),
 		},
 		Trivial: TrivialConfig{
-			Enabled:                 len(adapters) > 0,
+			Enabled:                 len(adapters) > 0 || len(approveOnlyAdapters) > 0,
 			Adapters:                adapters,
+			ApproveOnlyAdapters:     approveOnlyAdapters,
 			AutoMerge:               parseBoolEnv("CODE_GURU_TRIVIAL_AUTO_MERGE", false),
 			MergeStrategy:           strings.TrimSpace(os.Getenv("CODE_GURU_TRIVIAL_MERGE_STRATEGY")),
 			BypassPolicy:            parseBoolEnv("CODE_GURU_TRIVIAL_BYPASS_POLICIES", false),

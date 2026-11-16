@@ -266,13 +266,21 @@ These detect dependency update PRs and auto-approve them.
 
 ### Bump Adapters (Version Bumps / Releases)
 
-These detect version bump (release ceremony) PRs. If the repo contains an `.autobump.yaml` config file, the adapter validates that all version files declared in the config are present in the PR. Missing files result in a **reject** verdict.
+These detect version bump (release ceremony) PRs. A release PR may change three kinds of file:
 
-| Adapter          | Default Files                          | AutoBump Language Key |
-|------------------|----------------------------------------|-----------------------|
-| `bump-go`        | `CHANGELOG.md`                         | `go`                  |
-| `bump-node`      | `package.json`, `CHANGELOG.md`         | `typescript`          |
-| `bump-python`    | `*/__init__.py`, `CHANGELOG.md`        | `python`              |
+- the `CHANGELOG.md`;
+- the [chlog](https://github.com/luizjhonata/chlog) fragments the release compiled into it, which it **deletes** from `.changes/unreleased/` (any other deletion means the PR is not a release);
+- the language's version files: the adapter's defaults below, the `version_files` that [AutoBump](https://github.com/rios0rios0/autobump)'s built-in defaults declare for the language, and the `version_files` of the repository's own `.autobump.yaml`.
+
+If the repo contains an `.autobump.yaml` config file, the adapter also validates that all version files declared in the config are present in the PR. Missing files result in a **reject** verdict.
+
+A version file is often code (`main.go`, `docs/docs.go`, `__init__.py`), so its name alone never approves it: every version file's diff must replace version strings and do nothing else, and each changed version must become the release version, the one the `CHANGELOG.md` gains a `## [x.y.z]` heading for. A diff that touches anything else, a version that does not match the heading, or a diff the provider cannot serve sends the PR to the LLM review instead.
+
+| Adapter          | Default Files                          | AutoBump Language Key | AutoBump built-in version files                                                   |
+|------------------|----------------------------------------|-----------------------|-----------------------------------------------------------------------------------|
+| `bump-go`        | `CHANGELOG.md`                         | `go`                  | `main.go`, `cmd/main.go`, `cmd/*/main.go`, and `docs/{docs.go,swagger.*,openapi.*}` under the root, `cmd/` and `cmd/*/` |
+| `bump-node`      | `package.json`, `CHANGELOG.md`         | `typescript`          | `package.json`                                                                    |
+| `bump-python`    | `*/__init__.py`, `CHANGELOG.md`        | `python`              | `{project_name}/__init__.py`                                                      |
 
 ### Other Adapters
 
@@ -280,7 +288,22 @@ These detect version bump (release ceremony) PRs. If the repo contains an `.auto
 |----------------|-----------------------------------------------------------------|
 | `docs-only`    | Only `*.md` files changed (excluding a `CHANGELOG.md`-only change — see note) |
 
-> **Note — a changelog-only change is a version bump.** A PR that touches **only** `CHANGELOG.md` is the signature of a version bump / release ceremony, so it is matched **exclusively** by the `bump-*` adapters. The `docs-only` and `update-*` adapters decline it: the changelog may still *accompany* a documentation or dependency change, but it can never be the sole trigger. This means disabling the `bump-*` adapters reliably keeps version bumps out of trivial auto-merge, instead of having them silently fall through to `docs-only` or `update-*`.
+> **Note — a release is only ever a version bump.** A PR that touches **only** `CHANGELOG.md`, or whose `CHANGELOG.md` gains a `## [x.y.z]` release heading, is a version bump / release ceremony, so it is matched **exclusively** by the `bump-*` adapters. The `docs-only` and `update-*` adapters decline it, even when its files would pass for theirs (a Node release edits `package.json` too): the changelog may still *accompany* a documentation or dependency change, but a release can never be settled as one. When they cannot read the changelog's diff, they decline as well. This means disabling the `bump-*` adapters reliably keeps version bumps out of trivial auto-merge, instead of having them silently fall through to `docs-only` or `update-*`.
+
+### Approve-Only Adapters
+
+An adapter listed under `approve_only_adapters` settles a PR exactly like one under `adapters` — the LLM is skipped and the verdict posts at once — but its approval **never auto-merges**, whatever `auto_merge` and `auto_merge_allowed_authors` say: the PR is approved and left for a human to merge. That is the setting for release PRs, which are cheap to verify mechanically but ship a release when merged:
+
+```yaml
+trivial:
+  adapters: ['docs-only', 'update-go', 'update-node', 'update-python']   # approve, and auto-merge when allowed
+  approve_only_adapters: ['bump-go', 'bump-node', 'bump-python']       # approve, never merge
+  auto_merge: true
+```
+
+Approve-only adapters run before the others, so a PR that both kinds would claim is settled by the approve-only one, and an adapter listed in both is approve-only. Listing adapters only here turns trivial detection on, just like listing them under `adapters`.
+
+> **Note — a file list that may be incomplete is never settled.** When the provider lists a changed file without its path (a deleted file named only by its old path), it may have dropped other deleted files from the list, so trivial detection skips that PR and the LLM reviews it.
 
 ### Configuration
 
@@ -293,6 +316,7 @@ trivial:
     - 'update-go'
     - 'bump-go'
     - 'docs-only'
+  approve_only_adapters: []   # adapters whose approvals never auto-merge (e.g. 'bump-go')
   auto_merge: false      # opt-in; true completes the PR after a trivial-approve verdict
   merge_strategy: ''     # 'merge' / 'squash' / 'rebase' — empty falls back to platform default
   delete_source_branch: true   # default on; deletes the source branch after an auto-merge (false keeps it)
@@ -305,6 +329,7 @@ Or via environment variables:
 
 ```bash
 CODE_GURU_TRIVIAL_ADAPTERS=update-go,bump-go,docs-only
+CODE_GURU_TRIVIAL_APPROVE_ONLY_ADAPTERS=bump-node,bump-python   # approved, never auto-merged
 CODE_GURU_TRIVIAL_AUTO_MERGE=true
 CODE_GURU_TRIVIAL_MERGE_STRATEGY=squash
 CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH=false   # keep the source branch after an auto-merge (default deletes it)
@@ -313,7 +338,7 @@ CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS=autobump@example.com,autoupdate@example.com
 
 `auto_merge` is intentionally off by default — it bypasses human review and merges cross-system, so the gate is "operator must explicitly opt in". A merge failure logs at warn and the trivial-approve verdict still stands; the PR author can complete the merge manually from the platform UI.
 
-`auto_merge_allowed_authors` decides **who** is trusted to merge unattended, separately from triviality (which decides **what** is eligible). When non-empty, only PRs whose author matches an entry (case-insensitive) auto-merge — so a human's docs PR is approved but left for a human to merge, while a trusted automation account's PR (dependency bumps, version bumps, config refresh) merges on its own. Leaving it empty keeps the historical "any author" behaviour; that is **not recommended together with policy bypass**, because it force-merges every trivial PR — including a human's — past `Required reviewers` (the bot logs a warning in that case). A docs-only diff is not inherently safe: prose can carry a malicious install command, a poisoned package name, or a phishing link, and bypass means no human ever reviews it.
+`auto_merge_allowed_authors` decides **who** is trusted to merge unattended, separately from triviality (which decides **what** is eligible). When non-empty, only PRs whose author matches an entry (case-insensitive) auto-merge — so a human's docs PR is approved but left for a human to merge, while a trusted automation account's PR (dependency bumps, config refresh) merges on its own. An approve-only adapter's approval never merges, even for an allow-listed author (see [Approve-Only Adapters](#approve-only-adapters)). Leaving it empty keeps the historical "any author" behaviour; that is **not recommended together with policy bypass**, because it force-merges every trivial PR — including a human's — past `Required reviewers` (the bot logs a warning in that case). A docs-only diff is not inherently safe: prose can carry a malicious install command, a poisoned package name, or a phishing link, and bypass means no human ever reviews it.
 
 `delete_source_branch` is **on by default**: when a trivial PR auto-merges, its source branch is deleted once the merge completes — Azure DevOps removes it as part of completing the PR, GitHub deletes the head ref afterwards. It only has an effect when `auto_merge` actually fires (no merge, no branch to delete), and the deletion is best-effort — a failure is logged and never fails the merge, so the PR still shows as merged. Set it to `false` (or `CODE_GURU_TRIVIAL_DELETE_SOURCE_BRANCH=false`) to keep merged branches in place.
 
@@ -518,6 +543,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_RULES_PATH`                | Path to rules directory                                                  |                      |
 | `CODE_GURU_PROVIDER_TOKEN`            | Git provider token                                                       |                      |
 | `CODE_GURU_TRIVIAL_ADAPTERS`          | Comma-separated adapter names                                            |                      |
+| `CODE_GURU_TRIVIAL_APPROVE_ONLY_ADAPTERS` | Comma-separated adapter names whose approvals never auto-merge (run first) |                      |
 | `CODE_GURU_TRIVIAL_AUTO_MERGE`        | Opt-in flag that completes the PR after a trivial-approve verdict        | `false`              |
 | `CODE_GURU_TRIVIAL_MERGE_STRATEGY`    | gitforge merge strategy (`merge` / `squash` / `rebase`); empty = default |                      |
 | `CODE_GURU_TRIVIAL_AUTO_MERGE_AUTHORS` | Comma-separated PR-author identities allowed to auto-merge; empty = any author (not recommended with bypass) |                      |

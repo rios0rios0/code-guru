@@ -25,7 +25,7 @@ func (d *UpdatePythonDetector) Name() string {
 
 // Detect checks whether all changed files are Python dependency files.
 func (d *UpdatePythonDetector) Detect(
-	_ context.Context,
+	ctx context.Context,
 	dctx repositories.DetectionContext,
 ) repositories.DetectionResult {
 	if len(dctx.Files) == 0 {
@@ -38,10 +38,11 @@ func (d *UpdatePythonDetector) Detect(
 		}
 		return repositories.DetectionResult{}
 	}
-	// A CHANGELOG-only change is a version bump, not a dependency update —
-	// it must carry an actual manifest/lockfile change to count here. See
-	// isChangelogOnly.
-	if isChangelogOnly(dctx.Files) {
+	// A release is not a dependency update, even when its files would
+	// pass for one (a Node bump edits `package.json` + `CHANGELOG.md`): it
+	// must carry no release heading and be more than a CHANGELOG edit to
+	// count here. See declinesAsRelease.
+	if declinesAsRelease(ctx, dctx) {
 		return repositories.DetectionResult{}
 	}
 	return repositories.DetectionResult{

@@ -18,11 +18,15 @@ func (d *DocsOnlyDetector) Name() string {
 
 // Detect checks whether all changed files are Markdown files.
 //
-// A change that touches ONLY the CHANGELOG is a version-bump / release
-// artifact, not documentation, so it is declined here and left to the
-// bump-* detectors (see isChangelogOnly). The CHANGELOG may still
-// accompany a genuine docs PR (e.g. README.md + CHANGELOG.md).
-func (d *DocsOnlyDetector) Detect(_ context.Context, dctx repositories.DetectionContext) repositories.DetectionResult {
+// A change that touches ONLY the CHANGELOG, or whose CHANGELOG gains a
+// release heading, is a version-bump / release artifact, not
+// documentation, so it is declined here and left to the bump-* detectors
+// (see declinesAsRelease). The CHANGELOG may still accompany a genuine
+// docs PR (e.g. README.md + CHANGELOG.md).
+func (d *DocsOnlyDetector) Detect(
+	ctx context.Context,
+	dctx repositories.DetectionContext,
+) repositories.DetectionResult {
 	if len(dctx.Files) == 0 {
 		return repositories.DetectionResult{}
 	}
@@ -31,7 +35,7 @@ func (d *DocsOnlyDetector) Detect(_ context.Context, dctx repositories.Detection
 			return repositories.DetectionResult{}
 		}
 	}
-	if isChangelogOnly(dctx.Files) {
+	if declinesAsRelease(ctx, dctx) {
 		return repositories.DetectionResult{}
 	}
 	return repositories.DetectionResult{

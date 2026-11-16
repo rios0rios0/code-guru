@@ -1981,9 +1981,12 @@ func TestBuildConversation(t *testing.T) {
 // recordingRegistry is a TrivialDetectorRegistry that always returns
 // Detected=true with a fixed verdict, and records the file paths it
 // receives so the test can pin the leading-`/` normalisation contract.
+// The matched detector is named detectorName, or "stub" when it is empty.
 type recordingRegistry struct {
-	verdict   string
-	lastFiles []string
+	verdict      string
+	detectorName string
+	lastFiles    []string
+	lastDeleted  map[string]bool
 }
 
 func (r *recordingRegistry) Detect(
@@ -1991,7 +1994,12 @@ func (r *recordingRegistry) Detect(
 	dctx repositories.DetectionContext,
 ) (repositories.TrivialDetector, repositories.DetectionResult, bool) {
 	r.lastFiles = append([]string(nil), dctx.Files...)
-	d := &stubNamedDetector{name: "stub"}
+	r.lastDeleted = dctx.DeletedFiles
+	name := r.detectorName
+	if name == "" {
+		name = "stub"
+	}
+	d := &stubNamedDetector{name: name}
 	return d, repositories.DetectionResult{
 		Detected: true,
 		Verdict:  r.verdict,
