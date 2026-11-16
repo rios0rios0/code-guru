@@ -51,6 +51,14 @@ func isChlogFragment(filePath string) bool {
 	return ext == ".yaml" || ext == ".yml"
 }
 
+// isPendingChlogFragment reports whether the pull request adds or edits
+// filePath as a pending chlog fragment: the record a chlog repository keeps
+// of a change until a release compiles it. A deleted fragment is one a
+// release compiled.
+func isPendingChlogFragment(dctx repositories.DetectionContext, filePath string) bool {
+	return isChlogFragment(filePath) && !dctx.DeletedFiles[filePath]
+}
+
 // changedLines returns the lines a unified diff removes and the lines it
 // adds, without their `-` / `+` markers. Only hunk bodies are read, so the
 // file header lines (`--- a/x`, `+++ b/x`) are never taken for changes.

@@ -1196,3 +1196,140 @@ func lineChangeDiff(before, after string) string {
 		"+" + after + "\n" +
 		" context below\n"
 }
+
+func TestDependencyUpdateDetectorsAcceptPendingChlogFragments(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fragment := ".changes/unreleased/1790000000000000001-aaaa.yaml"
+	otherFragment := ".changes/unreleased/1790000000000000002-bbbb.yaml"
+
+	cases := []struct {
+		name      string
+		adapter   string
+		files     []string
+		deleted   map[string]bool
+		wantFound bool
+	}{
+		{
+			name:      "should detect a Go dependency update that records itself in a chlog fragment",
+			adapter:   "update-go",
+			files:     []string{fragment, "go.mod", "go.sum"},
+			wantFound: true,
+		},
+		{
+			name:      "should detect a Go dependency update of a module in a subdirectory",
+			adapter:   "update-go",
+			files:     []string{fragment, "services/api/go.mod", "services/api/go.sum"},
+			wantFound: true,
+		},
+		{
+			name:      "should detect a Go dependency update that edits the workspace sums",
+			adapter:   "update-go",
+			files:     []string{fragment, "go.mod", "go.sum", "go.work.sum"},
+			wantFound: true,
+		},
+		{
+			name:      "should detect a Node dependency update that edits two pending fragments",
+			adapter:   "update-node",
+			files:     []string{fragment, otherFragment, "package.json"},
+			wantFound: true,
+		},
+		{
+			name:      "should detect a Python dependency update that edits the PDM lock file",
+			adapter:   "update-python",
+			files:     []string{fragment, "pdm.lock", "pyproject.toml"},
+			wantFound: true,
+		},
+		{
+			name:      "should detect a Python dependency update that only refreshes the lock file",
+			adapter:   "update-python",
+			files:     []string{"pdm.lock"},
+			wantFound: true,
+		},
+		{
+			name:      "should not detect a pull request that only adds a chlog fragment",
+			adapter:   "update-go",
+			files:     []string{fragment},
+			wantFound: false,
+		},
+		{
+			name:      "should not detect a pull request that only edits changelog records",
+			adapter:   "update-go",
+			files:     []string{fragment, "CHANGELOG.md"},
+			wantFound: false,
+		},
+		{
+			name:      "should not detect a pull request that deletes a chlog fragment, which only a release does",
+			adapter:   "update-go",
+			files:     []string{fragment, "go.mod", "go.sum"},
+			deleted:   map[string]bool{fragment: true},
+			wantFound: false,
+		},
+		{
+			name:      "should not take a file nested under the fragment directory for a fragment",
+			adapter:   "update-go",
+			files:     []string{".changes/unreleased/scripts/fetch.yaml", "go.mod", "go.sum"},
+			wantFound: false,
+		},
+		{
+			name:      "should not take a non-YAML file in the fragment directory for a fragment",
+			adapter:   "update-go",
+			files:     []string{".changes/unreleased/notes.md", "go.mod", "go.sum"},
+			wantFound: false,
+		},
+		{
+			name:      "should not detect a dependency update that also changes code",
+			adapter:   "update-go",
+			files:     []string{fragment, "go.mod", "go.sum", "internal/client.go"},
+			wantFound: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			registry := trivial.NewDetectorRegistry([]string{tc.adapter})
+			dctx := repositories.DetectionContext{Files: tc.files, DeletedFiles: tc.deleted}
+
+			// when
+			detector, result, found := registry.Detect(ctx, dctx)
+
+			// then
+			require.Equal(t, tc.wantFound, found)
+			if tc.wantFound {
+				assert.Equal(t, tc.adapter, detector.Name())
+				assert.Equal(t, "approve", result.Verdict)
+			}
+		})
+	}
+
+	t.Run(
+		"should leave a dependency update of a chlog repository to update-go behind the approve-only bump-go",
+		func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			registry := trivial.NewDetectorRegistryFromConfig(entities.TrivialConfig{
+				Enabled:             true,
+				Adapters:            []string{"update-go"},
+				ApproveOnlyAdapters: []string{"bump-go"},
+			})
+			dctx := repositories.DetectionContext{Files: []string{fragment, "go.mod", "go.sum"}}
+
+			// when
+			detector, _, found := registry.Detect(ctx, dctx)
+
+			// then
+			require.True(t, found)
+			assert.Equal(
+				t,
+				"update-go",
+				detector.Name(),
+				"an added fragment is a pending change, not one a release compiled",
+			)
+		},
+	)
+}
