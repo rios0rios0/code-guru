@@ -1,0 +1,3 @@
+kind: 'Changed'
+body: 'changed the Go module `github.com/rios0rios0/gitforge/v4` from `v4.3.2` to `v4.3.4`, whose pull request file listing now names every deleted file, so trivial detection can settle a release that deletes the chlog fragments it compiled'
+time: '2026-11-16T19:02:23.91455588Z'
