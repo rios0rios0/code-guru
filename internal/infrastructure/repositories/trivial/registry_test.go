@@ -811,21 +811,24 @@ func TestBumpDetectorsReadVersionFileDiffs(t *testing.T) {
 		assert.False(t, found)
 	})
 
-	t.Run("should not detect a release when a version file's line moves without its version changing", func(t *testing.T) {
-		t.Parallel()
+	t.Run(
+		"should not detect a release when a version file's line moves without its version changing",
+		func(t *testing.T) {
+			t.Parallel()
 
-		// given
-		registry := trivial.NewDetectorRegistry([]string{"bump-go"})
-		dctx := goRelease(map[string]string{
-			"docs/swagger.yaml": lineChangeDiff("  version: 1.4.0", "  version: 1.4.0"),
-		})
+			// given
+			registry := trivial.NewDetectorRegistry([]string{"bump-go"})
+			dctx := goRelease(map[string]string{
+				"docs/swagger.yaml": lineChangeDiff("  version: 1.4.0", "  version: 1.4.0"),
+			})
 
-		// when
-		_, _, found := registry.Detect(ctx, dctx)
+			// when
+			_, _, found := registry.Detect(ctx, dctx)
 
-		// then
-		assert.False(t, found)
-	})
+			// then
+			assert.False(t, found)
+		},
+	)
 
 	t.Run("should not detect a release with version files when no diff is available", func(t *testing.T) {
 		t.Parallel()
