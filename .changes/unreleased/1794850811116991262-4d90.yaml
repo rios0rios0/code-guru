@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'changed the `bump-*` detectors to recognise a release cut from AutoBump''s built-in defaults in a chlog repository: the version files AutoBump declares for the language (for Go, the Swagger `@version` in `main.go` / `cmd/main.go` and the generated `docs/`) and the deletion of the `.changes/unreleased/` fragments the release compiled now belong to it; in exchange, every version file must change nothing but its version strings, each to the version the `CHANGELOG.md` gains a heading for, or the pull request goes to the LLM review, and a pull request whose file list names a changed file without its path is never settled by trivial detection, since such a list can be missing other deleted files'
-time: '2026-11-16T17:40:11.116879136Z'

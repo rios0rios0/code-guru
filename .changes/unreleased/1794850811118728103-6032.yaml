@@ -1,3 +1,0 @@
-kind: 'Fixed'
-body: 'fixed `update-node`, `update-python`, `update-go` and `docs-only` settling a release as a dependency or documentation change when its files fit their sets (a Node release edits `package.json` and `CHANGELOG.md`), which could auto-merge it; they now decline a pull request whose `CHANGELOG.md` gains a release heading, or whose changelog diff cannot be read'
-time: '2026-11-16T17:40:11.118682957Z'
