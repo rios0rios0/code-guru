@@ -22,6 +22,24 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-11-18
+
+### Added
+
+- added `pdm.lock`, `poetry.lock` and `uv.lock` to the dependency files of `update-python`, and `go.work` and `go.work.sum` to those of `update-go`
+- added `trivial.approve_only_adapters` (`CODE_GURU_TRIVIAL_APPROVE_ONLY_ADAPTERS`): the adapters it lists settle a pull request without the LLM like any other, but never auto-merge it, so a release can be approved without spending AI tokens and still be shipped by a human; they run before the other adapters, and listing only them turns trivial detection on
+
+### Changed
+
+- changed the `bump-*` detectors to recognise a release cut from AutoBump's built-in defaults in a chlog repository: the version files AutoBump declares for the language (for Go, the Swagger `@version` in `main.go` / `cmd/main.go` and the generated `docs/`) and the deletion of the `.changes/unreleased/` fragments the release compiled now belong to it; in exchange, every version file must change nothing but its version strings, each to the version the `CHANGELOG.md` gains a heading for, or the pull request goes to the LLM review, and a pull request whose file list names a changed file without its path is never settled by trivial detection, since such a list can be missing other deleted files
+- changed the `update-go`, `update-node` and `update-python` detectors to accept the pending chlog fragments a dependency update adds or edits under `.changes/unreleased/`, so a dependency update in a chlog repository is settled without the LLM again; at least one dependency file must still change, and a deleted fragment, which only a release produces, still rules the pull request out
+- changed the Go module `github.com/rios0rios0/gitforge/v4` from `v4.3.2` to `v4.3.4`, whose pull request file listing now names every deleted file, so trivial detection can settle a release that deletes the chlog fragments it compiled
+- changed the Go modules `github.com/rios0rios0/cliforge` from `v0.5.2` to `v0.5.3`, `github.com/rios0rios0/gitforge/v4` from `v4.3.4` to `v4.4.0`, `github.com/rios0rios0/langforge` from `v1.1.11` to `v1.1.12`, `github.com/rios0rios0/testkit` from `v0.3.8` to `v0.3.9` and `github.com/sergi/go-diff` from `v1.4.0` to `v1.4.5`
+
+### Fixed
+
+- fixed `update-node`, `update-python`, `update-go` and `docs-only` settling a release as a dependency or documentation change when its files fit their sets (a Node release edits `package.json` and `CHANGELOG.md`), which could auto-merge it; they now decline a pull request whose `CHANGELOG.md` gains a release heading, or whose changelog diff cannot be read
+
 ## [1.20.3] - 2026-11-16
 
 ### Changed
