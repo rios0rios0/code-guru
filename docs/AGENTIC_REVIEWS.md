@@ -279,7 +279,10 @@ webhook secret — only the provider token and the model credential. It authenti
 same delivery: when the pull request came through the GitHub App (`CODE_GURU_GITHUB_INSTALLATION_ID` is set) and the
 pod has the App's credentials, it mints that installation's token and uses it even if a PAT is configured too, since
 the installation is what received the webhook and has access to the repository. If the token cannot be minted, the
-review fails rather than switching to the PAT, which is a different identity with different access.
+review fails rather than switching to the PAT, which is a different identity with different access. Unlike a `review`
+run from a terminal, a review Job never falls back to a credential its environment happens to hold (`GITHUB_TOKEN`,
+`GH_TOKEN`, `AZURE_DEVOPS_EXT_PAT`, `SYSTEM_ACCESSTOKEN`, a `gh` or `az` session): with no configured token it
+fails, as the server does.
 
 ## Example manifests
 

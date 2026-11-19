@@ -34,7 +34,8 @@ development practices, refer to the **[Development Guide](https://github.com/rio
 
 | Variable                       | Description                    | Required           |
 |--------------------------------|--------------------------------|--------------------|
-| `GITHUB_TOKEN`                 | GitHub personal access token   | For GitHub PRs     |
+| `GITHUB_TOKEN` / `GH_TOKEN`    | GitHub token; not needed after `gh auth login` | For GitHub PRs     |
+| `AZURE_DEVOPS_EXT_PAT`         | Azure DevOps token; not needed after `az login` | For Azure DevOps PRs |
 | `OPENAI_API_KEY`               | OpenAI API key                 | For OpenAI backend |
 | `CODE_GURU_ANTHROPIC_API_KEY`  | Anthropic API key              | For Anthropic backend |
 

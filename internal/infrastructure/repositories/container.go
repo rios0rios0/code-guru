@@ -8,12 +8,14 @@ import (
 	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 	anthropicRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/anthropic"
 	claudeRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/claude"
+	credentialsRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/credentials"
 	openaiRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/openai"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/prmetadata"
 	rulesRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/rules"
 	selfupdateRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/selfupdate"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/trivial"
 	workspaceRepo "github.com/rios0rios0/codeguru/internal/infrastructure/repositories/workspace"
+	credentialsInfra "github.com/rios0rios0/gitforge/v4/pkg/credentials/infrastructure"
 	"github.com/rios0rios0/gitforge/v4/pkg/providers/infrastructure/azuredevops"
 	"github.com/rios0rios0/gitforge/v4/pkg/providers/infrastructure/github"
 	registry "github.com/rios0rios0/gitforge/v4/pkg/registry/infrastructure"
@@ -69,6 +71,17 @@ func RegisterProviders(container *dig.Container) error {
 	// depend on the contract only.
 	if err := container.Provide(func() repositories.PullRequestMetadataRepository {
 		return prmetadata.NewRegistryPullRequestMetadataRepository()
+	}); err != nil {
+		return err
+	}
+
+	// The forge token of the person running a CLI command (GITHUB_TOKEN,
+	// GH_TOKEN or the gh CLI; AZURE_DEVOPS_EXT_PAT, SYSTEM_ACCESSTOKEN or the
+	// az CLI), through gitforge's default credential chain. Only `review`,
+	// `review-all` and `discover` take it, as the last source of a token; the
+	// webhook dispatcher deliberately does not (see its findToken).
+	if err := container.Provide(func() repositories.FallbackTokenRepository {
+		return credentialsRepo.NewChainFallbackTokenRepository(credentialsInfra.NewDefaultCredentialResolver())
 	}); err != nil {
 		return err
 	}

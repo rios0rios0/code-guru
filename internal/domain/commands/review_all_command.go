@@ -10,6 +10,7 @@ import (
 	registry "github.com/rios0rios0/gitforge/v4/pkg/registry/infrastructure"
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
+	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 )
 
 // ReviewAll is the interface for the review-all command (batch mode).
@@ -21,16 +22,20 @@ type ReviewAll interface {
 type ReviewAllCommand struct {
 	providerRegistry *registry.ProviderRegistry
 	reviewCommand    Review
+	fallbackTokens   repositories.FallbackTokenRepository
 }
 
-// NewReviewAllCommand creates a new ReviewAllCommand.
+// NewReviewAllCommand creates a new ReviewAllCommand. `fallbackTokens`
+// supplies a token for a provider entry configured without one (nil: none).
 func NewReviewAllCommand(
 	providerRegistry *registry.ProviderRegistry,
 	reviewCommand Review,
+	fallbackTokens repositories.FallbackTokenRepository,
 ) *ReviewAllCommand {
 	return &ReviewAllCommand{
 		providerRegistry: providerRegistry,
 		reviewCommand:    reviewCommand,
+		fallbackTokens:   fallbackTokens,
 	}
 }
 
@@ -54,7 +59,10 @@ func (c *ReviewAllCommand) Execute(
 		logger.Infof("processing provider: %s", reviewProvider.Name())
 
 		for _, org := range provCfg.Organizations {
-			results, errs := c.processOrganization(ctx, reviewProvider, org, opts)
+			orgProvider := organizationProvider(
+				ctx, c.providerRegistry, c.fallbackTokens, reviewProvider, provCfg, org,
+			)
+			results, errs := c.processOrganization(ctx, orgProvider, org, opts)
 			allResults = append(allResults, results...)
 			totalErrors += errs
 		}

@@ -9,6 +9,7 @@ import (
 	registry "github.com/rios0rios0/gitforge/v4/pkg/registry/infrastructure"
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
+	"github.com/rios0rios0/codeguru/internal/domain/repositories"
 )
 
 // DiscoverResult holds the discovery output for a single organization.
@@ -32,11 +33,16 @@ type Discover interface {
 // DiscoverCommand discovers repositories and lists open PRs across providers.
 type DiscoverCommand struct {
 	providerRegistry *registry.ProviderRegistry
+	fallbackTokens   repositories.FallbackTokenRepository
 }
 
-// NewDiscoverCommand creates a new DiscoverCommand.
-func NewDiscoverCommand(providerRegistry *registry.ProviderRegistry) *DiscoverCommand {
-	return &DiscoverCommand{providerRegistry: providerRegistry}
+// NewDiscoverCommand creates a new DiscoverCommand. `fallbackTokens` supplies
+// a token for a provider entry configured without one (nil: none).
+func NewDiscoverCommand(
+	providerRegistry *registry.ProviderRegistry,
+	fallbackTokens repositories.FallbackTokenRepository,
+) *DiscoverCommand {
+	return &DiscoverCommand{providerRegistry: providerRegistry, fallbackTokens: fallbackTokens}
 }
 
 // Execute discovers repositories and lists open PRs for all configured providers.
@@ -54,7 +60,10 @@ func (c *DiscoverCommand) Execute(
 		}
 
 		for _, org := range provCfg.Organizations {
-			repos, discoverErr := reviewProvider.DiscoverRepositories(ctx, org)
+			orgProvider := organizationProvider(
+				ctx, c.providerRegistry, c.fallbackTokens, reviewProvider, provCfg, org,
+			)
+			repos, discoverErr := orgProvider.DiscoverRepositories(ctx, org)
 			if discoverErr != nil {
 				logger.Errorf("failed to discover repos in %q: %v", org, discoverErr)
 				continue
@@ -66,7 +75,7 @@ func (c *DiscoverCommand) Execute(
 			}
 
 			for _, repo := range repos {
-				prs, listErr := reviewProvider.ListOpenPullRequests(ctx, repo)
+				prs, listErr := orgProvider.ListOpenPullRequests(ctx, repo)
 				if listErr != nil {
 					logger.Debugf("failed to list PRs for %s/%s: %v", repo.Organization, repo.Name, listErr)
 					continue

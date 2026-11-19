@@ -1,0 +1,3 @@
+kind: 'Added'
+body: 'added a last-resort forge token to `review`, `review-all` and `discover`: when no token is configured they now use the credential of the person running them, `GITHUB_TOKEN`, `GH_TOKEN` or the `gh` CLI session on GitHub and `AZURE_DEVOPS_EXT_PAT`, `SYSTEM_ACCESSTOKEN` or the `az` CLI session in the organization''s Entra tenant on Azure DevOps, while the webhook server and its review Jobs still require a configured token'
+time: '2026-11-19T20:18:28.466237759Z'
