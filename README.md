@@ -50,6 +50,7 @@ Create a `.code-guru.yaml` file (searched in `.`, `.config`, `configs`, `~`, `~/
 
 ```yaml
 providers:
+  # A provider without a token uses yours (see "Token Resolution" below).
   - type: 'github'
     token: '${GITHUB_TOKEN}'
     organizations:
@@ -122,10 +123,32 @@ bot_identities:
 
 ### Token Resolution
 
-Tokens support three resolution strategies:
+A `token` value supports three resolution strategies:
 1. **Environment variable**: `${GITHUB_TOKEN}` expands from the environment
 2. **File path**: if the resolved string is a file path, its contents are read
 3. **Inline**: literal token string
+
+A command takes the first token it finds for the pull request's provider, in this order:
+
+1. **GitHub App installation** (`review` on GitHub): when `CODE_GURU_GITHUB_INSTALLATION_ID` names an installation and
+   `github_app` is configured, as on the review Jobs of the Kubernetes executor. A failed exchange fails the review
+   rather than moving on to another identity.
+2. **Configuration**: the `token` of the `providers[]` entry for the provider; `review` also reads
+   `CODE_GURU_PROVIDER_TOKEN` when no entry has that type.
+3. **Your own credential**, when nothing above supplied a token (`review`, `review-all` and `discover`):
+   - GitHub: `GITHUB_TOKEN`, then `GH_TOKEN`, then the `gh` CLI's session (`gh auth token --hostname github.com`).
+   - Azure DevOps: `AZURE_DEVOPS_EXT_PAT`, then `SYSTEM_ACCESSTOKEN`, then the `az` CLI's session
+     (`az account get-access-token` for Azure DevOps), issued in the Microsoft Entra tenant of the pull request's
+     organization; `review-all` and `discover` ask again at each organization's turn, since a CLI token can be
+     short-lived (an `az` one can come with minutes left).
+
+   After `gh auth login` or `az login`, `code-guru review <pr-url>` needs no forge token configured. The log says where
+   the token came from, never the token itself, and the token goes only to the provider's fixed hosts (`api.github.com`,
+   `dev.azure.com`, and `github.com` for the agentic mode's checkout), never to a host taken from a URL.
+
+The webhook server (`serve`) and the review Jobs its Kubernetes executor starts (`review --job-name`) never use step 3:
+they act only as the identity the operator configured, so a missing token fails the delivery or the Job instead of
+reviewing, approving or merging as whoever is signed in on the host.
 
 ## Usage
 
@@ -376,6 +399,10 @@ App settings — without them the mention handlers never receive a delivery, and
   exchanges it for a per-installation access token, cached until 5 minutes
   before expiry. Without `github_app.*` the handler falls back to the configured
   `github` PAT in `providers[]`.
+- **No host credentials** -- unlike the CLI commands, the server never uses a
+  token from its own environment (`GITHUB_TOKEN`, `GH_TOKEN`,
+  `AZURE_DEVOPS_EXT_PAT`, `SYSTEM_ACCESSTOKEN`) or a `gh`/`az` session on its
+  host; see [Token Resolution](#token-resolution).
 - **Azure DevOps** -- ADO does not sign Service Hooks, so it uses HTTP Basic.
   Configure the Service Hook with username `code-guru` and password equal to
   `server.webhook_secret`.
@@ -543,7 +570,7 @@ For CI/CD environments without a config file, all settings can be provided via `
 | `CODE_GURU_OPENAI_API_KEY`            | OpenAI API key                                                           |                      |
 | `CODE_GURU_ANTHROPIC_API_KEY`         | Anthropic API key                                                        |                      |
 | `CODE_GURU_RULES_PATH`                | Path to rules directory                                                  |                      |
-| `CODE_GURU_PROVIDER_TOKEN`            | Git provider token                                                       |                      |
+| `CODE_GURU_PROVIDER_TOKEN`            | Git provider token; without one, `review` uses yours (see [Token Resolution](#token-resolution)) |                      |
 | `CODE_GURU_TRIVIAL_ADAPTERS`          | Comma-separated adapter names                                            |                      |
 | `CODE_GURU_TRIVIAL_APPROVE_ONLY_ADAPTERS` | Comma-separated adapter names whose approvals never auto-merge (run first) |                      |
 | `CODE_GURU_TRIVIAL_AUTO_MERGE`        | Opt-in flag that completes the PR after a trivial-approve verdict        | `false`              |

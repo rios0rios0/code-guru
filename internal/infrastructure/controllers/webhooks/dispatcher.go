@@ -517,6 +517,21 @@ func (d *Dispatcher) HandlePR(
 // fallback (used by the env-only configuration where CODE_GURU_PROVIDER_TOKEN
 // populates a single entry without a Type), a lone untyped provider entry is
 // treated as the catch-all token for any provider.
+//
+// The server deliberately has no further fallback. The CLI commands end with
+// the token of the person running them (FallbackTokenRepository, over
+// gitforge's credential chain: GITHUB_TOKEN, GH_TOKEN, the gh CLI;
+// AZURE_DEVOPS_EXT_PAT, SYSTEM_ACCESSTOKEN, the az CLI), but the server acts
+// on webhook deliveries that anyone able to open a pull request can trigger,
+// so it must act only as the identity its operator configured: the one
+// granted access to the repositories it reviews, that its reviews, approvals
+// and auto-merges are posted under, and that its own-comment recognition is
+// keyed to — on Azure DevOps the identity a token authenticates as is what an
+// `@`-mention of the bot is matched against. A session someone happens to
+// have signed in on the host belongs to a person, with that person's access,
+// and would review, approve and merge in their name. A missing token fails
+// the delivery visibly instead; the review Jobs of the Kubernetes executor
+// follow the same rule (ReviewController.resolveToken).
 func (d *Dispatcher) findToken(providerType string) string {
 	for _, p := range d.settings.Providers {
 		if p.Type == providerType {

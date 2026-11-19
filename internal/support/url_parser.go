@@ -29,6 +29,21 @@ var serviceTypeToProvider = map[globalEntities.ServiceType]string{
 	globalEntities.CODEBERG:    "",
 }
 
+// ProviderServiceType returns the gitforge ServiceType of a provider name
+// code-guru uses ("github", "azuredevops"), the inverse of the mapping
+// ParsePullRequestURL applies, or UNKNOWN for a name it does not know.
+func ProviderServiceType(providerName string) globalEntities.ServiceType {
+	if providerName == "" {
+		return globalEntities.UNKNOWN
+	}
+	for serviceType, name := range serviceTypeToProvider {
+		if name == providerName {
+			return serviceType
+		}
+	}
+	return globalEntities.UNKNOWN
+}
+
 // ParsePullRequestURL extracts provider, org, repo, and PR ID from a pull request URL.
 // Delegates to gitforge's ParsePullRequestURL and converts the result to code-guru's ParsedPRURL.
 func ParsePullRequestURL(rawURL string) (*ParsedPRURL, error) {

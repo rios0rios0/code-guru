@@ -47,6 +47,10 @@ type ReviewController struct {
 	rulesRepoFactory  *infraRepos.RulesRepositoryFactory
 	metadataRepo      domainRepos.PullRequestMetadataRepository
 
+	// fallbackTokens supplies the forge token of the person running the
+	// review, the last source of resolveToken; nil disables it.
+	fallbackTokens domainRepos.FallbackTokenRepository
+
 	mintInstallationToken installationTokenMinter
 }
 
@@ -60,18 +64,33 @@ type installationTokenMinter func(
 	ctx context.Context, app entities.GitHubAppConfig, installationID int64,
 ) (string, error)
 
+// tokenRequest names the pull request a review needs a token for, and the
+// context the review runs in.
+type tokenRequest struct {
+	providerType string
+	// organization is the pull request's organization (its owner on GitHub).
+	organization string
+	// installationID is CODE_GURU_GITHUB_INSTALLATION_ID.
+	installationID string
+	// reviewJob is set when the server's Kubernetes executor started the
+	// review (`--job-name`).
+	reviewJob bool
+}
+
 // NewReviewController creates a new ReviewController.
 func NewReviewController(
 	providerRegistry *registry.ProviderRegistry,
 	aiReviewerFactory *infraRepos.AIReviewerFactory,
 	rulesRepoFactory *infraRepos.RulesRepositoryFactory,
 	metadataRepo domainRepos.PullRequestMetadataRepository,
+	fallbackTokens domainRepos.FallbackTokenRepository,
 ) *ReviewController {
 	return &ReviewController{
 		providerRegistry:      providerRegistry,
 		aiReviewerFactory:     aiReviewerFactory,
 		rulesRepoFactory:      rulesRepoFactory,
 		metadataRepo:          metadataRepo,
+		fallbackTokens:        fallbackTokens,
 		mintInstallationToken: mintGitHubInstallationToken,
 	}
 }
@@ -137,7 +156,7 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 	}
 
 	// find token for the provider
-	token, err := c.resolveToken(ctx, settings, parsed.ProviderType, os.Getenv(githubInstallationIDEnv))
+	token, err := c.resolveToken(ctx, settings, newTokenRequest(parsed, jobName))
 	if err != nil {
 		failReviewf("%v", err)
 		return
@@ -276,6 +295,16 @@ func findOpenPullRequest(
 	return nil, fmt.Errorf("PR #%d not found or not open in %s/%s", prID, repo.Organization, repo.Name)
 }
 
+// newTokenRequest describes the pull request a review needs a token for.
+func newTokenRequest(parsed *support.ParsedPRURL, jobName string) tokenRequest {
+	return tokenRequest{
+		providerType:   parsed.ProviderType,
+		organization:   parsed.Organization,
+		installationID: os.Getenv(githubInstallationIDEnv),
+		reviewJob:      jobName != "",
+	}
+}
+
 // resolveToken picks the credential the webhook server picked for the same
 // pull request (its `resolveGitHubToken`): on GitHub, an App installation
 // token whenever the App is configured and `installationID` names an
@@ -287,18 +316,28 @@ func findOpenPullRequest(
 // and another author name on what it posts. Installation tokens expire after
 // an hour, so the pod mints its own instead of being handed one that might
 // lapse while it waits in the queue.
+//
+// When nothing is configured, a review falls back to the token of the person
+// running it (FallbackTokenRepository) — but never in a review Job. A Job runs
+// for the server and must authenticate as the server did for the same
+// delivery, as the identity its operator configured, not as whatever token
+// the pod's environment happens to hold: a missing token fails it, as it
+// fails the server.
 func (c *ReviewController) resolveToken(
-	ctx context.Context, settings *entities.Settings, providerType, installationID string,
+	ctx context.Context, settings *entities.Settings, request tokenRequest,
 ) (string, error) {
-	id, _ := strconv.ParseInt(strings.TrimSpace(installationID), 10, 64)
+	id, _ := strconv.ParseInt(strings.TrimSpace(request.installationID), 10, 64)
 	app := settings.GitHubApp
-	if providerType == "github" && id != 0 && app.AppID != 0 && app.PrivateKey != "" {
+	if request.providerType == "github" && id != 0 && app.AppID != 0 && app.PrivateKey != "" {
 		return c.mintInstallationToken(ctx, app, id)
 	}
-	if token := c.findToken(settings, providerType); token != "" {
+	if token := c.findToken(settings, request.providerType); token != "" {
 		return token, nil
 	}
-	return "", fmt.Errorf("no token configured for provider %q", providerType)
+	if request.reviewJob || c.fallbackTokens == nil {
+		return "", fmt.Errorf("no token configured for provider %q", request.providerType)
+	}
+	return c.fallbackTokens.GetToken(ctx, request.providerType, request.organization)
 }
 
 // mintGitHubInstallationToken exchanges the App's credentials for a token of

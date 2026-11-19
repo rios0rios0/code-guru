@@ -11,6 +11,8 @@ import (
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers"
+	"github.com/rios0rios0/codeguru/internal/support"
+	doubles "github.com/rios0rios0/codeguru/test/domain/doubles/repositories"
 )
 
 func TestReviewControllerBindFlags(t *testing.T) {
@@ -81,7 +83,11 @@ func TestReviewControllerResolveToken(t *testing.T) {
 
 		// when
 		token, err := controllers.ResolveTokenForTest(
-			context.Background(), appAndPAT(), "github", "42", mintRecorder(&minted),
+			context.Background(),
+			appAndPAT(),
+			controllers.TokenRequestForTest{ProviderType: "github", InstallationID: "42"},
+			mintRecorder(&minted),
+			nil,
 		)
 
 		// then
@@ -100,9 +106,9 @@ func TestReviewControllerResolveToken(t *testing.T) {
 		token, err := controllers.ResolveTokenForTest(
 			context.Background(),
 			appAndPAT(),
-			"github",
-			"",
+			controllers.TokenRequestForTest{ProviderType: "github"},
 			mintRecorder(&minted),
+			nil,
 		)
 
 		// then
@@ -123,9 +129,9 @@ func TestReviewControllerResolveToken(t *testing.T) {
 		token, err := controllers.ResolveTokenForTest(
 			context.Background(),
 			settings,
-			"github",
-			"42",
+			controllers.TokenRequestForTest{ProviderType: "github", InstallationID: "42"},
 			mintRecorder(&minted),
+			nil,
 		)
 
 		// then
@@ -143,10 +149,269 @@ func TestReviewControllerResolveToken(t *testing.T) {
 		}
 
 		// when
-		token, err := controllers.ResolveTokenForTest(context.Background(), appAndPAT(), "github", "42", mint)
+		token, err := controllers.ResolveTokenForTest(
+			context.Background(),
+			appAndPAT(),
+			controllers.TokenRequestForTest{ProviderType: "github", InstallationID: "42"},
+			mint,
+			nil,
+		)
 
 		// then
 		require.ErrorContains(t, err, "401")
 		assert.Empty(t, token)
 	})
+}
+
+func TestReviewControllerTokenRequest(t *testing.T) {
+	t.Parallel()
+
+	pullRequest := func() *support.ParsedPRURL {
+		return &support.ParsedPRURL{
+			ProviderType: "azuredevops", Organization: "ExampleOrg", Project: "Platform", RepoName: "demo", PRID: 7,
+		}
+	}
+
+	t.Run("should treat a review started with --job-name as a review Job of the server", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		parsed := pullRequest()
+
+		// when
+		request := controllers.NewTokenRequestForTest(parsed, "code-guru-review-abc")
+
+		// then
+		assert.True(t, request.ReviewJob)
+		assert.Equal(t, "azuredevops", request.ProviderType)
+		assert.Equal(t, "ExampleOrg", request.Organization)
+	})
+
+	t.Run("should treat a review started without --job-name as one a person runs", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		parsed := pullRequest()
+
+		// when
+		request := controllers.NewTokenRequestForTest(parsed, "")
+
+		// then
+		assert.False(t, request.ReviewJob)
+		assert.Equal(t, "azuredevops", request.ProviderType)
+		assert.Equal(t, "ExampleOrg", request.Organization)
+	})
+}
+
+func TestReviewControllerResolveTokenFallback(t *testing.T) {
+	t.Parallel()
+
+	// tokenless is a configuration whose entry for the provider has no token,
+	// as when its `${VAR}` names a variable that is not set.
+	tokenless := func(providerType string) *entities.Settings {
+		return &entities.Settings{Providers: []entities.ProviderConfig{{Type: providerType}}}
+	}
+	// personal stands in for the token of the person running the review.
+	personal := func() *doubles.StubFallbackTokenRepository {
+		return &doubles.StubFallbackTokenRepository{Token: "fixture-personal-token-placeholder"}
+	}
+	// noMint fails the test's review if it tries to mint an installation token.
+	noMint := func(context.Context, entities.GitHubAppConfig, int64) (string, error) {
+		return "", errors.New("unexpected installation token exchange")
+	}
+
+	t.Run("should fall back to the token of the person running the review when no token is configured",
+		func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			fallback := personal()
+
+			// when
+			token, err := controllers.ResolveTokenForTest(
+				context.Background(),
+				tokenless("github"),
+				controllers.TokenRequestForTest{ProviderType: "github", Organization: "rios0rios0"},
+				noMint,
+				fallback,
+			)
+
+			// then
+			require.NoError(t, err)
+			assert.Equal(t, "fixture-personal-token-placeholder", token)
+			assert.Equal(t,
+				[]doubles.FallbackTokenRequest{{ProviderType: "github", Organization: "rios0rios0"}},
+				fallback.Requests)
+		})
+
+	t.Run("should ask for a token for the pull request's Azure DevOps organization", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		fallback := personal()
+
+		// when
+		token, err := controllers.ResolveTokenForTest(
+			context.Background(),
+			tokenless("azuredevops"),
+			controllers.TokenRequestForTest{ProviderType: "azuredevops", Organization: "ExampleOrg"},
+			noMint,
+			fallback,
+		)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "fixture-personal-token-placeholder", token)
+		assert.Equal(t,
+			[]doubles.FallbackTokenRequest{{ProviderType: "azuredevops", Organization: "ExampleOrg"}},
+			fallback.Requests)
+	})
+
+	t.Run("should use the configured token without asking for the person's", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		fallback := personal()
+		settings := &entities.Settings{
+			Providers: []entities.ProviderConfig{{Type: "github", Token: "fixture-pat-placeholder"}},
+		}
+
+		// when
+		token, err := controllers.ResolveTokenForTest(
+			context.Background(),
+			settings,
+			controllers.TokenRequestForTest{ProviderType: "github"},
+			noMint,
+			fallback,
+		)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "fixture-pat-placeholder", token)
+		assert.Empty(t, fallback.Requests)
+	})
+
+	t.Run("should fail rather than switch to the person's token when the installation token cannot be minted",
+		func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			fallback := personal()
+			settings := tokenless("github")
+			settings.GitHubApp = entities.GitHubAppConfig{AppID: 7, PrivateKey: "fixture-key-placeholder"}
+			mint := func(context.Context, entities.GitHubAppConfig, int64) (string, error) {
+				return "", errors.New("token exchange returned 401")
+			}
+
+			// when
+			token, err := controllers.ResolveTokenForTest(
+				context.Background(),
+				settings,
+				controllers.TokenRequestForTest{ProviderType: "github", InstallationID: "42"},
+				mint,
+				fallback,
+			)
+
+			// then
+			require.ErrorContains(t, err, "401")
+			assert.Empty(t, token)
+			assert.Empty(t, fallback.Requests)
+		})
+
+	t.Run("should fail rather than use the person's token in a review Job the server started", func(t *testing.T) {
+		t.Parallel()
+
+		// given: the pod's environment holds a token, but the Job must
+		// authenticate as the server did.
+		fallback := personal()
+
+		// when
+		token, err := controllers.ResolveTokenForTest(
+			context.Background(),
+			tokenless("github"),
+			controllers.TokenRequestForTest{ProviderType: "github", ReviewJob: true},
+			noMint,
+			fallback,
+		)
+
+		// then
+		require.EqualError(t, err, `no token configured for provider "github"`)
+		assert.Empty(t, token)
+		assert.Empty(t, fallback.Requests)
+	})
+
+	t.Run("should fail with the fallback's error, which names every source it tried", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		cause := errors.New(`no token configured for provider "github" and no GitHub credential available: ` +
+			"GITHUB_TOKEN and GH_TOKEN are not set; the gh CLI is not installed")
+		fallback := &doubles.StubFallbackTokenRepository{Err: cause}
+
+		// when
+		token, err := controllers.ResolveTokenForTest(
+			context.Background(),
+			tokenless("github"),
+			controllers.TokenRequestForTest{ProviderType: "github"},
+			noMint,
+			fallback,
+		)
+
+		// then
+		require.ErrorIs(t, err, cause)
+		assert.Empty(t, token)
+	})
+}
+
+// TestReviewControllerResolveTokenEnvironment holds the cases that depend on
+// CODE_GURU_PROVIDER_TOKEN, which the review reads from the process
+// environment; t.Setenv rules out t.Parallel.
+func TestReviewControllerResolveTokenEnvironment(t *testing.T) {
+	noMint := func(context.Context, entities.GitHubAppConfig, int64) (string, error) {
+		return "", errors.New("unexpected installation token exchange")
+	}
+
+	t.Run("should prefer CODE_GURU_PROVIDER_TOKEN over the token of the person running the review",
+		func(t *testing.T) {
+			// given
+			t.Setenv("CODE_GURU_PROVIDER_TOKEN", "fixture-provider-token-placeholder")
+			fallback := &doubles.StubFallbackTokenRepository{Token: "fixture-personal-token-placeholder"}
+
+			// when
+			token, err := controllers.ResolveTokenForTest(
+				context.Background(),
+				&entities.Settings{},
+				controllers.TokenRequestForTest{ProviderType: "github"},
+				noMint,
+				fallback,
+			)
+
+			// then
+			require.NoError(t, err)
+			assert.Equal(t, "fixture-provider-token-placeholder", token)
+			assert.Empty(t, fallback.Requests)
+		})
+
+	t.Run("should fall back to the token of the person running the review when nothing is configured at all",
+		func(t *testing.T) {
+			// given
+			t.Setenv("CODE_GURU_PROVIDER_TOKEN", "")
+			fallback := &doubles.StubFallbackTokenRepository{Token: "fixture-personal-token-placeholder"}
+
+			// when
+			token, err := controllers.ResolveTokenForTest(
+				context.Background(),
+				&entities.Settings{},
+				controllers.TokenRequestForTest{ProviderType: "azuredevops", Organization: "ExampleOrg"},
+				noMint,
+				fallback,
+			)
+
+			// then
+			require.NoError(t, err)
+			assert.Equal(t, "fixture-personal-token-placeholder", token)
+			assert.Equal(t,
+				[]doubles.FallbackTokenRequest{{ProviderType: "azuredevops", Organization: "ExampleOrg"}},
+				fallback.Requests)
+		})
 }

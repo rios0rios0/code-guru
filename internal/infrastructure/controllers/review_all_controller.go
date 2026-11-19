@@ -22,6 +22,10 @@ type ReviewAllController struct {
 	aiReviewerFactory *infraRepos.AIReviewerFactory
 	rulesRepoFactory  *infraRepos.RulesRepositoryFactory
 	metadataRepo      domainRepos.PullRequestMetadataRepository
+
+	// fallbackTokens supplies the forge token of the person running the
+	// command, for a provider entry without one.
+	fallbackTokens domainRepos.FallbackTokenRepository
 }
 
 // NewReviewAllController creates a new ReviewAllController.
@@ -30,12 +34,14 @@ func NewReviewAllController(
 	aiReviewerFactory *infraRepos.AIReviewerFactory,
 	rulesRepoFactory *infraRepos.RulesRepositoryFactory,
 	metadataRepo domainRepos.PullRequestMetadataRepository,
+	fallbackTokens domainRepos.FallbackTokenRepository,
 ) *ReviewAllController {
 	return &ReviewAllController{
 		providerRegistry:  providerRegistry,
 		aiReviewerFactory: aiReviewerFactory,
 		rulesRepoFactory:  rulesRepoFactory,
 		metadataRepo:      metadataRepo,
+		fallbackTokens:    fallbackTokens,
 	}
 }
 
@@ -47,7 +53,9 @@ func (c *ReviewAllController) GetBind() entities.ControllerBind {
 		Long: `Discover repositories from each configured provider and organization,
 list all open pull requests, and run an AI-powered code review on each one.
 
-Requires a configuration file with provider tokens and organization lists.`,
+Requires a configuration file listing each provider's organizations. A provider
+without a token uses yours: GITHUB_TOKEN, GH_TOKEN or the gh CLI on GitHub, and
+AZURE_DEVOPS_EXT_PAT, SYSTEM_ACCESSTOKEN or the az CLI on Azure DevOps.`,
 	}
 }
 
@@ -90,7 +98,7 @@ func (c *ReviewAllController) Execute(cmd *cobra.Command, _ []string) {
 	rulesRepo := c.rulesRepoFactory.Create(settings)
 	reviewCmd := commands.NewReviewCommand(aiReviewer, rulesRepo, nil, c.metadataRepo).
 		WithWorkspace(infraRepos.NewWorkspaceRepository(settings))
-	reviewAllCmd := commands.NewReviewAllCommand(c.providerRegistry, reviewCmd)
+	reviewAllCmd := commands.NewReviewAllCommand(c.providerRegistry, reviewCmd, c.fallbackTokens)
 
 	results, err := reviewAllCmd.Execute(ctx, settings, commands.ReviewOptions{
 		DryRun:                  dryRun,

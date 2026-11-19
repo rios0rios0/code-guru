@@ -3,6 +3,7 @@ package support_test
 import (
 	"testing"
 
+	globalEntities "github.com/rios0rios0/gitforge/v4/pkg/global/domain/entities"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -87,5 +88,42 @@ func TestParsePullRequestURL(t *testing.T) {
 		// then
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid PR ID")
+	})
+}
+
+func TestProviderServiceType(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should map each provider name code-guru uses to its gitforge service type", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		names := map[string]globalEntities.ServiceType{
+			"github":      globalEntities.GITHUB,
+			"azuredevops": globalEntities.AZUREDEVOPS,
+		}
+
+		for name, want := range names {
+			// when
+			got := support.ProviderServiceType(name)
+
+			// then
+			assert.Equal(t, want, got, name)
+		}
+	})
+
+	t.Run("should return UNKNOWN when the provider name is empty or unknown", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		names := []string{"", "bitbucket", "gitea"}
+
+		for _, name := range names {
+			// when
+			got := support.ProviderServiceType(name)
+
+			// then
+			assert.Equal(t, globalEntities.UNKNOWN, got, name)
+		}
 	})
 }
