@@ -22,6 +22,17 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-11-19
+
+### Added
+
+- added a last-resort forge token to `review`, `review-all` and `discover`: when no token is configured they now use the credential of the person running them, `GITHUB_TOKEN`, `GH_TOKEN` or the `gh` CLI session on GitHub and `AZURE_DEVOPS_EXT_PAT`, `SYSTEM_ACCESSTOKEN` or the `az` CLI session in the organization's Entra tenant on Azure DevOps, while the webhook server and its review Jobs still require a configured token
+
+### Changed
+
+- changed the Go module `github.com/rios0rios0/gitforge/v4` from `v4.6.0` to `v4.7.0`, whose credential chain supplies the token `review`, `review-all` and `discover` now fall back to
+- changed the Go modules `github.com/rios0rios0/cliforge` from `v0.5.3` to `v0.5.4`, `github.com/rios0rios0/gitforge/v4` from `v4.4.0` to `v4.6.0`, `github.com/rios0rios0/langforge` from `v1.1.12` to `v1.1.13` and `golang.org/x/net` from `v0.62.0` to `v0.63.0`
+
 ## [1.21.0] - 2026-11-18
 
 ### Added
