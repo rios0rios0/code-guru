@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"testing"
 
 	registry "github.com/rios0rios0/gitforge/v4/pkg/registry/infrastructure"
 
@@ -100,8 +101,20 @@ func BatchSettingsForTest(configPath string) (*entities.Settings, error) {
 	return batchSettings(configPath)
 }
 
-// WarnAboutUnreadServerSettingsForTest runs the warnings `serve` gives about
-// what it does not read, with configFlag as the value of --config.
-func WarnAboutUnreadServerSettingsForTest(configFlag string) {
-	warnAboutUnreadServerSettings(configFlag)
+// WarnAboutUnreadServerSettingsForTest runs the warning `serve` gives about a
+// working-directory configuration it does not read.
+func WarnAboutUnreadServerSettingsForTest() {
+	warnAboutUnreadServerSettings()
+}
+
+// RecordExitForTest replaces the process exit of a failing command with a
+// recorder for the rest of the test, and returns where the exit status lands
+// (-1 until a command exits).
+func RecordExitForTest(t *testing.T) *int {
+	t.Helper()
+	code := -1
+	previous := exitProcess
+	exitProcess = func(status int) { code = status }
+	t.Cleanup(func() { exitProcess = previous })
+	return &code
 }

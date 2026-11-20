@@ -103,10 +103,11 @@ ai:
     # Requires a Claude CLI that supports `--system-prompt-file`. The review
     # instructions are handed over in a file rather than on the command line,
     # because the operating system caps how long a single argument may be and
-    # a multi-language rule set can exceed it. The CLI starts in an empty
-    # directory of its own and loads only your user settings, no MCP server and
-    # no CLAUDE.md, so the `.claude/settings.json`, `.mcp.json` or CLAUDE.md of
-    # a checkout you run code-guru in never runs or steers a review.
+    # a multi-language rule set can exceed it. An absolute path or a command
+    # name found on PATH; a relative path is refused. The CLI starts in an
+    # empty directory of its own and loads only your user settings, no MCP
+    # server and no CLAUDE.md, so the `.claude/settings.json`, `.mcp.json` or
+    # CLAUDE.md of a checkout you run code-guru in never runs or steers a review.
     binary_path: 'claude'
     model: 'sonnet'
     max_turns: 1
@@ -407,7 +408,9 @@ code-guru serve --port 8080
 ```
 
 The server reads its configuration from `~/.code-guru.yaml` or `~/.config/code-guru.yaml`, else from the
-`CODE_GURU_*` variables; it does not take `--config`, and warns when one is given.
+`CODE_GURU_*` variables; it does not take `--config`, and refuses to start when one is given. In the container
+image the working directory is the home directory, `/home/nonroot`: never mount the code under review there,
+because `~/.code-guru.yaml`, `~/.config/code-guru.yaml` and `~/.claude/` are read as the operator's own.
 
 ### Endpoints
 

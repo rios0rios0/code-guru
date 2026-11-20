@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1064,6 +1065,10 @@ func validateSettings(settings *Settings) error {
 		return err
 	}
 
+	if err := validateClaudeBinaryPath(settings.AI.Claude.BinaryPath); err != nil {
+		return err
+	}
+
 	validBackends := map[string]bool{
 		"openai":    true,
 		"claude":    true,
@@ -1082,6 +1087,20 @@ func validateSettings(settings *Settings) error {
 	}
 
 	return nil
+}
+
+// validateClaudeBinaryPath refuses a relative `ai.claude.binary_path` that names
+// a directory (`./bin/claude`): it would run a file from whichever directory the
+// CLI starts in, and in agentic mode that is the checkout of the pull request
+// under review. An absolute path, or a bare name looked up on PATH, is accepted.
+func validateClaudeBinaryPath(path string) error {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" || filepath.IsAbs(trimmed) || !strings.ContainsAny(trimmed, `/\`) {
+		return nil
+	}
+	return fmt.Errorf("ai.claude.binary_path %q must be an absolute path or a command name found on PATH: "+
+		"a relative path runs a file from the directory the CLI starts in, the pull request's checkout "+
+		"in agentic mode", path)
 }
 
 // validateModes rejects an unrecognised `ai.claude.mode` or `server.executor`.

@@ -7,16 +7,18 @@ import (
 
 	logger "github.com/sirupsen/logrus"
 	logrustest "github.com/sirupsen/logrus/hooks/test"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rios0rios0/codeguru/internal/domain/entities"
 	"github.com/rios0rios0/codeguru/internal/infrastructure/controllers"
 )
 
 // checkoutSettings is a configuration file a pull request could add to its
 // branch: read as code-guru's configuration, it would make code-guru start a
-// program from the checkout instead of the Claude CLI.
-const checkoutSettings = "ai:\n  backend: 'claude'\n  claude:\n    binary_path: './not-claude'\n"
+// program of the pull request author's choosing instead of the Claude CLI.
+const checkoutSettings = "ai:\n  backend: 'claude'\n  claude:\n    binary_path: '/checkout/not-claude'\n"
 
 // isolateReviewSettings points the home directory and the working directory
 // at two empty temporary directories, leaves the environment-only settings
@@ -82,7 +84,7 @@ func TestReviewControllerSettingsFile(t *testing.T) {
 
 		// then
 		require.NoError(t, err)
-		assert.Equal(t, "./not-claude", settings.AI.Claude.BinaryPath)
+		assert.Equal(t, "/checkout/not-claude", settings.AI.Claude.BinaryPath)
 		assert.Empty(t, hook.AllEntries())
 	})
 
@@ -106,6 +108,8 @@ func TestReviewControllerSettingsFile(t *testing.T) {
 		require.NotNil(t, hook.LastEntry())
 		assert.Contains(t, hook.LastEntry().Message, "not reading .code-guru.yaml: ")
 		assert.Contains(t, hook.LastEntry().Message, "using "+homeSettings)
+		assert.NotContains(t, hook.LastEntry().Message, "--config .code-guru.yaml",
+			"naming the checkout's file would hand its author the configuration again")
 	})
 }
 
@@ -154,7 +158,7 @@ func TestBatchSettingsFile(t *testing.T) {
 
 		// then
 		require.NoError(t, err)
-		assert.Equal(t, "./not-claude", settings.AI.Claude.BinaryPath)
+		assert.Equal(t, "/checkout/not-claude", settings.AI.Claude.BinaryPath)
 	})
 }
 
@@ -172,26 +176,12 @@ func TestServeSettingsWarnings(t *testing.T) {
 		defer hook.Reset()
 
 		// when
-		controllers.WarnAboutUnreadServerSettingsForTest("")
+		controllers.WarnAboutUnreadServerSettingsForTest()
 
 		// then
 		require.Len(t, hook.AllEntries(), 1)
 		assert.Equal(t, logger.WarnLevel, hook.LastEntry().Level)
 		assert.Contains(t, hook.LastEntry().Message, "not reading .code-guru.yaml: the server reads its configuration")
-	})
-
-	t.Run("should warn that the server does not take --config when it is given", func(t *testing.T) {
-		// given
-		isolateReviewSettings(t)
-		hook := logrustest.NewLocal(logger.StandardLogger())
-		defer hook.Reset()
-
-		// when
-		controllers.WarnAboutUnreadServerSettingsForTest("server.yaml")
-
-		// then
-		require.Len(t, hook.AllEntries(), 1)
-		assert.Contains(t, hook.LastEntry().Message, "not reading server.yaml: the server does not take --config")
 	})
 
 	t.Run("should say nothing when there is nothing the server leaves unread", func(t *testing.T) {
@@ -201,9 +191,138 @@ func TestServeSettingsWarnings(t *testing.T) {
 		defer hook.Reset()
 
 		// when
-		controllers.WarnAboutUnreadServerSettingsForTest("")
+		controllers.WarnAboutUnreadServerSettingsForTest()
 
 		// then
 		assert.Empty(t, hook.AllEntries())
 	})
+}
+
+// logrusExit carries the status logrus would have exited with.
+type logrusExit struct{ status int }
+
+// runUntilLogrusExit runs run until it ends or calls logrus's exit, as Fatalf
+// does, and returns the status it would have exited with (-1 when it did not).
+func runUntilLogrusExit(t *testing.T, run func()) int {
+	t.Helper()
+	status := -1
+	previous := logger.StandardLogger().ExitFunc
+	logger.StandardLogger().ExitFunc = func(code int) { panic(logrusExit{code}) }
+	t.Cleanup(func() { logger.StandardLogger().ExitFunc = previous })
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				exit, ok := recovered.(logrusExit)
+				if !ok {
+					panic(recovered)
+				}
+				status = exit.status
+			}
+		}()
+		run()
+	}()
+	return status
+}
+
+// commandWithConfig is a command whose --config flag holds configPath.
+func commandWithConfig(t *testing.T, configPath string) *cobra.Command {
+	t.Helper()
+	command := &cobra.Command{}
+	command.Flags().String("config", "", "")
+	require.NoError(t, command.Flags().Set("config", configPath))
+	return command
+}
+
+// TestSettingsFileEntryPoints drives each command's Execute, so the wiring
+// between the command and its settings lookup is pinned, not only the helpers.
+// It is deliberately not parallel: it points HOME at a temporary directory,
+// changes the working directory, replaces the process exit and captures the
+// global logrus logger, which t.Setenv and t.Chdir forbid in a parallel test.
+//
+//nolint:paralleltest // t.Setenv and t.Chdir panic under t.Parallel
+func TestSettingsFileEntryPoints(t *testing.T) {
+	t.Run("should exit 1 when review-all finds only a working-directory configuration", func(t *testing.T) {
+		// given
+		_, workingDirectory := isolateReviewSettings(t)
+		writeReviewSettings(t, filepath.Join(workingDirectory, ".code-guru.yaml"), checkoutSettings)
+		exitStatus := controllers.RecordExitForTest(t)
+		controller := controllers.NewReviewAllController(nil, nil, nil, nil, nil)
+
+		// when
+		controller.Execute(&cobra.Command{}, nil)
+
+		// then
+		assert.Equal(t, 1, *exitStatus)
+	})
+
+	t.Run("should exit 1 when discover finds only a working-directory configuration", func(t *testing.T) {
+		// given
+		_, workingDirectory := isolateReviewSettings(t)
+		writeReviewSettings(t, filepath.Join(workingDirectory, ".code-guru.yaml"), checkoutSettings)
+		exitStatus := controllers.RecordExitForTest(t)
+		controller := controllers.NewDiscoverController(nil)
+
+		// when
+		controller.Execute(&cobra.Command{}, nil)
+
+		// then
+		assert.Equal(t, 1, *exitStatus)
+	})
+
+	t.Run("should exit 1 when review-all cannot load the file --config names", func(t *testing.T) {
+		// given
+		isolateReviewSettings(t)
+		exitStatus := controllers.RecordExitForTest(t)
+		controller := controllers.NewReviewAllController(nil, nil, nil, nil, nil)
+
+		// when
+		controller.Execute(commandWithConfig(t, "missing.yaml"), nil)
+
+		// then
+		assert.Equal(t, 1, *exitStatus)
+	})
+
+	t.Run("should stop the server when it is given --config", func(t *testing.T) {
+		// given
+		isolateReviewSettings(t)
+		hook := logrustest.NewLocal(logger.StandardLogger())
+		defer hook.Reset()
+		controller := controllers.NewServeController(nil, &entities.Settings{})
+
+		// when
+		status := runUntilLogrusExit(t, func() { controller.Execute(commandWithConfig(t, "server.yaml"), nil) })
+
+		// then
+		assert.Equal(t, 1, status)
+		require.NotNil(t, hook.LastEntry())
+		assert.Contains(
+			t,
+			hook.LastEntry().Message,
+			"serve: not reading server.yaml: the server does not take --config",
+		)
+	})
+
+	t.Run("should warn about a working-directory configuration before the server checks its settings",
+		func(t *testing.T) {
+			// given
+			_, workingDirectory := isolateReviewSettings(t)
+			writeReviewSettings(t, filepath.Join(workingDirectory, ".code-guru.yaml"), checkoutSettings)
+			hook := logrustest.NewLocal(logger.StandardLogger())
+			defer hook.Reset()
+			controller := controllers.NewServeController(nil, &entities.Settings{})
+
+			// when
+			status := runUntilLogrusExit(t, func() { controller.Execute(&cobra.Command{}, nil) })
+
+			// then
+			assert.Equal(t, 1, status, "settings without a backend stop the server")
+			var warnings []string
+			for _, entry := range hook.AllEntries() {
+				if entry.Level == logger.WarnLevel {
+					warnings = append(warnings, entry.Message)
+				}
+			}
+			require.Len(t, warnings, 1)
+			assert.Contains(t, warnings[0], "not reading .code-guru.yaml: the server reads its configuration")
+		})
 }

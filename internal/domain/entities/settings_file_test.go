@@ -134,7 +134,7 @@ func TestFindSettingsFile(t *testing.T) {
 //nolint:paralleltest // t.Setenv and t.Chdir panic under t.Parallel
 func TestProvideSettingsSettingsFile(t *testing.T) {
 	// checkoutSettings would make code-guru start a program from the checkout.
-	const checkoutSettings = "ai:\n  backend: 'claude'\n  claude:\n    binary_path: './not-claude'\n"
+	const checkoutSettings = "ai:\n  backend: 'claude'\n  claude:\n    binary_path: '/checkout/not-claude'\n"
 
 	t.Run("should not read the working directory's configuration when the server's settings are provided",
 		func(t *testing.T) {
@@ -167,4 +167,44 @@ func TestProvideSettingsSettingsFile(t *testing.T) {
 			// then
 			assert.Equal(t, "/opt/claude/bin/claude", settings.AI.Claude.BinaryPath)
 		})
+}
+
+func TestNewSettingsClaudeBinaryPath(t *testing.T) {
+	t.Parallel()
+
+	for _, scenario := range []struct {
+		path     string
+		accepted bool
+	}{
+		{"claude", true},
+		{"/opt/claude/bin/claude", true},
+		{"./bin/claude", false},
+		{"bin/claude", false},
+		{"~/bin/claude", false},
+	} {
+		outcome := "refuse"
+		if scenario.accepted {
+			outcome = "accept"
+		}
+		t.Run("should "+outcome+" the Claude binary path "+scenario.path+" when the settings are loaded",
+			func(t *testing.T) {
+				t.Parallel()
+
+				// given
+				path := filepath.Join(t.TempDir(), "code-guru.yaml")
+				require.NoError(t, os.WriteFile(path,
+					[]byte("ai:\n  backend: 'claude'\n  claude:\n    binary_path: '"+scenario.path+"'\n"), 0o600))
+
+				// when
+				settings, err := entities.NewSettings(path)
+
+				// then
+				if scenario.accepted {
+					require.NoError(t, err)
+					assert.Equal(t, scenario.path, settings.AI.Claude.BinaryPath)
+					return
+				}
+				require.ErrorContains(t, err, "must be an absolute path or a command name found on PATH")
+			})
+	}
 }

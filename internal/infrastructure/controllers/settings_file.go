@@ -70,16 +70,23 @@ func failCommandf(format string, args ...any) {
 	exitProcess(reviewFailureExitCode)
 }
 
-// warnAboutUnreadServerSettings warns about what the server leaves unread. Its
+// serverConfigFlagError refuses a `--config` given to `serve`. The server's
 // settings are loaded before the flags are parsed (provideSettings), from the
-// home directory or the CODE_GURU_* variables, so it never reads `--config`,
-// and never a configuration file in the working directory
-// (entities.FindSettingsFile).
-func warnAboutUnreadServerSettings(configFlag string) {
-	if configFlag != "" {
-		logger.Warnf("not reading %s: the server does not take --config; it reads ~/.code-guru.yaml or "+
-			"~/.config/code-guru.yaml, else the CODE_GURU_* variables", configFlag)
+// home directory or the CODE_GURU_* variables, so the file would go unread, and
+// the server would start without whatever it holds: its webhook allowlists, for
+// one.
+func serverConfigFlagError(configFlag string) error {
+	if configFlag == "" {
+		return nil
 	}
+	return fmt.Errorf("not reading %s: the server does not take --config; it reads ~/.code-guru.yaml or "+
+		"~/.config/code-guru.yaml, else the CODE_GURU_* variables, so move the file there", configFlag)
+}
+
+// warnAboutUnreadServerSettings warns about a configuration file in the
+// working directory, which the server, like every command, never reads
+// (entities.FindSettingsFile).
+func warnAboutUnreadServerSettings() {
 	if _, unread := entities.FindSettingsFile(); unread != "" {
 		logger.Warnf("not reading %s: the server reads its configuration from ~/.code-guru.yaml or "+
 			"~/.config/code-guru.yaml, else from the CODE_GURU_* variables, never from the working directory, "+

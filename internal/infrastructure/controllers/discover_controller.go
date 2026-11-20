@@ -51,7 +51,7 @@ func (c *DiscoverController) Execute(cmd *cobra.Command, _ []string) {
 
 	results, err := c.discoverCommand.Execute(ctx, settings)
 	if err != nil {
-		logger.Errorf("discover failed: %v", err)
+		failCommandf("discover failed: %v", err)
 		return
 	}
 

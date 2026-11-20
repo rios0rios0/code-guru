@@ -1,0 +1,4 @@
+kind: 'Changed'
+body: 'made `serve` refuse to start when it is given `--config`: its settings are loaded before the flags are parsed, so the file went unread and the server ran without what it held, its webhook allowlists included. Move the file to `~/.config/code-guru.yaml`, or configure the server through the `CODE_GURU_*` variables'
+breaking: true
+time: '2026-11-20T16:39:34.50737781Z'
