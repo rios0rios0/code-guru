@@ -3,8 +3,6 @@ package credentials
 import (
 	"context"
 	"fmt"
-	"net/url"
-	"strings"
 
 	credentialEntities "github.com/rios0rios0/gitforge/v4/pkg/credentials/domain/entities"
 	forgeEntities "github.com/rios0rios0/gitforge/v4/pkg/global/domain/entities"
@@ -21,9 +19,10 @@ import (
 // not have to export a token as well.
 //
 // The token goes where a configured one goes and nowhere else: to fixed hosts
-// only — the gitforge providers' APIs, the pull request metadata fetchers'
-// API hosts and, in the agentic mode, the checkout's constant clone host —
-// never to a host taken from a URL, so a lookalike host cannot receive it.
+// only — the gitforge providers' APIs, which are handed an Azure DevOps
+// organization as its bare name, the pull request metadata fetchers' API
+// hosts and, in the agentic mode, the checkout's constant clone host — never
+// to a host taken from a URL, so a lookalike host cannot receive it.
 type ChainFallbackTokenRepository struct {
 	resolver credentialEntities.CredentialResolver
 }
@@ -36,14 +35,26 @@ func NewChainFallbackTokenRepository(resolver credentialEntities.CredentialResol
 }
 
 // GetToken asks the chain for a token for the provider and, on Azure DevOps,
-// the organization, whose tenant the az CLI issues it in. The log names where
-// the token came from, never the token.
+// the organization, whose tenant the az CLI issues it in. An Azure DevOps
+// organization that does not name one on Azure DevOps (see
+// support.AzureDevOpsOrganizationName) is refused before the chain is asked:
+// a token is never obtained for a host that is not Azure DevOps, nor issued
+// in whichever tenant az defaults to. The log names where the token came
+// from, never the token.
 func (r *ChainFallbackTokenRepository) GetToken(
 	ctx context.Context, providerType, organization string,
 ) (string, error) {
 	request := credentialEntities.CredentialRequest{ServiceType: support.ProviderServiceType(providerType)}
 	if request.ServiceType == forgeEntities.AZUREDEVOPS {
-		request.Organization = azureDevOpsOrganization(organization)
+		name, err := support.AzureDevOpsOrganizationName(organization)
+		if err != nil {
+			return "", fmt.Errorf(
+				"no token configured for provider %q and refusing the fallback: %w",
+				providerType,
+				err,
+			)
+		}
+		request.Organization = name
 	}
 
 	credential, err := r.resolver.Resolve(ctx, request)
@@ -60,31 +71,4 @@ func (r *ChainFallbackTokenRepository) GetToken(
 	logger.Infof("no %s token configured; using the credential from the %s",
 		request.ServiceType.DisplayName(), credential.Source)
 	return credential.Token, nil
-}
-
-// azureDevOpsOrganization returns the name of the Azure DevOps organization
-// an `organizations` entry or a pull request names, written either as the
-// bare name or as its https://dev.azure.com/<name> or
-// https://<name>.visualstudio.com URL. It returns "" for anything else, which
-// leaves the Azure CLI on its default tenant.
-func azureDevOpsOrganization(entry string) string {
-	entry = strings.TrimSpace(entry)
-	if !strings.Contains(entry, "://") {
-		name, _, _ := strings.Cut(strings.Trim(entry, "/"), "/")
-		return name
-	}
-
-	parsed, err := url.Parse(entry)
-	if err != nil {
-		return ""
-	}
-	host := strings.ToLower(parsed.Hostname())
-	if host == "dev.azure.com" {
-		name, _, _ := strings.Cut(strings.Trim(parsed.Path, "/"), "/")
-		return name
-	}
-	if name, ok := strings.CutSuffix(host, ".visualstudio.com"); ok && !strings.Contains(name, ".") {
-		return name
-	}
-	return ""
 }

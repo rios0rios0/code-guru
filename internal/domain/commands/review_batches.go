@@ -147,7 +147,7 @@ func (c *ReviewCommand) reviewLargePullRequest(
 		"PR #%d: prompt exceeds the model context window (%d files, %s of diff); reviewing in batches",
 		prID, sizeCtx.FileCount, humanizeBytes(sizeCtx.DiffBytes),
 	)
-	if !opts.DryRun {
+	if opts.postsStatusNotices() {
 		c.postBatchedReviewNotice(ctx, provider, repo, prID, sizeCtx)
 	}
 

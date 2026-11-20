@@ -1,0 +1,3 @@
+kind: 'Fixed'
+body: 'fixed a review on the runner''s own forge credential posting the bot''s status notices under that person''s account, which made later bot runs take the person for the bot and skip the pull request as already reviewed: such a review now posts its findings but no status notice'
+time: '2026-11-20T03:28:32.274668861Z'

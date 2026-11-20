@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/rios0rios0/gitforge/v4/pkg/providers/infrastructure/github"
+	registry "github.com/rios0rios0/gitforge/v4/pkg/registry/infrastructure"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -392,6 +394,29 @@ func TestReviewControllerResolveTokenEnvironment(t *testing.T) {
 			assert.Empty(t, fallback.Requests)
 		})
 
+	t.Run("should prefer CODE_GURU_PROVIDER_TOKEN when the provider's entry has a token that resolved to nothing",
+		func(t *testing.T) {
+			// given: the README's own example, `token: '${GITHUB_TOKEN}'` with
+			// GITHUB_TOKEN unset, beside an explicitly exported token.
+			t.Setenv("CODE_GURU_PROVIDER_TOKEN", "fixture-explicit-bot-token-placeholder")
+			settings := &entities.Settings{Providers: []entities.ProviderConfig{{Type: "github", Token: ""}}}
+			fallback := &doubles.StubFallbackTokenRepository{Token: "fixture-runner-gh-session-placeholder"}
+
+			// when
+			token, err := controllers.ResolveTokenForTest(
+				context.Background(),
+				settings,
+				controllers.TokenRequestForTest{ProviderType: "github", Organization: "acme"},
+				noMint,
+				fallback,
+			)
+
+			// then
+			require.NoError(t, err)
+			assert.Equal(t, "fixture-explicit-bot-token-placeholder", token)
+			assert.Empty(t, fallback.Requests, "an exported token must win before the runner's own credential is asked")
+		})
+
 	t.Run("should fall back to the token of the person running the review when nothing is configured at all",
 		func(t *testing.T) {
 			// given
@@ -414,4 +439,125 @@ func TestReviewControllerResolveTokenEnvironment(t *testing.T) {
 				[]doubles.FallbackTokenRequest{{ProviderType: "azuredevops", Organization: "ExampleOrg"}},
 				fallback.Requests)
 		})
+}
+
+func TestReviewControllerRunnerCredential(t *testing.T) {
+	t.Parallel()
+
+	noMint := func(context.Context, entities.GitHubAppConfig, int64) (string, error) {
+		return "", errors.New("unexpected installation token exchange")
+	}
+	// githubProviders builds real gitforge GitHub providers, which make no
+	// request until they are used.
+	githubProviders := func() *registry.ProviderRegistry {
+		providers := registry.NewProviderRegistry()
+		providers.RegisterFactory("github", github.NewProvider)
+		return providers
+	}
+
+	t.Run("should report a token from the fallback as the runner's own", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		fallback := &doubles.StubFallbackTokenRepository{Token: "fixture-personal-token-placeholder"}
+		settings := &entities.Settings{Providers: []entities.ProviderConfig{{Type: "github"}}}
+
+		// when
+		token, runner, err := controllers.ResolveTokenWithProvenanceForTest(
+			context.Background(), settings, controllers.TokenRequestForTest{ProviderType: "github"}, noMint, fallback,
+		)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "fixture-personal-token-placeholder", token)
+		assert.True(t, runner)
+	})
+
+	t.Run("should not report a configured token as the runner's own", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		fallback := &doubles.StubFallbackTokenRepository{Token: "fixture-personal-token-placeholder"}
+		settings := &entities.Settings{
+			Providers: []entities.ProviderConfig{{Type: "github", Token: "fixture-pat-placeholder"}},
+		}
+
+		// when
+		token, runner, err := controllers.ResolveTokenWithProvenanceForTest(
+			context.Background(), settings, controllers.TokenRequestForTest{ProviderType: "github"}, noMint, fallback,
+		)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "fixture-pat-placeholder", token)
+		assert.False(t, runner)
+	})
+
+	t.Run("should mark the review and refresh its token from the fallback before it posts", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		fallback := &doubles.StubFallbackTokenRepository{Token: "fixture-fresh-token-placeholder"}
+		request := controllers.TokenRequestForTest{ProviderType: "github", Organization: "rios0rios0"}
+
+		// when
+		opts := controllers.RunnerReviewOptionsForTest(githubProviders(), fallback, request)
+		require.NotNil(t, opts.RefreshProvider)
+		fresh, err := opts.RefreshProvider(context.Background())
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, opts.RunnerCredential)
+		assert.Equal(t, "fixture-fresh-token-placeholder", fresh.AuthToken())
+		assert.Equal(t,
+			[]doubles.FallbackTokenRequest{{ProviderType: "github", Organization: "rios0rios0"}},
+			fallback.Requests)
+	})
+
+	t.Run("should fail the refresh when the fallback has no token any more", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		cause := errors.New("no GitHub credential available")
+		fallback := &doubles.StubFallbackTokenRepository{Err: cause}
+
+		// when
+		opts := controllers.RunnerReviewOptionsForTest(
+			githubProviders(), fallback, controllers.TokenRequestForTest{ProviderType: "github"},
+		)
+		fresh, err := opts.RefreshProvider(context.Background())
+
+		// then
+		require.ErrorIs(t, err, cause)
+		assert.Nil(t, fresh)
+	})
+}
+
+func TestReviewControllerReviewOptions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should carry the flags and the settings into the review's options", func(t *testing.T) {
+		t.Parallel()
+
+		// given
+		settings := &entities.Settings{
+			AI:            entities.AIConfig{ReviewDrafts: true},
+			Trivial:       entities.TrivialConfig{AutoMerge: true, MergeStrategy: "squash"},
+			BotIdentities: []string{"svc-codeguru@example.com"},
+		}
+
+		// when
+		opts := controllers.ReviewOptionsFromForTest(settings, true, false, true)
+
+		// then
+		assert.True(t, opts.DryRun)
+		assert.False(t, opts.Verbose)
+		assert.True(t, opts.UserMentioned)
+		assert.True(t, opts.ReviewDrafts)
+		assert.True(t, opts.TrivialAutoMerge)
+		assert.Equal(t, "squash", opts.TrivialMergeStrategy)
+		assert.Equal(t, []string{"svc-codeguru@example.com"}, opts.BotIdentities)
+		assert.False(t, opts.RunnerCredential, "only a token from the fallback marks the review")
+		assert.Nil(t, opts.RefreshProvider)
+	})
 }

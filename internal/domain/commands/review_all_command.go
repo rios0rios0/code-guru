@@ -6,7 +6,6 @@ import (
 
 	logger "github.com/sirupsen/logrus"
 
-	forgeEntities "github.com/rios0rios0/gitforge/v4/pkg/global/domain/entities"
 	registry "github.com/rios0rios0/gitforge/v4/pkg/registry/infrastructure"
 
 	"github.com/rios0rios0/codeguru/internal/domain/entities"
@@ -59,10 +58,15 @@ func (c *ReviewAllCommand) Execute(
 		logger.Infof("processing provider: %s", reviewProvider.Name())
 
 		for _, org := range provCfg.Organizations {
-			orgProvider := organizationProvider(
-				ctx, c.providerRegistry, c.fallbackTokens, reviewProvider, provCfg, org,
+			providers, orgErr := newOrganizationProviders(
+				c.providerRegistry, c.fallbackTokens, reviewProvider, provCfg, org,
 			)
-			results, errs := c.processOrganization(ctx, orgProvider, org, opts)
+			if orgErr != nil {
+				logger.Errorf("skipping an organization of provider %q: %v", provCfg.Type, orgErr)
+				totalErrors++
+				continue
+			}
+			results, errs := c.processOrganization(ctx, providers, opts)
 			allResults = append(allResults, results...)
 			totalErrors += errs
 		}
@@ -77,18 +81,24 @@ func (c *ReviewAllCommand) Execute(
 	return allResults, nil
 }
 
+// processOrganization reviews every open pull request of one organization.
+// With the runner's own credential each review gets a token obtained for it
+// and refreshes it before posting (see organizationProviders.reviewOptions),
+// and the forge is read again with a fresh token after a repository's
+// reviews: the batch can outlast such a token many times over.
 func (c *ReviewAllCommand) processOrganization(
 	ctx context.Context,
-	provider forgeEntities.ReviewProvider,
-	org string,
+	providers organizationProviders,
 	opts ReviewOptions,
 ) ([]entities.ReviewResult, int) {
 	var results []entities.ReviewResult
 	errorCount := 0
+	org := providers.organization
 
 	logger.Infof("discovering repositories in %q...", org)
 
-	repos, err := provider.DiscoverRepositories(ctx, org)
+	listing, _ := providers.provider(ctx)
+	repos, err := listing.DiscoverRepositories(ctx, org)
 	if err != nil {
 		logger.Errorf("failed to discover repos in %q: %v", org, err)
 		return nil, 1
@@ -97,7 +107,7 @@ func (c *ReviewAllCommand) processOrganization(
 	logger.Infof("found %d repositories in %q", len(repos), org)
 
 	for _, repo := range repos {
-		prs, listErr := provider.ListOpenPullRequests(ctx, repo)
+		prs, listErr := listing.ListOpenPullRequests(ctx, repo)
 		if listErr != nil {
 			logger.Errorf("failed to list PRs for %s/%s: %v", repo.Organization, repo.Name, listErr)
 			errorCount++
@@ -111,7 +121,8 @@ func (c *ReviewAllCommand) processOrganization(
 		logger.Infof("%s/%s: %d open PRs", repo.Organization, repo.Name, len(prs))
 
 		for _, pr := range prs {
-			result, reviewErr := c.reviewCommand.Execute(ctx, provider, repo, pr, opts)
+			reviewer, runner := providers.provider(ctx)
+			result, reviewErr := c.reviewCommand.Execute(ctx, reviewer, repo, pr, providers.reviewOptions(opts, runner))
 			if reviewErr != nil {
 				logger.Errorf("failed to review PR #%d in %s/%s: %v", pr.ID, repo.Organization, repo.Name, reviewErr)
 				errorCount++
@@ -119,6 +130,7 @@ func (c *ReviewAllCommand) processOrganization(
 			}
 			results = append(results, *result)
 		}
+		listing, _ = providers.provider(ctx)
 	}
 
 	return results, errorCount
