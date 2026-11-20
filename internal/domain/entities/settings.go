@@ -56,6 +56,10 @@ type Settings struct {
 	//
 	// Honours `CODE_GURU_BOT_IDENTITIES` (comma-separated).
 	BotIdentities []string `yaml:"bot_identities"`
+
+	// loadErr is why these are empty defaults rather than loaded settings; see
+	// LoadError.
+	loadErr error
 }
 
 // ProviderConfig is an alias for gitforge's ProviderConfig to maintain backward compatibility.
@@ -990,6 +994,16 @@ func NewSettingsFromEnv() (*Settings, error) {
 	}
 
 	return settings, nil
+}
+
+// LoadError returns why these settings are empty defaults: the error that kept
+// the dependency-injection container's provider from loading any, when it found
+// no configuration file it could read and the CODE_GURU_* variables did not
+// validate. It is nil for settings that were loaded. Only `serve` runs on the
+// provider's settings, so it reports this error when it validates them; the
+// other commands load their own.
+func (s *Settings) LoadError() error {
+	return s.loadErr
 }
 
 // claudeConfigFromEnv builds the Claude CLI settings, agentic mode included,

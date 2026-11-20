@@ -83,7 +83,7 @@ Clean Architecture with domain/infrastructure separation, using Uber DIG for dep
 - `cmd/code-guru/dig.go` — builds **three separate `dig.New()` containers** (`injectAppContext`, `injectReviewController`, `injectSelfUpdater`); there is no shared graph.
 - Each layer has a `container.go` with `RegisterProviders(*dig.Container) error`. Registration order: repositories → entities → commands → controllers → app (`internal/container.go`).
 - The repositories container binds the domain `FallbackTokenRepository` to `credentials.ChainFallbackTokenRepository` over gitforge's `NewDefaultCredentialResolver()`; only `ReviewController`, `ReviewAllController` (which hands it to `ReviewAllCommand`) and `DiscoverCommand` take it (nil disables the fallback). The webhook `Dispatcher` deliberately does not.
-- `entities.provideSettings` reads the operator's config file in the home directory (`entities.FindSettingsFile`), falls back to env-only settings, and degrades to an empty `&Settings{}` with a warning — only `serve` hard-validates settings.
+- `entities.provideSettings` reads the operator's config file in the home directory (`entities.FindSettingsFile`), falls back to env-only settings, and degrades to an empty `&Settings{}` that records why (`Settings.LoadError`). It runs for every subcommand, `version` and `health` included, so that failure is logged at debug level only — never raise it back to an error. Only `serve` hard-validates settings, and `ServeController.validateSettings` reports the recorded error before anything else (`TestProvideSettingsLoadError`, `TestServeControllerSettingsLoadError`).
 
 ### Domain Layer (`internal/domain/`)
 
