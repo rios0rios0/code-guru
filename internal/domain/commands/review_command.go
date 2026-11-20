@@ -203,16 +203,24 @@ type ReviewOptions struct {
 	// RunnerCredential marks a review that authenticates with the forge
 	// credential of the person running the command (the fallback token)
 	// rather than with one configured for the bot. Such a review posts its
-	// findings, its thread replies and its vote, but none of the bot's
-	// status notices — the "reviewing" marker, the completion and failure
-	// annotations, the batched-review notice (see postsStatusNotices).
-	// Those are what the bot recognises its own account by
-	// (`support.DetectBotAuthors`) and what its review-once gate looks for
-	// (`support.HasCompletedReviewMarker`): posted under a person's account
-	// they make every later bot run take that person for the bot — reply
-	// in their threads, mark them fixed or closed — and skip the pull
-	// request as already reviewed. Set by `review` and `review-all` when
-	// the fallback supplied the token; never by the server.
+	// findings and its thread replies, and prints its verdict, but:
+	//
+	//   - it never votes or merges, whatever `submit_native_review` or
+	//     `trivial.auto_merge` say (see leavesVoteAndMergeOut): an approval
+	//     or a merge under a person's account is an action that person never
+	//     chose, the bot's identity is what does that, and a working-directory
+	//     `.code-guru.yaml` can switch both on;
+	//   - it posts none of the bot's status notices — the "reviewing"
+	//     marker, the completion and failure annotations, the batched-review
+	//     notice (see postsStatusNotices). Those are what the bot recognises
+	//     its own account by (`support.DetectBotAuthors`) and what its
+	//     review-once gate looks for (`support.HasCompletedReviewMarker`):
+	//     posted under a person's account they make every later bot run take
+	//     that person for the bot — reply in their threads, mark them fixed
+	//     or closed — and skip the pull request as already reviewed.
+	//
+	// Set by `review` and `review-all` when the fallback supplied the token;
+	// never by the server.
 	RunnerCredential bool
 
 	// RefreshProvider, when set, returns a provider authenticated with a
@@ -229,6 +237,17 @@ type ReviewOptions struct {
 // (see RunnerCredential).
 func (o ReviewOptions) postsStatusNotices() bool {
 	return !o.DryRun && !o.RunnerCredential
+}
+
+// leavesVoteAndMergeOut reports whether the review must cast no vote and
+// merge nothing: a review on the runner's own credential never does (see
+// ReviewOptions.RunnerCredential). It logs the one line that says so.
+func leavesVoteAndMergeOut(prID int, opts ReviewOptions) bool {
+	if !opts.RunnerCredential {
+		return false
+	}
+	logger.Infof("PR #%d: no vote cast and nothing merged: the review ran on the runner's own credential", prID)
+	return true
 }
 
 // ReviewCommand orchestrates a single PR review.
@@ -589,7 +608,9 @@ func (c *ReviewCommand) postResults(
 		// rationale exactly once, inside the completion annotation
 		// produced by `buildReviewCompleteBody` (which surfaces
 		// `result.Summary` since PR #124).
-		c.submitNativeReview(ctx, provider, repo, prID, result.Verdict, "", opts)
+		if !leavesVoteAndMergeOut(prID, opts) {
+			c.submitNativeReview(ctx, provider, repo, prID, result.Verdict, "", opts)
+		}
 	}
 }
 
@@ -670,6 +691,11 @@ func (c *ReviewCommand) handleTrivialDetection(
 		// posted four duplicate approvals between them.
 		if opts.postsStatusNotices() {
 			c.postReviewCompleteAnnotation(ctx, provider, repo, pr.ID, result)
+		}
+		// A review on the runner's own credential settles the pull
+		// request without voting or merging.
+		if leavesVoteAndMergeOut(pr.ID, opts) {
+			return result
 		}
 		// Reviewer-panel vote mirrors the text annotation. Body is
 		// intentionally empty so this submission does not duplicate

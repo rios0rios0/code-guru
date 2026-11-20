@@ -147,10 +147,13 @@ A command takes the first token it finds for the pull request's provider, in thi
    left), so it is never kept for long: a review asks for a fresh one before it posts its results, `review-all` asks
    again for each pull request, and `discover` for each organization.
 
-   A review on your own credential posts its findings, its replies and its vote under your account, but none of the
-   bot's status notices (the "reviewing" marker, the completion and failure annotations, the batched-review notice).
-   Those are how the bot recognises its own account and its earlier reviews: posted under yours, they would make the
-   server take you for the bot, answering and closing your threads, and skip the pull request as already reviewed.
+   A review on your own credential posts its findings and its replies under your account and prints its verdict, but
+   it never votes or merges, whatever `ai.submit_native_review` or `trivial.auto_merge` say: an approval or a merge is
+   the bot's identity's to make, not an action you chose, and a `.code-guru.yaml` in a repository you cloned can
+   switch both on. Nor does it post any of the bot's status notices (the "reviewing" marker, the completion and
+   failure annotations, the batched-review notice). Those are how the bot recognises its own account and its earlier
+   reviews: posted under yours, they would make the server take you for the bot, answering and closing your threads,
+   and skip the pull request as already reviewed.
 
 Every token, configured or your own, goes only to the provider's fixed hosts (`api.github.com`, `dev.azure.com`, and
 `github.com` for the agentic mode's checkout), never to a host taken from a URL. An Azure DevOps entry under
