@@ -60,40 +60,51 @@ func (c *DiscoverCommand) Execute(
 		}
 
 		for _, org := range provCfg.Organizations {
-			orgProvider := organizationProvider(
-				ctx, c.providerRegistry, c.fallbackTokens, reviewProvider, provCfg, org,
+			providers, orgErr := newOrganizationProviders(
+				c.providerRegistry, c.fallbackTokens, reviewProvider, provCfg, org,
 			)
-			repos, discoverErr := orgProvider.DiscoverRepositories(ctx, org)
-			if discoverErr != nil {
-				logger.Errorf("failed to discover repos in %q: %v", org, discoverErr)
+			if orgErr != nil {
+				logger.Errorf("skipping an organization of provider %q: %v", provCfg.Type, orgErr)
 				continue
 			}
-
-			result := DiscoverResult{
-				Provider:     provCfg.Type,
-				Organization: org,
+			if result, ok := discoverOrganization(ctx, providers, provCfg.Type, org); ok {
+				results = append(results, result)
 			}
-
-			for _, repo := range repos {
-				prs, listErr := orgProvider.ListOpenPullRequests(ctx, repo)
-				if listErr != nil {
-					logger.Debugf("failed to list PRs for %s/%s: %v", repo.Organization, repo.Name, listErr)
-					continue
-				}
-
-				if len(prs) == 0 {
-					continue
-				}
-
-				result.Repositories = append(result.Repositories, DiscoverRepoResult{
-					Repository:   repo,
-					PullRequests: prs,
-				})
-			}
-
-			results = append(results, result)
 		}
 	}
 
 	return results, nil
+}
+
+// discoverOrganization lists the open pull requests of one organization. It
+// only lists, quickly, so one token serves the whole organization.
+func discoverOrganization(
+	ctx context.Context, providers organizationProviders, providerType, org string,
+) (DiscoverResult, bool) {
+	orgProvider, _ := providers.provider(ctx)
+	repos, err := orgProvider.DiscoverRepositories(ctx, providers.organization)
+	if err != nil {
+		logger.Errorf("failed to discover repos in %q: %v", org, err)
+		return DiscoverResult{}, false
+	}
+
+	result := DiscoverResult{
+		Provider:     providerType,
+		Organization: org,
+	}
+	for _, repo := range repos {
+		prs, listErr := orgProvider.ListOpenPullRequests(ctx, repo)
+		if listErr != nil {
+			logger.Debugf("failed to list PRs for %s/%s: %v", repo.Organization, repo.Name, listErr)
+			continue
+		}
+		if len(prs) == 0 {
+			continue
+		}
+		result.Repositories = append(result.Repositories, DiscoverRepoResult{
+			Repository:   repo,
+			PullRequests: prs,
+		})
+	}
+	return result, true
 }

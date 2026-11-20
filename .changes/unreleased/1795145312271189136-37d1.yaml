@@ -1,0 +1,3 @@
+kind: 'Fixed'
+body: 'fixed an exported `CODE_GURU_PROVIDER_TOKEN` losing to the runner''s own forge credential when the `providers[]` entry of the pull request''s type had a token that resolved to nothing, such as `${GITHUB_TOKEN}` with `GITHUB_TOKEN` unset'
+time: '2026-11-20T03:28:32.271145571Z'

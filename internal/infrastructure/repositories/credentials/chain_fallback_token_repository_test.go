@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rios0rios0/codeguru/internal/infrastructure/repositories/credentials"
+	"github.com/rios0rios0/codeguru/internal/support"
 )
 
 func TestChainFallbackTokenRepositoryGetToken(t *testing.T) {
@@ -48,12 +49,8 @@ func TestChainFallbackTokenRepositoryGetToken(t *testing.T) {
 		// given
 		cases := map[string]string{
 			"ExampleOrg":                           "ExampleOrg",
-			"ExampleOrg/":                          "ExampleOrg",
-			"https://dev.azure.com/ExampleOrg":     "ExampleOrg",
 			"https://dev.azure.com/ExampleOrg/":    "ExampleOrg",
 			"https://exampleorg.visualstudio.com/": "exampleorg",
-			"https://ado.example.com/ExampleOrg":   "",
-			"https://dev.azure.com/%zz":            "",
 		}
 
 		for organization, want := range cases {
@@ -69,6 +66,27 @@ func TestChainFallbackTokenRepositoryGetToken(t *testing.T) {
 				[]credentialEntities.CredentialRequest{{ServiceType: forgeEntities.AZUREDEVOPS, Organization: want}},
 				resolver.Requests(),
 				organization)
+		}
+	})
+
+	t.Run("should refuse an Azure DevOps organization on another host without asking the chain", func(t *testing.T) {
+		t.Parallel()
+
+		// given: what used to leave az on its default tenant and hand the
+		// token to the host the entry named.
+		organizations := []string{"https://ado.example.com/ExampleOrg", "https://127.0.0.1:8443/attacker-org", ""}
+
+		for _, organization := range organizations {
+			resolver := personal()
+			repository := credentials.NewChainFallbackTokenRepository(resolver)
+
+			// when
+			token, err := repository.GetToken(t.Context(), "azuredevops", organization)
+
+			// then
+			require.ErrorIs(t, err, support.ErrNotAzureDevOpsOrganization, organization)
+			assert.Empty(t, token, organization)
+			assert.Empty(t, resolver.Requests(), organization)
 		}
 	})
 

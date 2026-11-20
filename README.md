@@ -133,18 +133,31 @@ A command takes the first token it finds for the pull request's provider, in thi
 1. **GitHub App installation** (`review` on GitHub): when `CODE_GURU_GITHUB_INSTALLATION_ID` names an installation and
    `github_app` is configured, as on the review Jobs of the Kubernetes executor. A failed exchange fails the review
    rather than moving on to another identity.
-2. **Configuration**: the `token` of the `providers[]` entry for the provider; `review` also reads
-   `CODE_GURU_PROVIDER_TOKEN` when no entry has that type.
+2. **Configuration**: the `token` of the first `providers[]` entry for the provider that has one; `review` also reads
+   `CODE_GURU_PROVIDER_TOKEN` when no entry for that provider has a token. An entry whose `token` resolved to nothing
+   (`'${GITHUB_TOKEN}'` with `GITHUB_TOKEN` unset) does not hide `CODE_GURU_PROVIDER_TOKEN`.
 3. **Your own credential**, when nothing above supplied a token (`review`, `review-all` and `discover`):
    - GitHub: `GITHUB_TOKEN`, then `GH_TOKEN`, then the `gh` CLI's session (`gh auth token --hostname github.com`).
    - Azure DevOps: `AZURE_DEVOPS_EXT_PAT`, then `SYSTEM_ACCESSTOKEN`, then the `az` CLI's session
      (`az account get-access-token` for Azure DevOps), issued in the Microsoft Entra tenant of the pull request's
-     organization; `review-all` and `discover` ask again at each organization's turn, since a CLI token can be
-     short-lived (an `az` one can come with minutes left).
+     organization.
 
    After `gh auth login` or `az login`, `code-guru review <pr-url>` needs no forge token configured. The log says where
-   the token came from, never the token itself, and the token goes only to the provider's fixed hosts (`api.github.com`,
-   `dev.azure.com`, and `github.com` for the agentic mode's checkout), never to a host taken from a URL.
+   the token came from, never the token itself. A CLI token can be short-lived (an `az` one can come with minutes
+   left), so it is never kept for long: a review asks for a fresh one before it posts its results, `review-all` asks
+   again for each pull request, and `discover` for each organization.
+
+   A review on your own credential posts its findings, its replies and its vote under your account, but none of the
+   bot's status notices (the "reviewing" marker, the completion and failure annotations, the batched-review notice).
+   Those are how the bot recognises its own account and its earlier reviews: posted under yours, they would make the
+   server take you for the bot, answering and closing your threads, and skip the pull request as already reviewed.
+
+Every token, configured or your own, goes only to the provider's fixed hosts (`api.github.com`, `dev.azure.com`, and
+`github.com` for the agentic mode's checkout), never to a host taken from a URL. An Azure DevOps entry under
+`organizations` must therefore be the organization's name, `https://dev.azure.com/<name>` or
+`https://<name>.visualstudio.com`; `review-all` and `discover` refuse anything else before they look a token up or
+make a request. Without that rule, a `.code-guru.yaml` in a repository you cloned (configuration is looked up in the
+working directory first) could name its own host as an organization and receive your token.
 
 The webhook server (`serve`) and the review Jobs its Kubernetes executor starts (`review --job-name`) never use step 3:
 they act only as the identity the operator configured, so a missing token fails the delivery or the Job instead of

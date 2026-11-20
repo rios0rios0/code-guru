@@ -1,0 +1,3 @@
+kind: 'Fixed'
+body: 'fixed a review on the runner''s own forge credential keeping one token for a whole `review-all` organization or a long agentic review: each pull request now gets a token obtained for it, and the review obtains another before it posts its results'
+time: '2026-11-20T03:28:32.273019422Z'

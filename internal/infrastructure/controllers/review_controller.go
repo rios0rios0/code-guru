@@ -77,6 +77,13 @@ type tokenRequest struct {
 	reviewJob bool
 }
 
+// resolvedToken is the token a review authenticates with, and whether it is
+// the runner's own — the fallback's — rather than one configured for the bot.
+type resolvedToken struct {
+	value  string
+	runner bool
+}
+
 // NewReviewController creates a new ReviewController.
 func NewReviewController(
 	providerRegistry *registry.ProviderRegistry,
@@ -156,14 +163,15 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 	}
 
 	// find token for the provider
-	token, err := c.resolveToken(ctx, settings, newTokenRequest(parsed, jobName))
+	request := newTokenRequest(parsed, jobName)
+	token, err := c.resolveToken(ctx, settings, request)
 	if err != nil {
 		failReviewf("%v", err)
 		return
 	}
 
 	// get review provider
-	reviewProvider, err := c.providerRegistry.GetReviewProvider(parsed.ProviderType, token)
+	reviewProvider, err := c.providerRegistry.GetReviewProvider(parsed.ProviderType, token.value)
 	if err != nil {
 		failReviewf("failed to get review provider: %v", err)
 		return
@@ -195,13 +203,28 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 		WithWorkspace(infraRepos.NewWorkspaceRepository(settings)).
 		WithJobName(jobName)
 
-	// TODO: query CI status automatically via provider.GetPullRequestCheckStatus() once gitforge adds this method
-	ciPassed := false
+	opts := reviewOptionsFrom(settings, dryRun, verbose, mentioned)
+	if token.runner {
+		opts = c.withRunnerCredential(opts, request)
+	}
 
-	result, err := reviewCmd.Execute(ctx, reviewProvider, repo, *targetPR, commands.ReviewOptions{
-		DryRun:                     dryRun,
-		Verbose:                    verbose,
-		CIPassed:                   ciPassed,
+	result, err := reviewCmd.Execute(ctx, reviewProvider, repo, *targetPR, opts)
+	if err != nil {
+		failReviewf("review failed: %v", err)
+		return
+	}
+
+	c.printResult(result, dryRun)
+}
+
+// reviewOptionsFrom resolves the options of a `review` run from the settings
+// and its flags.
+func reviewOptionsFrom(settings *entities.Settings, dryRun, verbose, mentioned bool) commands.ReviewOptions {
+	return commands.ReviewOptions{
+		DryRun:  dryRun,
+		Verbose: verbose,
+		// TODO: query CI status automatically via provider.GetPullRequestCheckStatus() once gitforge adds this method
+		CIPassed:                   false,
 		SubmitNativeReview:         settings.AI.NativeReviewSubmissionEnabled(),
 		MaxGuidelinesBytes:         settings.AI.GuidelinesBytes(),
 		MaxPRDescriptionBytes:      settings.AI.PRDescriptionBytes(),
@@ -218,13 +241,25 @@ func (c *ReviewController) Execute(cmd *cobra.Command, args []string) {
 		LoadPullRequestMetadata:    settings.AI.PullRequestMetadataEnabled(),
 		BatchLargeReviews:          settings.AI.BatchLargeReviewsEnabled(),
 		MaxReviewBatches:           settings.AI.ReviewBatches(),
-	})
-	if err != nil {
-		failReviewf("review failed: %v", err)
-		return
 	}
+}
 
-	c.printResult(result, dryRun)
+// withRunnerCredential marks a review that runs on the runner's own token
+// (see commands.ReviewOptions.RunnerCredential) and lets it ask the fallback
+// for a fresh token before it posts its results: the AI step can outlast a
+// token an az session hands over.
+func (c *ReviewController) withRunnerCredential(
+	opts commands.ReviewOptions, request tokenRequest,
+) commands.ReviewOptions {
+	opts.RunnerCredential = true
+	opts.RefreshProvider = func(ctx context.Context) (forgeEntities.ReviewProvider, error) {
+		token, err := c.fallbackTokens.GetToken(ctx, request.providerType, request.organization)
+		if err != nil {
+			return nil, err
+		}
+		return c.providerRegistry.GetReviewProvider(request.providerType, token)
+	}
+	return opts
 }
 
 func (c *ReviewController) loadSettings(cmd *cobra.Command) (*entities.Settings, error) {
@@ -262,9 +297,15 @@ func (c *ReviewController) resolveSettings(configPath string) (*entities.Setting
 	return entities.NewSettings(cfgPath)
 }
 
+// findToken returns the configured token for the provider: that of the
+// first `providers[]` entry of its type with one, else
+// CODE_GURU_PROVIDER_TOKEN. An entry whose token resolved to nothing — the
+// README's `token: '${GITHUB_TOKEN}'` with GITHUB_TOKEN unset — does not hide
+// the exported token, which would otherwise lose to the runner's own
+// credential.
 func (c *ReviewController) findToken(settings *entities.Settings, providerType string) string {
 	for _, p := range settings.Providers {
-		if p.Type == providerType {
+		if p.Type == providerType && p.Token != "" {
 			return p.Token
 		}
 	}
@@ -325,19 +366,24 @@ func newTokenRequest(parsed *support.ParsedPRURL, jobName string) tokenRequest {
 // fails the server.
 func (c *ReviewController) resolveToken(
 	ctx context.Context, settings *entities.Settings, request tokenRequest,
-) (string, error) {
+) (resolvedToken, error) {
 	id, _ := strconv.ParseInt(strings.TrimSpace(request.installationID), 10, 64)
 	app := settings.GitHubApp
 	if request.providerType == "github" && id != 0 && app.AppID != 0 && app.PrivateKey != "" {
-		return c.mintInstallationToken(ctx, app, id)
+		token, err := c.mintInstallationToken(ctx, app, id)
+		return resolvedToken{value: token}, err
 	}
 	if token := c.findToken(settings, request.providerType); token != "" {
-		return token, nil
+		return resolvedToken{value: token}, nil
 	}
 	if request.reviewJob || c.fallbackTokens == nil {
-		return "", fmt.Errorf("no token configured for provider %q", request.providerType)
+		return resolvedToken{}, fmt.Errorf("no token configured for provider %q", request.providerType)
 	}
-	return c.fallbackTokens.GetToken(ctx, request.providerType, request.organization)
+	token, err := c.fallbackTokens.GetToken(ctx, request.providerType, request.organization)
+	if err != nil {
+		return resolvedToken{}, err
+	}
+	return resolvedToken{value: token, runner: true}, nil
 }
 
 // mintGitHubInstallationToken exchanges the App's credentials for a token of

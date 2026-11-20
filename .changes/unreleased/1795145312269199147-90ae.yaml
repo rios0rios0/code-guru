@@ -1,0 +1,3 @@
+kind: 'Security'
+body: 'fixed `review-all` and `discover` sending the provider token, the runner''s own or a configured one, to whichever host an Azure DevOps `organizations` entry written as an `https://` URL named, such as one in a cloned repository''s `.code-guru.yaml`: an Azure DevOps organization must now be its name, `https://dev.azure.com/<name>` or `https://<name>.visualstudio.com`, and anything else is refused before a token is looked up or a request is made'
+time: '2026-11-20T03:28:32.269144612Z'
