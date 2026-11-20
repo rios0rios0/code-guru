@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	configHelpers "github.com/rios0rios0/gitforge/v4/pkg/config/domain/helpers"
 	forgeEntities "github.com/rios0rios0/gitforge/v4/pkg/global/domain/entities"
 	registry "github.com/rios0rios0/gitforge/v4/pkg/registry/infrastructure"
 	logger "github.com/sirupsen/logrus"
@@ -284,11 +283,7 @@ func (c *ReviewController) loadSettings(cmd *cobra.Command) (*entities.Settings,
 }
 
 func (c *ReviewController) resolveSettings(configPath string) (*entities.Settings, error) {
-	if configPath != "" {
-		return entities.NewSettings(configPath)
-	}
-
-	cfgPath, _ := configHelpers.FindConfigFile("code-guru")
+	cfgPath := settingsFileFor(configPath)
 	if cfgPath == "" {
 		// no config file; try environment variables
 		return entities.NewSettingsFromEnv()

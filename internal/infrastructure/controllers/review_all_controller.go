@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	configHelpers "github.com/rios0rios0/gitforge/v4/pkg/config/domain/helpers"
 	registry "github.com/rios0rios0/gitforge/v4/pkg/registry/infrastructure"
 	logger "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -71,25 +70,9 @@ func (c *ReviewAllController) Execute(cmd *cobra.Command, _ []string) {
 		logger.SetLevel(logger.DebugLevel)
 	}
 
-	// load configuration
-	cfgPath := configPath
-	if cfgPath == "" {
-		var err error
-		cfgPath, err = configHelpers.FindConfigFile("code-guru")
-		if err != nil {
-			logger.Errorf(
-				"no config file found: %v\nSpecify one with --config or create .code-guru.yaml",
-				err,
-			)
-			return
-		}
-	}
-
-	logger.Infof("using config file: %s", cfgPath)
-
-	settings, err := entities.NewSettings(cfgPath)
+	settings, err := batchSettings(configPath)
 	if err != nil {
-		logger.Errorf("failed to load config: %v", err)
+		failCommandf("%v", err)
 		return
 	}
 

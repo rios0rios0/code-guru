@@ -34,7 +34,8 @@ const (
 // https://dev.azure.com/<name> itself. Its Azure DevOps provider keeps any
 // other https:// entry as the base URL of its requests, so passing an entry
 // on is what sent the token — configured or the runner's own — to whichever
-// host a working-directory `.code-guru.yaml` named.
+// host a `.code-guru.yaml` named, such as one a cloned repository shipped,
+// which code-guru read from the working directory until it stopped doing so.
 func AzureDevOpsOrganizationName(entry string) (string, error) {
 	entry = strings.TrimSpace(entry)
 	name := entry

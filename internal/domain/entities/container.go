@@ -1,7 +1,6 @@
 package entities
 
 import (
-	configHelpers "github.com/rios0rios0/gitforge/v4/pkg/config/domain/helpers"
 	logger "github.com/sirupsen/logrus"
 	"go.uber.org/dig"
 )
@@ -17,8 +16,13 @@ func RegisterProviders(container *dig.Container) error {
 	return container.Provide(provideSettings)
 }
 
+// provideSettings reads the operator's configuration file in the home
+// directory, never one in the working directory (see FindSettingsFile), and
+// says nothing about one it leaves there: it runs before the flags are parsed,
+// for every subcommand, so a warning here would also reach
+// `review --config <that file>`. `serve` warns instead.
 func provideSettings() *Settings {
-	if path, _ := configHelpers.FindConfigFile("code-guru"); path != "" {
+	if path, _ := FindSettingsFile(); path != "" {
 		s, err := NewSettings(path)
 		if err == nil {
 			return s

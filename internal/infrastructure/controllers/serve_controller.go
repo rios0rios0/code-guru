@@ -72,6 +72,11 @@ func (c *ServeController) BindFlags(cmd *cobra.Command) {
 
 // Execute starts the webhook HTTP server.
 func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
+	configFlag, _ := cmd.Flags().GetString("config")
+	if err := serverConfigFlagError(configFlag); err != nil {
+		logger.Fatalf("serve: %v", err)
+	}
+	warnAboutUnreadServerSettings()
 	if err := c.validateSettings(); err != nil {
 		logger.Fatalf("serve: invalid settings: %v", err)
 	}

@@ -1,0 +1,4 @@
+kind: 'Security'
+body: 'refused a relative `ai.claude.binary_path` that names a directory (`./bin/claude`): Go resolves it against the directory the Claude CLI starts in, which in agentic mode is the checkout of the pull request under review, so a file the pull request committed could run instead of the CLI. Use an absolute path, or a command name found on PATH'
+breaking: true
+time: '2026-11-20T16:39:34.505324971Z'

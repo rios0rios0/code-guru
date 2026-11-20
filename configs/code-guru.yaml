@@ -1,3 +1,6 @@
+# A sample configuration. code-guru never reads a file in the working directory on its own,
+# so it does not read this one where it is: copy it to ~/.config/code-guru.yaml and edit it there.
+
 providers:
   - type: 'github'
     token: '${GITHUB_TOKEN}'

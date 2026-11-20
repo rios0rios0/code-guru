@@ -67,7 +67,7 @@ Use `github.com/sirupsen/logrus` aliased as `logger`. Use structured log levels:
 
 ## Configuration
 
-Settings are loaded from YAML files discovered automatically by `FindConfigFile`. Searched locations (in order): `.`, `.config`, `configs`, `~`, `~/.config`. Accepted filenames: `.code-guru.yaml`, `.code-guru.yml`, `code-guru.yaml`, `code-guru.yml`. Pass an explicit path with `-c/--config` to override discovery.
+Settings are loaded from the file `-c/--config` names, else from the operator's file in the home directory (`entities.FindSettingsFile`, gitforge's `FindGlobalConfigFile`): `~`, then `~/.config`. Accepted filenames: `.code-guru.yaml`, `.code-guru.yml`, `code-guru.yaml`, `code-guru.yml`. A file in the working directory (`.`, `.config`, `configs`) is read only when `--config` names it, because code-guru often runs inside a checkout of the code under review, where that file is the pull request author's; a warning names the file it skipped. Without a file, `review` and `serve` take their settings from the `CODE_GURU_*` variables, and `review-all` and `discover` exit 1. `serve` refuses `--config`, which its settings, loaded before the flags are parsed, never read.
 
 Token fields support three resolution strategies in order: **environment variable** (`${VAR_NAME}`), **file path** (contents read if resolved string is a valid file), and **inline** (literal string).
 
@@ -139,7 +139,7 @@ Persistent flags (accepted by every command; each controller reads only the ones
 
 | Flag              | Description                                     |
 |-------------------|-------------------------------------------------|
-| `-c, --config`    | Path to config file (default: auto-discover)    |
+| `-c, --config`    | Path to config file (default: `~/.code-guru.yaml`, then `~/.config/code-guru.yaml`; never the working directory; `serve` refuses it) |
 | `-v, --verbose`   | Enable debug logging                            |
 | `--dry-run`       | Show the result without posting comments (read by `review`, `review-all`, and `self-update`) |
 | `--backend`       | Override `ai.backend` (`openai`, `claude`, `anthropic`; read by `review`) |

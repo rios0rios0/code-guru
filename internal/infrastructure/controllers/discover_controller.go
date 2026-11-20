@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	configHelpers "github.com/rios0rios0/gitforge/v4/pkg/config/domain/helpers"
 	logger "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
@@ -44,25 +43,15 @@ func (c *DiscoverController) Execute(cmd *cobra.Command, _ []string) {
 		logger.SetLevel(logger.DebugLevel)
 	}
 
-	cfgPath := configPath
-	if cfgPath == "" {
-		var err error
-		cfgPath, err = configHelpers.FindConfigFile("code-guru")
-		if err != nil {
-			logger.Errorf("no config file found: %v", err)
-			return
-		}
-	}
-
-	settings, err := entities.NewSettings(cfgPath)
+	settings, err := batchSettings(configPath)
 	if err != nil {
-		logger.Errorf("failed to load config: %v", err)
+		failCommandf("%v", err)
 		return
 	}
 
 	results, err := c.discoverCommand.Execute(ctx, settings)
 	if err != nil {
-		logger.Errorf("discover failed: %v", err)
+		failCommandf("discover failed: %v", err)
 		return
 	}
 
