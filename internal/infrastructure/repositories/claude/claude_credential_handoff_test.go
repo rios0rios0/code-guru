@@ -49,10 +49,10 @@ func TestHandOverCredentials(t *testing.T) {
 		// then
 		require.NoError(t, err)
 		defer closeAll()
-		assert.Equal(t, []string{
-			"CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR=3",
-			"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR=4",
-		}, names)
+		assert.Equal(t, []string{"CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR"},
+			variableNames(names), "only the descriptor variables are added to the environment")
+		assert.Equal(t, []string{"3"}, variableValues(names, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"))
+		assert.Equal(t, []string{"4"}, variableValues(names, "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR"))
 		require.Len(t, files, 2)
 		for _, file := range files {
 			info, statErr := file.Stat()
@@ -97,7 +97,7 @@ func TestHandOverCredentials(t *testing.T) {
 		require.NoError(t, err)
 		defer closeAll()
 		assert.Empty(t, files)
-		assert.Empty(t, names)
+		assert.Empty(t, variableNames(names))
 	})
 
 	t.Run("should refuse a credential that spans more than one line, naming only the variable", func(t *testing.T) {

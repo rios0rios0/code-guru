@@ -46,6 +46,13 @@ func checksForUpdates(command *cobra.Command) bool {
 	}, command.Name())
 }
 
+// configFlagUsage describes --config in the help as the flag tables of the
+// README and the Copilot instructions do (TestConfigFlagHelp). It carries no
+// backticks: the flag parser would take a back-quoted word for the name of the
+// flag's value.
+const configFlagUsage = "path to config file (default: ~/.code-guru.yaml, then ~/.config/code-guru.yaml; " +
+	"never the working directory; serve refuses it)"
+
 func buildRootCommand(
 	reviewController *controllers.ReviewController,
 	selfUpdater repositories.SelfUpdaterRepository,
@@ -78,7 +85,7 @@ Usage modes:
 		},
 	}
 
-	cmd.PersistentFlags().StringP("config", "c", "", "path to config file")
+	cmd.PersistentFlags().StringP("config", "c", "", configFlagUsage)
 	cmd.PersistentFlags().String("backend", "", "AI backend: openai, claude, or anthropic")
 	cmd.PersistentFlags().String("rules-path", "", "path to rules directory")
 	cmd.PersistentFlags().Bool("dry-run", false, "show review without posting comments")

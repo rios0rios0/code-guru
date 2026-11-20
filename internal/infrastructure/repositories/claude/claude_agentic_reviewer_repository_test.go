@@ -93,17 +93,31 @@ func (f fakeAgentCLI) args(t *testing.T) []string {
 	return strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
 }
 
-func (f fakeAgentCLI) env(t *testing.T) map[string]string {
+// envValue returns the value the fake's environment gave name, "" when it set
+// none, and envSet whether it set name at all. They answer about one variable
+// at a time on purpose (see variableValues): the fake's environment can carry
+// a credential of the shell the tests run in, so no helper hands a test the
+// whole of it to print in a failing assertion.
+func (f fakeAgentCLI) envValue(t *testing.T, name string) string {
+	t.Helper()
+	values := f.envValues(t, name)
+	if len(values) == 0 {
+		return ""
+	}
+	return values[len(values)-1]
+}
+
+func (f fakeAgentCLI) envSet(t *testing.T, name string) bool {
+	t.Helper()
+	return len(f.envValues(t, name)) > 0
+}
+
+// envValues returns the values the fake's recorded environment gives name.
+func (f fakeAgentCLI) envValues(t *testing.T, name string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(f.recordDir, "env"))
 	require.NoError(t, err)
-	env := map[string]string{}
-	for line := range strings.SplitSeq(string(raw), "\n") {
-		if key, value, ok := strings.Cut(line, "="); ok {
-			env[key] = value
-		}
-	}
-	return env
+	return variableValues(strings.Split(string(raw), "\n"), name)
 }
 
 func (f fakeAgentCLI) read(t *testing.T, name string) string {
@@ -330,6 +344,9 @@ func TestAgenticReviewerEnvironment(t *testing.T) {
 			t.Setenv("CODE_GURU_PROVIDER_TOKEN", "fixture-provider-token-placeholder")
 			t.Setenv("CODE_GURU_WEBHOOK_SECRET", "fixture-webhook-secret-placeholder")
 			t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "fixture-oauth-token-placeholder")
+			// No model credential of the shell the tests run in reaches the fake.
+			t.Setenv("ANTHROPIC_API_KEY", "")
+			t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 			structured := map[string]any{
 				"summary": "Adds x.", "verdict": "request_changes",
 				"checked": map[string]any{"correctness": "c", "security": "s", "design": "d"},
@@ -406,28 +423,29 @@ func TestAgenticReviewerEnvironment(t *testing.T) {
 			wantCwd, _ := filepath.EvalSymlinks(workspace.Path)
 			assert.Equal(t, wantCwd, cwd, "the agent's working directory is the checkout")
 
-			env := cli.env(t)
-			assert.NotContains(t, env, "CLAUDE_CODE_OAUTH_TOKEN",
+			assert.False(t, cli.envSet(t, "CLAUDE_CODE_OAUTH_TOKEN"),
 				"the model credential never enters the CLI's environment, where /proc/<pid>/environ exposes it")
-			assert.Equal(t, "3", env["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"])
+			assert.Equal(t, "3", cli.envValue(t, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"))
 			assert.Equal(t, "fixture-oauth-token-placeholder", cli.read(t, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"),
 				"the CLI reads the credential from the descriptor it is told about")
 			assert.Equal(t, "socket", cli.read(t, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR.type"),
 				"a socket, which the CLI reads directly and closes; a pipe it would reopen through /proc")
-			assert.NotContains(t, env, "CODE_GURU_PROVIDER_TOKEN", "the provider token must never reach the agent")
-			assert.NotContains(t, env, "CODE_GURU_WEBHOOK_SECRET")
-			assert.Equal(t, filepath.Join(workspace.Root, "agent", "config"), env["CLAUDE_CONFIG_DIR"])
-			assert.Equal(t, filepath.Join(workspace.Root, "agent", "home"), env["HOME"])
-			assert.Equal(t, "1", env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"])
-			assert.Equal(t, "1", env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"])
-			assert.Equal(t, "false", env["ENABLE_CLAUDEAI_MCP_SERVERS"])
-			assert.Equal(t, os.DevNull, env["GIT_CONFIG_GLOBAL"])
+			assert.False(t, cli.envSet(t, "CODE_GURU_PROVIDER_TOKEN"), "the provider token must never reach the agent")
+			assert.False(t, cli.envSet(t, "CODE_GURU_WEBHOOK_SECRET"), "the webhook secret must never reach the agent")
+			assert.Equal(t, filepath.Join(workspace.Root, "agent", "config"), cli.envValue(t, "CLAUDE_CONFIG_DIR"))
+			assert.Equal(t, filepath.Join(workspace.Root, "agent", "home"), cli.envValue(t, "HOME"))
+			assert.Equal(t, "1", cli.envValue(t, "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"))
+			assert.Equal(t, "1", cli.envValue(t, "CLAUDE_CODE_DISABLE_CLAUDE_MDS"))
+			assert.Equal(t, "1", cli.envValue(t, "CLAUDE_CODE_DISABLE_AUTO_MEMORY"))
+			assert.Equal(t, "false", cli.envValue(t, "ENABLE_CLAUDEAI_MCP_SERVERS"))
+			assert.Equal(t, os.DevNull, cli.envValue(t, "GIT_CONFIG_GLOBAL"))
 		},
 	)
 
 	t.Run("should redact the model credential from everything it returns", func(t *testing.T) {
 		// given: a review that quotes the credential the agent could have read.
 		t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+		t.Setenv("ANTHROPIC_API_KEY", "")
 		t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "fixture-oauth-token-placeholder")
 		structured := map[string]any{"summary": "found fixture-oauth-token-placeholder in env", "verdict": "comment"}
 		cli := newFakeAgentCLI(t, agentEnvelope(t, structured), 0, 0)
@@ -445,6 +463,7 @@ func TestAgenticReviewerEnvironment(t *testing.T) {
 		// given: with CLAUDE_CODE_REMOTE set, the CLI persists a credential it
 		// read from a descriptor to a well-known file for its subprocesses.
 		t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+		t.Setenv("ANTHROPIC_API_KEY", "")
 		t.Setenv("CLAUDE_CODE_REMOTE", "true")
 		t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "fixture-oauth-token-placeholder")
 		cli := newFakeAgentCLI(t, agentEnvelope(t, map[string]any{"summary": "s", "verdict": "approve"}), 0, 0)
@@ -455,7 +474,7 @@ func TestAgenticReviewerEnvironment(t *testing.T) {
 
 		// then
 		require.NoError(t, err)
-		assert.NotContains(t, cli.env(t), "CLAUDE_CODE_REMOTE")
+		assert.False(t, cli.envSet(t, "CLAUDE_CODE_REMOTE"), "CLAUDE_CODE_REMOTE must never reach the CLI")
 		assert.Equal(t, "fixture-oauth-token-placeholder", cli.read(t, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"))
 	})
 }
@@ -532,15 +551,15 @@ func TestAgenticReviewerSubprocessEnvScrub(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			env := cli.env(t)
-			value, set := env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"]
-			assert.Equal(t, tc.wantScrub, set)
+			assert.Equal(t, tc.wantScrub, cli.envSet(t, "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"))
 			if tc.wantScrub {
-				assert.Equal(t, "1", value)
+				assert.Equal(t, "1", cli.envValue(t, "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"))
 			}
-			assert.NotContains(t, env, "CLAUDE_CODE_OAUTH_TOKEN", "the OAuth token always travels by descriptor")
-			assert.Equal(t, tc.credentials["ANTHROPIC_AUTH_TOKEN"], env["ANTHROPIC_AUTH_TOKEN"],
-				"a credential the CLI reads from nowhere else is still handed over through its environment")
+			assert.False(t, cli.envSet(t, "CLAUDE_CODE_OAUTH_TOKEN"), "the OAuth token always travels by descriptor")
+			// Compared without printing either value, which is a credential.
+			handedOver := cli.envValue(t, "ANTHROPIC_AUTH_TOKEN") == tc.credentials["ANTHROPIC_AUTH_TOKEN"]
+			assert.True(t, handedOver,
+				"a credential the CLI reads from nowhere else is still handed over through its environment, as it is")
 		})
 	}
 }
@@ -566,11 +585,10 @@ func TestAgenticReviewerCredentialHandoff(t *testing.T) {
 
 		// then
 		require.NoError(t, err)
-		env := cli.env(t)
-		assert.Equal(t, "3", env["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"])
-		assert.Equal(t, "4", env["CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR"])
+		assert.Equal(t, "3", cli.envValue(t, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"))
+		assert.Equal(t, "4", cli.envValue(t, "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR"))
 		assert.Equal(t, "fixture-api-key-placeholder", cli.read(t, "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR"))
-		assert.NotContains(t, env, "ANTHROPIC_API_KEY", "the API key never enters the CLI's environment either")
+		assert.False(t, cli.envSet(t, "ANTHROPIC_API_KEY"), "the API key never enters the CLI's environment either")
 	})
 
 	t.Run("should refuse a credential that spans more than one line, without running the CLI", func(t *testing.T) {

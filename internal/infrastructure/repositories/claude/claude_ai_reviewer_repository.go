@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -26,17 +28,31 @@ const (
 	defaultMaxTurns = 1
 )
 
-// diffReviewEnv keeps the CLI from loading instructions or tools a review never
-// asked for: no CLAUDE.md, AGENTS.md or auto-memory is read as instructions
-// (the reviewed repository's own guidelines reach the prompt deliberately, as
-// data), and no claude.ai connector attached to the account becomes a tool.
+// reviewHardeningEnv keeps the CLI, in diff and agentic mode alike, from
+// loading instructions or tools a review never asked for: no CLAUDE.md,
+// AGENTS.md or auto-memory is read as instructions (the reviewed repository's
+// own guidelines reach the review deliberately, as data), and no claude.ai
+// connector attached to the account becomes a tool. It is the one definition of
+// these variables: agentHardeningEnv adds to it what only an agent with tools
+// needs, so the two modes cannot drift apart.
 //
 //nolint:gochecknoglobals // read-only list used as a constant
-var diffReviewEnv = []string{
+var reviewHardeningEnv = []string{
 	"CLAUDE_CODE_DISABLE_CLAUDE_MDS=1",
 	"CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
 	"ENABLE_CLAUDEAI_MCP_SERVERS=false",
 }
+
+// codeGuruEnvPrefix begins the name of every variable code-guru reads its own
+// settings from (entities.NewSettingsFromEnv, and the overrides
+// entities.NewSettings applies): the provider token, the webhook secret, the API
+// keys and the GitHub App key among them.
+const codeGuruEnvPrefix = "CODE_GURU_"
+
+// envNamesIgnoreCase reports whether this platform matches variable names
+// regardless of case, as Windows does: there [os.Getenv] finds
+// `code_guru_provider_token` when asked for CODE_GURU_PROVIDER_TOKEN.
+const envNamesIgnoreCase = runtime.GOOS == "windows"
 
 // AIReviewerRepository implements the AI reviewer using the Claude Code CLI.
 type AIReviewerRepository struct {
@@ -157,8 +173,11 @@ func (r *AIReviewerRepository) ReviewDiff(
 	cmd.Dir = workDir
 	// Environ, read while Env is still nil, is this process's environment with
 	// PWD set to Dir, so the CLI is not told it runs in the caller's directory.
-	// Later entries win over earlier ones of the same name.
-	cmd.Env = append(cmd.Environ(), diffReviewEnv...)
+	// code-guru's own CODE_GURU_* variables are left out of it, as defence in
+	// depth: the CLI never reads them, and they hold the provider token, the
+	// webhook secret, the API keys and the GitHub App key. Later entries win over
+	// earlier ones of the same name.
+	cmd.Env = append(withoutCodeGuruVariables(cmd.Environ(), envNamesIgnoreCase), reviewHardeningEnv...)
 
 	// pass user prompt via stdin to avoid OS argument length limits
 	cmd.Stdin = strings.NewReader(userPrompt)
@@ -298,6 +317,20 @@ func ParseClaudeResponse(output []byte) (*entities.ReviewResult, error) {
 
 	// fallback: try parsing the raw output directly
 	return support.ParseReviewResponse(string(output))
+}
+
+// withoutCodeGuruVariables removes code-guru's own CODE_GURU_* variables from
+// env, a list of NAME=value entries, in place, and returns what is left: every
+// other entry, as it was. ignoreCase matches their names regardless of case
+// (envNamesIgnoreCase).
+func withoutCodeGuruVariables(env []string, ignoreCase bool) []string {
+	return slices.DeleteFunc(env, func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		if ignoreCase {
+			name = strings.ToUpper(name)
+		}
+		return strings.HasPrefix(name, codeGuruEnvPrefix)
+	})
 }
 
 // isolatedWorkingDirectory returns the directory one CLI run starts in, and

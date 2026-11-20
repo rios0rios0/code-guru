@@ -50,10 +50,10 @@ Create `~/.config/code-guru.yaml` (or `~/.code-guru.yaml`), or name with `-c`/`-
 part of the code under review; without one, `review` and `serve` take every setting from the `CODE_GURU_*` variables
 (see [Environment Variable Configuration](#environment-variable-configuration)), and `review-all` and `discover` exit
 non-zero. A file in the working directory (`.code-guru.yaml`, `.config/code-guru.yaml`, `configs/code-guru.yaml`) is
-read only when `--config` names it, and code-guru warns about one it skips. The working directory is often a checkout of the code
-under review, where that file is the pull request author's to write: read as configuration, it would choose the program
-code-guru starts (`ai.claude.binary_path`), the token it acts with (a `token` expands any variable and reads any file)
-and whether it approves and merges.
+read only when `--config` names it, and code-guru names every one it skips in a warning. The working directory is
+often a checkout of the code under review, where that file is the pull request author's to write: read as
+configuration, it would choose the program code-guru starts (`ai.claude.binary_path`), the token it acts with (a
+`token` expands any variable and reads any file) and whether it approves and merges.
 
 ```yaml
 providers:
@@ -108,6 +108,8 @@ ai:
     # empty directory of its own and loads only your user settings, no MCP
     # server and no CLAUDE.md, so the `.claude/settings.json`, `.mcp.json` or
     # CLAUDE.md of a checkout you run code-guru in never runs or steers a review.
+    # Nor does it inherit code-guru's own CODE_GURU_* variables, which hold its
+    # tokens and keys.
     binary_path: 'claude'
     model: 'sonnet'
     max_turns: 1
@@ -148,7 +150,7 @@ A command takes the first token it finds for the pull request's provider, in thi
    `CODE_GURU_PROVIDER_TOKEN` when no entry for that provider has a token. An entry whose `token` resolved to nothing
    (`'${GITHUB_TOKEN}'` with `GITHUB_TOKEN` unset) does not hide `CODE_GURU_PROVIDER_TOKEN`.
 3. **Your own credential**, when nothing above supplied a token (`review`, `review-all` and `discover`):
-   - GitHub: `GITHUB_TOKEN`, then `GH_TOKEN`, then the `gh` CLI's session (`gh auth token --hostname github.com`).
+   - GitHub: `GH_TOKEN`, then `GITHUB_TOKEN` (declined while `GITHUB_SERVER_URL`, `GITHUB_API_URL` or a `*.ghe.com` `GH_HOST` names another GitHub server), then the `gh` CLI's session (`gh auth token --hostname github.com`).
    - Azure DevOps: `AZURE_DEVOPS_EXT_PAT`, then `SYSTEM_ACCESSTOKEN`, then the `az` CLI's session
      (`az account get-access-token` for Azure DevOps), issued in the Microsoft Entra tenant of the pull request's
      organization.
@@ -209,7 +211,7 @@ visibly instead of passing silently.
 
 | Flag            | Description                                    |
 |-----------------|------------------------------------------------|
-| `-c, --config`  | Path to config file (default: `~/.code-guru.yaml`, then `~/.config/code-guru.yaml`; never the working directory) |
+| `-c, --config`  | Path to config file (default: `~/.code-guru.yaml`, then `~/.config/code-guru.yaml`; never the working directory; `serve` refuses it) |
 | `--backend`     | AI backend: `openai`, `claude`, or `anthropic` |
 | `--rules-path`  | Path to rules directory                        |
 | `--dry-run`     | Run review without posting comments            |

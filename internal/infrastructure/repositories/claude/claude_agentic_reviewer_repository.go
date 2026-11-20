@@ -52,17 +52,15 @@ var agentPassthroughEnv = []string{
 
 // agentHardeningEnv switches off every way the CLI could pick up
 // instructions, tools or credentials from somewhere the bot did not put them,
-// and keeps git from reading configuration or paging.
+// and keeps git from reading configuration or paging. It starts with
+// reviewHardeningEnv, which diff mode sets too (no CLAUDE.md, AGENTS.md or
+// auto-memory as instructions: the repository's own guidance is read
+// deliberately, as data, in pass one; no claude.ai connector of a subscription
+// account as a tool of an unattended review), and adds what only an agent with
+// tools needs.
 //
 //nolint:gochecknoglobals // read-only list used as a constant
-var agentHardeningEnv = []string{
-	// No CLAUDE.md, AGENTS.md or auto-memory is loaded as instructions: the
-	// repository's own guidance is read deliberately, as data, in pass one.
-	"CLAUDE_CODE_DISABLE_CLAUDE_MDS=1",
-	"CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
-	// claude.ai connectors attached to a subscription account must not
-	// become tools of an unattended review.
-	"ENABLE_CLAUDEAI_MCP_SERVERS=false",
+var agentHardeningEnv = slices.Concat(reviewHardeningEnv, []string{
 	"DISABLE_AUTOUPDATER=1",
 	"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
 	"GIT_CONFIG_NOSYSTEM=1",
@@ -71,7 +69,7 @@ var agentHardeningEnv = []string{
 	"GIT_OPTIONAL_LOCKS=0",
 	"GIT_PAGER=cat",
 	"PAGER=cat",
-}
+})
 
 // subprocessEnvScrubEnv strips credentials from the environment of every
 // subprocess the agent starts (its git commands included) and runs each one in

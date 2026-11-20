@@ -1,0 +1,3 @@
+kind: 'Changed'
+body: 'changed the diff and agentic modes of the Claude backend to take the variables that keep the CLI from reading CLAUDE.md files and auto-memory and from loading claude.ai connectors from one shared list instead of two copies, so the modes can no longer drift apart; the environment of neither changed'
+time: '2026-11-20T18:10:12.089323013Z'

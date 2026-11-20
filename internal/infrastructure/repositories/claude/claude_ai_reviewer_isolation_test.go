@@ -73,6 +73,17 @@ func recordedLines(t *testing.T, path string) []string {
 	return strings.Split(strings.TrimSuffix(string(content), "\n"), "\n")
 }
 
+// recordedEnvironments names the stub's records of its environment: `env.txt`,
+// and `initial-env.txt` where /proc let the stub record it.
+func recordedEnvironments(t *testing.T, record string) []string {
+	t.Helper()
+	names := []string{"env.txt"}
+	if _, err := os.Stat(filepath.Join(record, "initial-env.txt")); err == nil {
+		names = append(names, "initial-env.txt")
+	}
+	return names
+}
+
 // writeCheckoutFile writes content to path, creating its directory.
 func writeCheckoutFile(t *testing.T, path, content string) {
 	t.Helper()
@@ -133,11 +144,38 @@ func TestClaudeReviewer_ReviewDiff_IgnoresTheWorkingDirectory(t *testing.T) {
 			assert.Contains(t, argv, "--strict-mcp-config")
 			assert.Contains(t, argv, "--no-session-persistence")
 			env := recordedLines(t, filepath.Join(record, "env.txt"))
-			assert.Contains(t, env, "CLAUDE_CODE_DISABLE_CLAUDE_MDS=1")
-			assert.Contains(t, env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
-			assert.Contains(t, env, "ENABLE_CLAUDEAI_MCP_SERVERS=false")
-			assert.NotContains(t, env, "ENABLE_CLAUDEAI_MCP_SERVERS=true")
+			assert.Equal(t, []string{"1"}, variableValues(env, "CLAUDE_CODE_DISABLE_CLAUDE_MDS"))
+			assert.Equal(t, []string{"1"}, variableValues(env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY"))
+			assert.Equal(t, []string{"false"}, variableValues(env, "ENABLE_CLAUDEAI_MCP_SERVERS"),
+				"the claude.ai connectors stay off even when the caller's environment turns them on")
 		})
+
+	t.Run("should leave every CODE_GURU_ variable out of the CLI's environment and pass the rest on "+
+		"when reviewing a diff", func(t *testing.T) {
+		// given: code-guru's own settings, its secrets among them, in its environment
+		t.Setenv("CODE_GURU_PROVIDER_TOKEN", "fixture-provider-token-placeholder")
+		t.Setenv("CODE_GURU_WEBHOOK_SECRET", "fixture-webhook-secret-placeholder")
+		t.Setenv("CODE_GURU_ANTHROPIC_API_KEY", "fixture-api-key-placeholder")
+		t.Setenv("CODE_GURU_GITHUB_PRIVATE_KEY", "fixture-key-placeholder")
+		t.Setenv("CODE_GURU_BACKEND", "claude")
+		t.Setenv("FAKE_KEPT_VARIABLE", "kept")
+		bin, record := writeContextRecordingClaudeBinary(t)
+		t.Setenv("FAKE_CONTEXT_DIR", record)
+		t.Setenv("FAKE_STDOUT", isolationReviewReply)
+		repo := claude.NewAIReviewerRepository(bin, "sonnet", 1)
+
+		// when
+		_, err := repo.ReviewDiff(context.Background(), minimalReviewRequest())
+
+		// then
+		require.NoError(t, err)
+		for _, name := range recordedEnvironments(t, record) {
+			env := recordedLines(t, filepath.Join(record, name))
+			assert.Empty(t, codeGuruVariableNames(env), "%s: code-guru's own variables must not reach the CLI", name)
+			assert.Equal(t, []string{"kept"}, variableValues(env, "FAKE_KEPT_VARIABLE"),
+				"%s: every other variable must still reach the CLI", name)
+		}
+	})
 
 	t.Run("should tell the CLI the directory it starts in through PWD when reviewing a diff", func(t *testing.T) {
 		// given
@@ -157,7 +195,7 @@ func TestClaudeReviewer_ReviewDiff_IgnoresTheWorkingDirectory(t *testing.T) {
 			t.Skip("the stub cannot see the environment it was started with without /proc")
 		}
 		startedIn := recordedLines(t, filepath.Join(record, "cwd.txt"))[0]
-		assert.Contains(t, recordedLines(t, initialEnv), "PWD="+startedIn)
+		assert.Equal(t, []string{startedIn}, variableValues(recordedLines(t, initialEnv), "PWD"))
 	})
 
 	t.Run("should run a binary_path relative to code-guru's working directory when it names a directory",
@@ -205,4 +243,52 @@ func TestClaudeReviewer_ReviewDiff_IgnoresTheWorkingDirectory(t *testing.T) {
 			assert.Equal(t, []string{"readable"}, recordedLines(t, filepath.Join(record, "prompt.txt")),
 				"the prompt file must be found from the directory the CLI starts in")
 		})
+}
+
+func TestWithoutCodeGuruVariables(t *testing.T) {
+	t.Parallel()
+
+	environment := []string{
+		"PATH=/usr/bin",
+		"CODE_GURU_PROVIDER_TOKEN=dropped",
+		"Code_Guru_Webhook_Secret=dropped where variable names ignore case",
+		"CODE_GURUS=kept",
+		"NOT_CODE_GURU_SETTING=kept",
+		"=C:=C:\\work",
+	}
+	for _, scenario := range []struct {
+		name       string
+		ignoreCase bool
+		want       []string
+	}{
+		{
+			name:       "should drop only the variables named CODE_GURU_ in capitals when variable names match exactly",
+			ignoreCase: false,
+			want: []string{
+				"PATH=/usr/bin",
+				"Code_Guru_Webhook_Secret=dropped where variable names ignore case",
+				"CODE_GURUS=kept",
+				"NOT_CODE_GURU_SETTING=kept",
+				"=C:=C:\\work",
+			},
+		},
+		{
+			name:       "should drop the variables named CODE_GURU_ in any case when variable names ignore case",
+			ignoreCase: true,
+			want:       []string{"PATH=/usr/bin", "CODE_GURUS=kept", "NOT_CODE_GURU_SETTING=kept", "=C:=C:\\work"},
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
+
+			// given
+			env := slices.Clone(environment)
+
+			// when
+			kept := claude.WithoutCodeGuruVariablesForTest(env, scenario.ignoreCase)
+
+			// then
+			assert.Equal(t, scenario.want, kept)
+		})
+	}
 }

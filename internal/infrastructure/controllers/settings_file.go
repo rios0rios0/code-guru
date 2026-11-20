@@ -3,6 +3,7 @@ package controllers
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	logger "github.com/sirupsen/logrus"
 
@@ -23,26 +24,33 @@ const unreadSettingsReason = "a configuration file in the working directory is r
 
 // settingsFileFor returns the configuration file a command reads: the one
 // `--config` names, else the operator's own in the home directory
-// (entities.FindSettingsFile), else "". It warns about a configuration file in
-// the working directory that it leaves unread, which earlier releases read
-// first. The warning points at the home directory, never at `--config <that
-// file>`: in a checkout, naming the file would hand the pull request's author
-// the configuration again.
+// (entities.FindSettingsFile), else "". It warns about every configuration file
+// in the working directory that it leaves unread; earlier releases read the
+// first of them. The warning points at the home directory, never at `--config
+// <that file>`: in a checkout, naming the file would hand the pull request's
+// author the configuration again.
 func settingsFileFor(configPath string) string {
 	if configPath != "" {
 		return configPath
 	}
 
 	path, unread := entities.FindSettingsFile()
-	if unread != "" {
+	if len(unread) > 0 {
 		if path != "" {
-			logger.Warnf("not reading %s: %s; using %s", unread, unreadSettingsReason, path)
+			logger.Warnf("not reading %s: %s; using %s", unreadSettingsFiles(unread), unreadSettingsReason, path)
 		} else {
 			logger.Warnf("not reading %s: %s; move your configuration to ~/.config/code-guru.yaml, "+
-				"or name with --config a file that is not part of the code under review", unread, unreadSettingsReason)
+				"or name with --config a file that is not part of the code under review",
+				unreadSettingsFiles(unread), unreadSettingsReason)
 		}
 	}
 	return path
+}
+
+// unreadSettingsFiles names the working-directory configuration files a warning
+// is about, in the order entities.FindSettingsFile found them.
+func unreadSettingsFiles(unread []string) string {
+	return strings.Join(unread, ", ")
 }
 
 // batchSettings loads the configuration `review-all` and `discover` walk. Unlike
@@ -83,14 +91,15 @@ func serverConfigFlagError(configFlag string) error {
 		"~/.config/code-guru.yaml, else the CODE_GURU_* variables, so move the file there", configFlag)
 }
 
-// warnAboutUnreadServerSettings warns about a configuration file in the
+// warnAboutUnreadServerSettings warns about every configuration file in the
 // working directory, which the server, like every command, never reads
 // (entities.FindSettingsFile).
 func warnAboutUnreadServerSettings() {
-	if _, unread := entities.FindSettingsFile(); unread != "" {
+	if _, unread := entities.FindSettingsFile(); len(unread) > 0 {
 		logger.Warnf("not reading %s: the server reads its configuration from ~/.code-guru.yaml or "+
 			"~/.config/code-guru.yaml, else from the CODE_GURU_* variables, never from the working directory, "+
-			"which may be a checkout of the code under review; move the file to ~/.config/code-guru.yaml to use it",
-			unread)
+			"which may be a checkout of the code under review; move your configuration to "+
+			"~/.config/code-guru.yaml to use it",
+			unreadSettingsFiles(unread))
 	}
 }

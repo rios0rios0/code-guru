@@ -1,0 +1,3 @@
+kind: 'Security'
+body: 'stopped the Claude CLI of diff mode, the default `ai.claude.mode`, from inheriting code-guru''s own `CODE_GURU_*` variables, among them the provider token, the webhook secret, the API keys and the GitHub App private key: the CLI never reads them, so they are now left out of its environment, and every other variable still reaches it'
+time: '2026-11-20T18:07:26.52551864Z'

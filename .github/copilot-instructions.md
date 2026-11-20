@@ -59,6 +59,7 @@ Controllers are automatically registered as subcommands via the DI container.
 - **Package naming**: Test files use the `_test` suffix on the package name (e.g., `package support_test`).
 - **Framework**: Use `github.com/stretchr/testify/assert` and `github.com/stretchr/testify/require` for assertions.
 - **Structure**: Follow Given-When-Then with `// given`, `// when`, `// then` comments. Use table-driven tests with `t.Run()` subtests. Call `t.Parallel()` at the top of test functions.
+- **Environments**: Never pass a whole environment (one a stub recorded, `os.Environ()`, or a list the code builds for a process) to an assertion: a failing assertion prints all of its argument, credentials included. Check one variable at a time, and compare a credential's value without printing it.
 - **Test doubles**: Place stubs in `test/domain/doubles/repositories/` for domain-contract stubs and `test/infrastructure/doubles/repositories/` for stubs that double infrastructure-only types. Name them with the `Stub` prefix (e.g., `StubAIReviewerRepository`). Stubs store the last request and return canned responses. Keep the layer the stub references on the same side of the import boundary.
 
 ## Logging
@@ -67,7 +68,7 @@ Use `github.com/sirupsen/logrus` aliased as `logger`. Use structured log levels:
 
 ## Configuration
 
-Settings are loaded from the file `-c/--config` names, else from the operator's file in the home directory (`entities.FindSettingsFile`, gitforge's `FindGlobalConfigFile`): `~`, then `~/.config`. Accepted filenames: `.code-guru.yaml`, `.code-guru.yml`, `code-guru.yaml`, `code-guru.yml`. A file in the working directory (`.`, `.config`, `configs`) is read only when `--config` names it, because code-guru often runs inside a checkout of the code under review, where that file is the pull request author's; a warning names the file it skipped. Without a file, `review` and `serve` take their settings from the `CODE_GURU_*` variables, and `review-all` and `discover` exit 1. `serve` refuses `--config`, which its settings, loaded before the flags are parsed, never read.
+Settings are loaded from the file `-c/--config` names, else from the operator's file in the home directory (`entities.FindSettingsFile`, gitforge's `FindGlobalConfigFile`): `~`, then `~/.config`. Accepted filenames: `.code-guru.yaml`, `.code-guru.yml`, `code-guru.yaml`, `code-guru.yml`. A file in the working directory (`.`, `.config`, `configs`) is read only when `--config` names it, because code-guru often runs inside a checkout of the code under review, where that file is the pull request author's; a warning names every such file it skipped. Without a file, `review` and `serve` take their settings from the `CODE_GURU_*` variables, and `review-all` and `discover` exit 1. `serve` refuses `--config`, which its settings, loaded before the flags are parsed, never read.
 
 Token fields support three resolution strategies in order: **environment variable** (`${VAR_NAME}`), **file path** (contents read if resolved string is a valid file), and **inline** (literal string).
 

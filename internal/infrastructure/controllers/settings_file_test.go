@@ -72,6 +72,26 @@ func TestReviewControllerSettingsFile(t *testing.T) {
 			assert.NotContains(t, hook.LastEntry().Message, "--config configs/code-guru.yaml")
 		})
 
+	t.Run("should name every working-directory configuration it leaves unread "+
+		"when the working directory has several and --config is not given", func(t *testing.T) {
+		// given
+		_, workingDirectory := isolateReviewSettings(t)
+		writeReviewSettings(t, filepath.Join(workingDirectory, ".code-guru.yaml"), checkoutSettings)
+		writeReviewSettings(t, filepath.Join(workingDirectory, "configs", "code-guru.yaml"), checkoutSettings)
+		hook := logrustest.NewLocal(logger.StandardLogger())
+		defer hook.Reset()
+
+		// when
+		settings, err := controllers.ResolveSettingsForTest("")
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "claude", settings.AI.Claude.BinaryPath)
+		require.Len(t, hook.AllEntries(), 1, "one warning names them all")
+		assert.Equal(t, logger.WarnLevel, hook.LastEntry().Level)
+		assert.Contains(t, hook.LastEntry().Message, "not reading .code-guru.yaml, configs/code-guru.yaml: ")
+	})
+
 	t.Run("should read a working-directory configuration when --config names it", func(t *testing.T) {
 		// given
 		_, workingDirectory := isolateReviewSettings(t)
@@ -183,6 +203,25 @@ func TestServeSettingsWarnings(t *testing.T) {
 		assert.Equal(t, logger.WarnLevel, hook.LastEntry().Level)
 		assert.Contains(t, hook.LastEntry().Message, "not reading .code-guru.yaml: the server reads its configuration")
 	})
+
+	t.Run("should name every working-directory configuration the server leaves unread when there are several",
+		func(t *testing.T) {
+			// given
+			_, workingDirectory := isolateReviewSettings(t)
+			writeReviewSettings(t, filepath.Join(workingDirectory, ".code-guru.yml"), checkoutSettings)
+			writeReviewSettings(t, filepath.Join(workingDirectory, ".config", "code-guru.yaml"), checkoutSettings)
+			hook := logrustest.NewLocal(logger.StandardLogger())
+			defer hook.Reset()
+
+			// when
+			controllers.WarnAboutUnreadServerSettingsForTest()
+
+			// then
+			require.Len(t, hook.AllEntries(), 1)
+			assert.Equal(t, logger.WarnLevel, hook.LastEntry().Level)
+			assert.Contains(t, hook.LastEntry().Message,
+				"not reading .code-guru.yml, .config/code-guru.yaml: the server reads its configuration")
+		})
 
 	t.Run("should say nothing when there is nothing the server leaves unread", func(t *testing.T) {
 		// given

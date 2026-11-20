@@ -53,7 +53,7 @@ func (c *ReviewAllController) GetBind() entities.ControllerBind {
 list all open pull requests, and run an AI-powered code review on each one.
 
 Requires a configuration file listing each provider's organizations. A provider
-without a token uses yours: GITHUB_TOKEN, GH_TOKEN or the gh CLI on GitHub, and
+without a token uses yours: GH_TOKEN, GITHUB_TOKEN or the gh CLI on GitHub, and
 AZURE_DEVOPS_EXT_PAT, SYSTEM_ACCESSTOKEN or the az CLI on Azure DevOps.`,
 	}
 }

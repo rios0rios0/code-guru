@@ -293,10 +293,14 @@ func (c *ServeController) installReviewJobExecutor() context.CancelFunc {
 // validateSettings enforces the minimum configuration required by the webhook
 // server. provideSettings falls back to an empty *Settings on error so the rest
 // of the CLI keeps working; this guard ensures `serve` does not silently start
-// with that empty fallback.
+// with that empty fallback, and names the error that left it empty
+// (Settings.LoadError), which provideSettings logs at debug level only.
 func (c *ServeController) validateSettings() error {
 	if c.settings == nil {
 		return errors.New("settings are not configured")
+	}
+	if err := c.settings.LoadError(); err != nil {
+		return err
 	}
 	if c.settings.AI.Backend == "" {
 		return errors.New("ai.backend is required (set CODE_GURU_BACKEND or configure via YAML)")

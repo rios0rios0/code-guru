@@ -49,7 +49,7 @@ func TestFindSettingsFile(t *testing.T) {
 
 		// then
 		assert.Equal(t, filepath.Join(home, ".code-guru.yaml"), path)
-		assert.Equal(t, ".code-guru.yaml", unread)
+		assert.Equal(t, []string{".code-guru.yaml"}, unread)
 	})
 
 	for _, relative := range []string{".code-guru.yaml", filepath.Join(".config", "code-guru.yaml"),
@@ -65,9 +65,35 @@ func TestFindSettingsFile(t *testing.T) {
 
 				// then
 				assert.Empty(t, path)
-				assert.Equal(t, relative, unread)
+				assert.Equal(t, []string{relative}, unread)
 			})
 	}
+
+	t.Run("should report every file in the working directory, in the order earlier releases searched them, "+
+		"when it has several", func(t *testing.T) {
+		// given
+		_, workingDirectory := isolateSettingsDirectories(t)
+		for _, relative := range []string{
+			filepath.Join("configs", "code-guru.yml"),
+			"code-guru.yaml",
+			filepath.Join(".config", ".code-guru.yml"),
+			".code-guru.yaml",
+		} {
+			writeSettingsFixture(t, filepath.Join(workingDirectory, relative))
+		}
+
+		// when
+		path, unread := entities.FindSettingsFile()
+
+		// then
+		assert.Empty(t, path)
+		assert.Equal(t, []string{
+			".code-guru.yaml",
+			"code-guru.yaml",
+			filepath.Join(".config", ".code-guru.yml"),
+			filepath.Join("configs", "code-guru.yml"),
+		}, unread)
+	})
 
 	t.Run("should report nothing unread when the working directory is the home directory", func(t *testing.T) {
 		// given
@@ -81,6 +107,25 @@ func TestFindSettingsFile(t *testing.T) {
 		// then
 		assert.Equal(t, filepath.Join(home, ".code-guru.yaml"), path)
 		assert.Empty(t, unread)
+	})
+
+	t.Run("should report only the files the home directory's search does not look at "+
+		"when the working directory is the home directory", func(t *testing.T) {
+		// given: ~/.config/code-guru.yaml is outranked by ~/.code-guru.yaml, not
+		// skipped for being in the working directory; ~/configs is searched only
+		// as part of the working directory
+		home, _ := isolateSettingsDirectories(t)
+		writeSettingsFixture(t, filepath.Join(home, ".code-guru.yaml"))
+		writeSettingsFixture(t, filepath.Join(home, ".config", "code-guru.yaml"))
+		writeSettingsFixture(t, filepath.Join(home, "configs", "code-guru.yaml"))
+		t.Chdir(home)
+
+		// when
+		path, unread := entities.FindSettingsFile()
+
+		// then
+		assert.Equal(t, filepath.Join(home, ".code-guru.yaml"), path)
+		assert.Equal(t, []string{filepath.Join("configs", "code-guru.yaml")}, unread)
 	})
 
 	t.Run("should return the file in ~/.config when ~ has none", func(t *testing.T) {
@@ -110,7 +155,7 @@ func TestFindSettingsFile(t *testing.T) {
 
 			// then
 			assert.Empty(t, path)
-			assert.Equal(t, ".code-guru.yaml", unread)
+			assert.Equal(t, []string{".code-guru.yaml"}, unread)
 		},
 	)
 
