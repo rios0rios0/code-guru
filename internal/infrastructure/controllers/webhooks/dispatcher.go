@@ -520,7 +520,7 @@ func (d *Dispatcher) HandlePR(
 //
 // The server deliberately has no further fallback. The CLI commands end with
 // the token of the person running them (FallbackTokenRepository, over
-// gitforge's credential chain: GITHUB_TOKEN, GH_TOKEN, the gh CLI;
+// gitforge's credential chain: GH_TOKEN, GITHUB_TOKEN, the gh CLI;
 // AZURE_DEVOPS_EXT_PAT, SYSTEM_ACCESSTOKEN, the az CLI), but the server acts
 // on webhook deliveries that anyone able to open a pull request can trigger,
 // so it must act only as the identity its operator configured: the one

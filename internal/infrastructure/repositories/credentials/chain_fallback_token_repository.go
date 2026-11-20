@@ -13,7 +13,7 @@ import (
 
 // ChainFallbackTokenRepository implements repositories.FallbackTokenRepository
 // with a gitforge credential chain — in production its default one:
-// GITHUB_TOKEN, GH_TOKEN, then the gh CLI's session for github.com on
+// GH_TOKEN, GITHUB_TOKEN, then the gh CLI's session for github.com on
 // GitHub, and AZURE_DEVOPS_EXT_PAT, SYSTEM_ACCESSTOKEN, then the az CLI's
 // session on Azure DevOps. Someone who ran `gh auth login` or `az login` does
 // not have to export a token as well.
