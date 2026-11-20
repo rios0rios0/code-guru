@@ -51,3 +51,10 @@ const DescriptorHandoffSupported = descriptorHandoffSupported
 func EnvironmentCredentialNamesForTest() []string {
 	return environmentCredentialNames()
 }
+
+// WithoutCodeGuruVariablesForTest exposes the filter that keeps code-guru's own
+// CODE_GURU_* variables out of the diff-mode CLI's environment, so the
+// case-insensitive matching Windows needs can be pinned on any platform.
+func WithoutCodeGuruVariablesForTest(env []string, ignoreCase bool) []string {
+	return withoutCodeGuruVariables(env, ignoreCase)
+}

@@ -108,6 +108,8 @@ ai:
     # empty directory of its own and loads only your user settings, no MCP
     # server and no CLAUDE.md, so the `.claude/settings.json`, `.mcp.json` or
     # CLAUDE.md of a checkout you run code-guru in never runs or steers a review.
+    # Nor does it inherit code-guru's own CODE_GURU_* variables, which hold its
+    # tokens and keys.
     binary_path: 'claude'
     model: 'sonnet'
     max_turns: 1
