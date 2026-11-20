@@ -209,7 +209,7 @@ visibly instead of passing silently.
 
 | Flag            | Description                                    |
 |-----------------|------------------------------------------------|
-| `-c, --config`  | Path to config file (default: `~/.code-guru.yaml`, then `~/.config/code-guru.yaml`; never the working directory) |
+| `-c, --config`  | Path to config file (default: `~/.code-guru.yaml`, then `~/.config/code-guru.yaml`; never the working directory; `serve` refuses it) |
 | `--backend`     | AI backend: `openai`, `claude`, or `anthropic` |
 | `--rules-path`  | Path to rules directory                        |
 | `--dry-run`     | Run review without posting comments            |
