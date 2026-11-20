@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	configHelpers "github.com/rios0rios0/gitforge/v4/pkg/config/domain/helpers"
 	registry "github.com/rios0rios0/gitforge/v4/pkg/registry/infrastructure"
 	logger "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -72,17 +71,10 @@ func (c *ReviewAllController) Execute(cmd *cobra.Command, _ []string) {
 	}
 
 	// load configuration
-	cfgPath := configPath
+	cfgPath := settingsFileFor(configPath)
 	if cfgPath == "" {
-		var err error
-		cfgPath, err = configHelpers.FindConfigFile("code-guru")
-		if err != nil {
-			logger.Errorf(
-				"no config file found: %v\nSpecify one with --config or create .code-guru.yaml",
-				err,
-			)
-			return
-		}
+		logger.Errorf("no config file found\nSpecify one with --config or create ~/.config/code-guru.yaml")
+		return
 	}
 
 	logger.Infof("using config file: %s", cfgPath)

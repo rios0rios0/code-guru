@@ -46,7 +46,13 @@ go build -o code-guru ./cmd/code-guru/
 
 ## Configuration
 
-Create a `.code-guru.yaml` file (searched in `.`, `.config`, `configs`, `~`, `~/.config`):
+Create `~/.config/code-guru.yaml` (or `~/.code-guru.yaml`), or name any file with `-c`/`--config`; without one, every
+setting comes from the `CODE_GURU_*` variables (see [Environment Variable Configuration](#environment-variable-configuration)).
+A file in the working directory (`.code-guru.yaml`, `.config/code-guru.yaml`, `configs/code-guru.yaml`) is read only
+when `--config` names it, and code-guru warns about one it skips. The working directory is often a checkout of the code
+under review, where that file is the pull request author's to write: read as configuration, it would choose the program
+code-guru starts (`ai.claude.binary_path`), the token it acts with (a `token` expands any variable and reads any file)
+and whether it approves and merges.
 
 ```yaml
 providers:
@@ -150,20 +156,20 @@ A command takes the first token it finds for the pull request's provider, in thi
    left), so it is never kept for long: a review asks for a fresh one before it posts its results, `review-all` asks
    again for each pull request, and `discover` for each organization.
 
-   A review on your own credential posts its findings and its replies under your account and prints its verdict, but
-   it never votes or merges, whatever `ai.submit_native_review` or `trivial.auto_merge` say: an approval or a merge is
-   the bot's identity's to make, not an action you chose, and a `.code-guru.yaml` in a repository you cloned can
-   switch both on. Nor does it post any of the bot's status notices (the "reviewing" marker, the completion and
-   failure annotations, the batched-review notice). Those are how the bot recognises its own account and its earlier
-   reviews: posted under yours, they would make the server take you for the bot, answering and closing your threads,
-   and skip the pull request as already reviewed.
+   A review on your own credential posts its findings and its replies under your account and prints its verdict, but it
+   never votes or merges, whatever `ai.submit_native_review` or `trivial.auto_merge` say: an approval or a merge is the
+   bot's identity's to make, not an action you chose, and the configuration that switches them on need not be yours
+   (`--config` can name a file a repository you cloned ships). Nor does it post any of the bot's status notices (the
+   "reviewing" marker, the completion and failure annotations, the batched-review notice). Those are how the bot
+   recognises its own account and its earlier reviews: posted under yours, they would make the server take you for the
+   bot, answering and closing your threads, and skip the pull request as already reviewed.
 
 Every token, configured or your own, goes only to the provider's fixed hosts (`api.github.com`, `dev.azure.com`, and
 `github.com` for the agentic mode's checkout), never to a host taken from a URL. An Azure DevOps entry under
 `organizations` must therefore be the organization's name, `https://dev.azure.com/<name>` or
 `https://<name>.visualstudio.com`; `review-all` and `discover` refuse anything else before they look a token up or
-make a request. Without that rule, a `.code-guru.yaml` in a repository you cloned (configuration is looked up in the
-working directory first) could name its own host as an organization and receive your token.
+make a request. Without that rule, a configuration file you did not write, such as one a repository you cloned ships,
+could name its own host as an organization and receive your token.
 
 The webhook server (`serve`) and the review Jobs its Kubernetes executor starts (`review --job-name`) never use step 3:
 they act only as the identity the operator configured, so a missing token fails the delivery or the Job instead of
@@ -199,7 +205,7 @@ visibly instead of passing silently.
 
 | Flag            | Description                                    |
 |-----------------|------------------------------------------------|
-| `-c, --config`  | Path to config file (default: auto-discover)   |
+| `-c, --config`  | Path to config file (default: `~/.code-guru.yaml`, then `~/.config/code-guru.yaml`; never the working directory) |
 | `--backend`     | AI backend: `openai`, `claude`, or `anthropic` |
 | `--rules-path`  | Path to rules directory                        |
 | `--dry-run`     | Run review without posting comments            |

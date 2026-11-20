@@ -87,3 +87,9 @@ func (r TokenRequestForTest) toTokenRequest() tokenRequest {
 		reviewJob:      r.ReviewJob,
 	}
 }
+
+// ResolveSettingsForTest loads the settings `review` reviews with when
+// --config is configPath ("" when the flag is not given).
+func ResolveSettingsForTest(configPath string) (*entities.Settings, error) {
+	return (&ReviewController{}).resolveSettings(configPath)
+}

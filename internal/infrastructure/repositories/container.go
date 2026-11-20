@@ -51,10 +51,11 @@ func RegisterProviders(container *dig.Container) error {
 	// `trivial.NewDetectorRegistryFromConfig` so the
 	// enabled/empty-list logic stays in one place — past production
 	// bugs came from these paths drifting apart. The injected
-	// `*entities.Settings` is the same struct the CLI loads via
-	// `resolveSettings` (explicit `--config`, then auto-discovered
-	// YAML, falling back to env), so any deployment shape that
-	// populates `Trivial.Adapters` reaches both paths.
+	// `*entities.Settings` comes from `provideSettings` (the operator's
+	// file in the home directory, falling back to env: what the CLI's
+	// `resolveSettings` reads when no `--config` is given), so any
+	// deployment shape that populates `Trivial.Adapters` reaches both
+	// paths.
 	if err := container.Provide(func(s *entities.Settings) repositories.TrivialDetectorRegistry {
 		if s == nil {
 			return trivial.NewDetectorRegistry(nil)

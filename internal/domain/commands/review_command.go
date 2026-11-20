@@ -208,8 +208,8 @@ type ReviewOptions struct {
 	//   - it never votes or merges, whatever `submit_native_review` or
 	//     `trivial.auto_merge` say (see leavesVoteAndMergeOut): an approval
 	//     or a merge under a person's account is an action that person never
-	//     chose, the bot's identity is what does that, and a working-directory
-	//     `.code-guru.yaml` can switch both on;
+	//     chose, the bot's identity is what does that, and the configuration
+	//     that switches both on need not be that person's;
 	//   - it posts none of the bot's status notices — the "reviewing"
 	//     marker, the completion and failure annotations, the batched-review
 	//     notice (see postsStatusNotices). Those are what the bot recognises
