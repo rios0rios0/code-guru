@@ -420,6 +420,7 @@ func TestAgenticReviewerEnvironment(t *testing.T) {
 			assert.Equal(t, filepath.Join(workspace.Root, "agent", "home"), env["HOME"])
 			assert.Equal(t, "1", env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"])
 			assert.Equal(t, "1", env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"])
+			assert.Equal(t, "1", env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"])
 			assert.Equal(t, "false", env["ENABLE_CLAUDEAI_MCP_SERVERS"])
 			assert.Equal(t, os.DevNull, env["GIT_CONFIG_GLOBAL"])
 		},

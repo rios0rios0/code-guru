@@ -28,13 +28,16 @@ const (
 	defaultMaxTurns = 1
 )
 
-// diffReviewEnv keeps the CLI from loading instructions or tools a review never
-// asked for: no CLAUDE.md, AGENTS.md or auto-memory is read as instructions
-// (the reviewed repository's own guidelines reach the prompt deliberately, as
-// data), and no claude.ai connector attached to the account becomes a tool.
+// reviewHardeningEnv keeps the CLI, in diff and agentic mode alike, from
+// loading instructions or tools a review never asked for: no CLAUDE.md,
+// AGENTS.md or auto-memory is read as instructions (the reviewed repository's
+// own guidelines reach the review deliberately, as data), and no claude.ai
+// connector attached to the account becomes a tool. It is the one definition of
+// these variables: agentHardeningEnv adds to it what only an agent with tools
+// needs, so the two modes cannot drift apart.
 //
 //nolint:gochecknoglobals // read-only list used as a constant
-var diffReviewEnv = []string{
+var reviewHardeningEnv = []string{
 	"CLAUDE_CODE_DISABLE_CLAUDE_MDS=1",
 	"CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
 	"ENABLE_CLAUDEAI_MCP_SERVERS=false",
@@ -174,7 +177,7 @@ func (r *AIReviewerRepository) ReviewDiff(
 	// depth: the CLI never reads them, and they hold the provider token, the
 	// webhook secret, the API keys and the GitHub App key. Later entries win over
 	// earlier ones of the same name.
-	cmd.Env = append(withoutCodeGuruVariables(cmd.Environ(), envNamesIgnoreCase), diffReviewEnv...)
+	cmd.Env = append(withoutCodeGuruVariables(cmd.Environ(), envNamesIgnoreCase), reviewHardeningEnv...)
 
 	// pass user prompt via stdin to avoid OS argument length limits
 	cmd.Stdin = strings.NewReader(userPrompt)
