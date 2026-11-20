@@ -20,8 +20,11 @@ const isolationReviewReply = `{"result":"{\"summary\":\"ok\",\"comments\":[]}"}`
 
 // writeContextRecordingClaudeBinary drops a `/bin/sh` stub that records, under
 // `$FAKE_CONTEXT_DIR`, the directory it was started in followed by what that
-// directory held (`cwd.txt`), its environment (`env.txt`) and its arguments one
-// per line (`argv.txt`), then replies with `$FAKE_STDOUT`. It returns the stub
+// directory held (`cwd.txt`), its environment (`env.txt`; where /proc exists,
+// also `initial-env.txt`, the environment exactly as it was started with, before
+// the shell resets PWD) and its arguments one per line (`argv.txt`), and whether
+// it could read its `--system-prompt-file` (`prompt.txt`), then replies with
+// `$FAKE_STDOUT`. It returns the stub
 // and the directory the records go to.
 func writeContextRecordingClaudeBinary(t *testing.T) (string, string) {
 	t.Helper()
@@ -38,12 +41,28 @@ cat > /dev/null
 pwd -P > "$FAKE_CONTEXT_DIR/cwd.txt"
 ls -A >> "$FAKE_CONTEXT_DIR/cwd.txt"
 env > "$FAKE_CONTEXT_DIR/env.txt"
+[ -r /proc/$$/environ ] && tr '\0' '\n' < /proc/$$/environ > "$FAKE_CONTEXT_DIR/initial-env.txt"
 for a in "$@"; do printf '%s\n' "$a" >> "$FAKE_CONTEXT_DIR/argv.txt"; done
+previous=""
+for a in "$@"; do
+  if [ "$previous" = "--system-prompt-file" ] && [ -r "$a" ]; then echo readable > "$FAKE_CONTEXT_DIR/prompt.txt"; fi
+  previous="$a"
+done
 [ -n "$FAKE_STDOUT" ] && printf '%s' "$FAKE_STDOUT"
 exit 0
 `
 	require.NoError(t, os.WriteFile(binPath, []byte(body), 0o755))
 	return binPath, record
+}
+
+// copyFile copies the file at source to target, keeping it executable.
+func copyFile(t *testing.T, source, target string) {
+	t.Helper()
+	content, err := os.ReadFile(source)
+	require.NoError(t, err)
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o700))
+	require.NoError(t, os.WriteFile(target, content, 0o755))
 }
 
 // recordedLines reads one of the stub's records as lines.
@@ -118,5 +137,72 @@ func TestClaudeReviewer_ReviewDiff_IgnoresTheWorkingDirectory(t *testing.T) {
 			assert.Contains(t, env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
 			assert.Contains(t, env, "ENABLE_CLAUDEAI_MCP_SERVERS=false")
 			assert.NotContains(t, env, "ENABLE_CLAUDEAI_MCP_SERVERS=true")
+		})
+
+	t.Run("should tell the CLI the directory it starts in through PWD when reviewing a diff", func(t *testing.T) {
+		// given
+		t.Chdir(t.TempDir())
+		bin, record := writeContextRecordingClaudeBinary(t)
+		t.Setenv("FAKE_CONTEXT_DIR", record)
+		t.Setenv("FAKE_STDOUT", isolationReviewReply)
+		repo := claude.NewAIReviewerRepository(bin, "sonnet", 1)
+
+		// when
+		_, err := repo.ReviewDiff(context.Background(), minimalReviewRequest())
+
+		// then
+		require.NoError(t, err)
+		initialEnv := filepath.Join(record, "initial-env.txt")
+		if _, statErr := os.Stat(initialEnv); statErr != nil {
+			t.Skip("the stub cannot see the environment it was started with without /proc")
+		}
+		startedIn := recordedLines(t, filepath.Join(record, "cwd.txt"))[0]
+		assert.Contains(t, recordedLines(t, initialEnv), "PWD="+startedIn)
+	})
+
+	t.Run("should run a binary_path relative to code-guru's working directory when it names a directory",
+		func(t *testing.T) {
+			// given
+			workingDirectory := t.TempDir()
+			t.Chdir(workingDirectory)
+			bin, record := writeContextRecordingClaudeBinary(t)
+			copyFile(t, bin, filepath.Join(workingDirectory, "bin", "fake-claude"))
+			t.Setenv("FAKE_CONTEXT_DIR", record)
+			t.Setenv("FAKE_STDOUT", isolationReviewReply)
+			repo := claude.NewAIReviewerRepository(filepath.Join(".", "bin", "fake-claude"), "sonnet", 1)
+
+			// when
+			_, err := repo.ReviewDiff(context.Background(), minimalReviewRequest())
+
+			// then
+			require.NoError(t, err)
+			assert.FileExists(t, filepath.Join(record, "cwd.txt"), "the relative binary must have run")
+		})
+
+	t.Run("should start the CLI in the home directory and hand it a readable prompt when TMPDIR is relative",
+		func(t *testing.T) {
+			// given: a relative TMPDIR would put the CLI's directory inside the caller's
+			workingDirectory := t.TempDir()
+			t.Chdir(workingDirectory)
+			// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission
+			require.NoError(t, os.MkdirAll(filepath.Join(workingDirectory, "relative-tmp"), 0o700))
+			t.Setenv("TMPDIR", "relative-tmp")
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			bin, record := writeContextRecordingClaudeBinary(t)
+			t.Setenv("FAKE_CONTEXT_DIR", record)
+			t.Setenv("FAKE_STDOUT", isolationReviewReply)
+			repo := claude.NewAIReviewerRepository(bin, "sonnet", 1)
+
+			// when
+			_, err := repo.ReviewDiff(context.Background(), minimalReviewRequest())
+
+			// then
+			require.NoError(t, err)
+			resolvedHome, resolveErr := filepath.EvalSymlinks(home)
+			require.NoError(t, resolveErr)
+			assert.Equal(t, resolvedHome, recordedLines(t, filepath.Join(record, "cwd.txt"))[0])
+			assert.Equal(t, []string{"readable"}, recordedLines(t, filepath.Join(record, "prompt.txt")),
+				"the prompt file must be found from the directory the CLI starts in")
 		})
 }

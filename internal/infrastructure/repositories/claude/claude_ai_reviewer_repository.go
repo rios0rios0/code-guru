@@ -50,6 +50,16 @@ func NewAIReviewerRepository(binaryPath string, model string, maxTurns int) *AIR
 	if binaryPath == "" {
 		binaryPath = defaultBinary
 	}
+	// A relative path that names a directory (`./bin/claude`) is resolved here,
+	// against code-guru's own working directory: the CLI starts in a directory of
+	// its own (isolatedWorkingDirectory), and Go would resolve it there instead,
+	// so the path keeps pointing where it did. A bare name is still looked up on
+	// PATH.
+	if !filepath.IsAbs(binaryPath) && strings.ContainsAny(binaryPath, `/\`) {
+		if absolute, err := filepath.Abs(binaryPath); err == nil {
+			binaryPath = absolute
+		}
+	}
 	if model == "" {
 		model = defaultModel
 	}
@@ -145,8 +155,10 @@ func (r *AIReviewerRepository) ReviewDiff(
 	workDir, cleanupWorkDir := isolatedWorkingDirectory()
 	defer cleanupWorkDir()
 	cmd.Dir = workDir
-	// Later entries win over the inherited ones of the same name.
-	cmd.Env = append(os.Environ(), diffReviewEnv...)
+	// Environ, read while Env is still nil, is this process's environment with
+	// PWD set to Dir, so the CLI is not told it runs in the caller's directory.
+	// Later entries win over earlier ones of the same name.
+	cmd.Env = append(cmd.Environ(), diffReviewEnv...)
 
 	// pass user prompt via stdin to avoid OS argument length limits
 	cmd.Stdin = strings.NewReader(userPrompt)
@@ -221,6 +233,11 @@ func writeSystemPromptFile(prompt string) (string, func(), error) {
 	}
 
 	path := file.Name()
+	// The CLI starts in a directory of its own, so a path relative to this
+	// process's directory (a relative TMPDIR) would not be found from there.
+	if absolute, absErr := filepath.Abs(path); absErr == nil {
+		path = absolute
+	}
 	cleanup := func() {
 		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
 			logger.Warnf("failed to remove the system prompt file: %v", removeErr)
@@ -289,9 +306,15 @@ func ParseClaudeResponse(output []byte) (*entities.ReviewResult, error) {
 // falls back to the home directory, then to the filesystem root, as a
 // deployment without a writable temporary directory must still review.
 func isolatedWorkingDirectory() (string, func()) {
-	dir, err := os.MkdirTemp("", "code-guru-claude-")
-	if err == nil {
-		return dir, func() { _ = os.RemoveAll(dir) }
+	// A relative TMPDIR would place the directory inside the caller's, which
+	// is what the CLI must be kept out of.
+	temporary := os.TempDir()
+	err := fmt.Errorf("the temporary directory %q is not an absolute path", temporary)
+	if filepath.IsAbs(temporary) {
+		var dir string
+		if dir, err = os.MkdirTemp(temporary, "code-guru-claude-"); err == nil {
+			return dir, func() { _ = os.RemoveAll(dir) }
+		}
 	}
 	logger.Warnf("failed to create a directory for the Claude CLI to start in (%v); using the home directory", err)
 	if home, homeErr := os.UserHomeDir(); homeErr == nil && filepath.IsAbs(home) {
