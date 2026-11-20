@@ -70,18 +70,9 @@ func (c *ReviewAllController) Execute(cmd *cobra.Command, _ []string) {
 		logger.SetLevel(logger.DebugLevel)
 	}
 
-	// load configuration
-	cfgPath := settingsFileFor(configPath)
-	if cfgPath == "" {
-		logger.Errorf("no config file found\nSpecify one with --config or create ~/.config/code-guru.yaml")
-		return
-	}
-
-	logger.Infof("using config file: %s", cfgPath)
-
-	settings, err := entities.NewSettings(cfgPath)
+	settings, err := batchSettings(configPath)
 	if err != nil {
-		logger.Errorf("failed to load config: %v", err)
+		failCommandf("%v", err)
 		return
 	}
 

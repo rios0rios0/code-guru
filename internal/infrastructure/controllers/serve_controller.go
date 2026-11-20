@@ -72,7 +72,8 @@ func (c *ServeController) BindFlags(cmd *cobra.Command) {
 
 // Execute starts the webhook HTTP server.
 func (c *ServeController) Execute(cmd *cobra.Command, _ []string) {
-	warnAboutUnreadServerSettings()
+	configFlag, _ := cmd.Flags().GetString("config")
+	warnAboutUnreadServerSettings(configFlag)
 	if err := c.validateSettings(); err != nil {
 		logger.Fatalf("serve: invalid settings: %v", err)
 	}
@@ -284,21 +285,6 @@ func (c *ServeController) installReviewJobExecutor() context.CancelFunc {
 		c.settings.Server.Kubernetes.ConcurrentJobs(), c.settings.Server.Kubernetes.SchedulerInterval(),
 	)
 	return cancel
-}
-
-// warnAboutUnreadServerSettings warns about a configuration file in the working
-// directory, which the server, like every command, does not read on its own
-// (entities.FindSettingsFile). The server's settings are loaded before the
-// flags are parsed (provideSettings), from the home directory or the
-// CODE_GURU_* variables, so the remedy is to move the file rather than to name
-// it with --config.
-func warnAboutUnreadServerSettings() {
-	if _, unread := entities.FindSettingsFile(); unread != "" {
-		logger.Warnf("not reading %s: the server reads its configuration from ~/.code-guru.yaml or "+
-			"~/.config/code-guru.yaml, else from the CODE_GURU_* variables, never from the working directory, "+
-			"which may be a checkout of the code under review; move the file to ~/.config/code-guru.yaml to use it",
-			unread)
-	}
 }
 
 // validateSettings enforces the minimum configuration required by the webhook

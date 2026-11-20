@@ -37,7 +37,8 @@ func writeSettingsFixture(t *testing.T, path string) {
 //
 //nolint:paralleltest // t.Setenv and t.Chdir panic under t.Parallel
 func TestFindSettingsFile(t *testing.T) {
-	t.Run("should return the home directory's file and report the working directory's as unread", func(t *testing.T) {
+	t.Run("should return the home directory's file and report the working directory's as unread "+
+		"when both directories have one", func(t *testing.T) {
 		// given
 		home, workingDirectory := isolateSettingsDirectories(t)
 		writeSettingsFixture(t, filepath.Join(home, ".code-guru.yaml"))
@@ -95,6 +96,24 @@ func TestFindSettingsFile(t *testing.T) {
 		assert.Empty(t, unread)
 	})
 
+	t.Run(
+		"should not search a relative home directory, which would be the working directory again",
+		func(t *testing.T) {
+			// given
+			_, workingDirectory := isolateSettingsDirectories(t)
+			writeSettingsFixture(t, filepath.Join(workingDirectory, ".code-guru.yaml"))
+			t.Setenv("HOME", ".")
+			t.Setenv("USERPROFILE", ".")
+
+			// when
+			path, unread := entities.FindSettingsFile()
+
+			// then
+			assert.Empty(t, path)
+			assert.Equal(t, ".code-guru.yaml", unread)
+		},
+	)
+
 	t.Run("should return nothing when neither directory has a file", func(t *testing.T) {
 		// given
 		isolateSettingsDirectories(t)
@@ -106,4 +125,46 @@ func TestFindSettingsFile(t *testing.T) {
 		assert.Empty(t, path)
 		assert.Empty(t, unread)
 	})
+}
+
+// TestProvideSettingsSettingsFile is deliberately not parallel: it points HOME
+// at a temporary directory, changes the working directory and sets CODE_GURU_*
+// variables, which t.Setenv and t.Chdir forbid in a parallel test.
+//
+//nolint:paralleltest // t.Setenv and t.Chdir panic under t.Parallel
+func TestProvideSettingsSettingsFile(t *testing.T) {
+	// checkoutSettings would make code-guru start a program from the checkout.
+	const checkoutSettings = "ai:\n  backend: 'claude'\n  claude:\n    binary_path: './not-claude'\n"
+
+	t.Run("should not read the working directory's configuration when the server's settings are provided",
+		func(t *testing.T) {
+			// given
+			_, workingDirectory := isolateSettingsDirectories(t)
+			require.NoError(t, os.WriteFile(filepath.Join(workingDirectory, ".code-guru.yaml"),
+				[]byte(checkoutSettings), 0o600))
+			t.Setenv("CODE_GURU_BACKEND", "claude")
+			t.Setenv("CODE_GURU_CLAUDE_BINARY_PATH", "")
+
+			// when
+			settings := entities.ProvideSettingsForTest()
+
+			// then
+			assert.Equal(t, "claude", settings.AI.Claude.BinaryPath)
+		})
+
+	t.Run("should read the home directory's configuration when the server's settings are provided",
+		func(t *testing.T) {
+			// given
+			home, workingDirectory := isolateSettingsDirectories(t)
+			require.NoError(t, os.WriteFile(filepath.Join(workingDirectory, ".code-guru.yaml"),
+				[]byte(checkoutSettings), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(home, ".code-guru.yaml"),
+				[]byte("ai:\n  backend: 'claude'\n  claude:\n    binary_path: '/opt/claude/bin/claude'\n"), 0o600))
+
+			// when
+			settings := entities.ProvideSettingsForTest()
+
+			// then
+			assert.Equal(t, "/opt/claude/bin/claude", settings.AI.Claude.BinaryPath)
+		})
 }

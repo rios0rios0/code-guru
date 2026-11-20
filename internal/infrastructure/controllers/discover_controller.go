@@ -43,15 +43,9 @@ func (c *DiscoverController) Execute(cmd *cobra.Command, _ []string) {
 		logger.SetLevel(logger.DebugLevel)
 	}
 
-	cfgPath := settingsFileFor(configPath)
-	if cfgPath == "" {
-		logger.Errorf("no config file found\nSpecify one with --config or create ~/.config/code-guru.yaml")
-		return
-	}
-
-	settings, err := entities.NewSettings(cfgPath)
+	settings, err := batchSettings(configPath)
 	if err != nil {
-		logger.Errorf("failed to load config: %v", err)
+		failCommandf("%v", err)
 		return
 	}
 

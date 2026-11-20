@@ -46,10 +46,11 @@ go build -o code-guru ./cmd/code-guru/
 
 ## Configuration
 
-Create `~/.config/code-guru.yaml` (or `~/.code-guru.yaml`), or name any file with `-c`/`--config`; without one, every
-setting comes from the `CODE_GURU_*` variables (see [Environment Variable Configuration](#environment-variable-configuration)).
-A file in the working directory (`.code-guru.yaml`, `.config/code-guru.yaml`, `configs/code-guru.yaml`) is read only
-when `--config` names it, and code-guru warns about one it skips. The working directory is often a checkout of the code
+Create `~/.config/code-guru.yaml` (or `~/.code-guru.yaml`), or name with `-c`/`--config` a file you trust that is not
+part of the code under review; without one, `review` and `serve` take every setting from the `CODE_GURU_*` variables
+(see [Environment Variable Configuration](#environment-variable-configuration)), and `review-all` and `discover` exit
+non-zero. A file in the working directory (`.code-guru.yaml`, `.config/code-guru.yaml`, `configs/code-guru.yaml`) is
+read only when `--config` names it, and code-guru warns about one it skips. The working directory is often a checkout of the code
 under review, where that file is the pull request author's to write: read as configuration, it would choose the program
 code-guru starts (`ai.claude.binary_path`), the token it acts with (a `token` expands any variable and reads any file)
 and whether it approves and merges.
@@ -180,15 +181,17 @@ reviewing, approving or merging as whoever is signed in on the host.
 ### Discover open PRs
 
 ```bash
-code-guru discover -c .code-guru.yaml
+code-guru discover
 ```
 
 ### Review all open PRs (batch mode)
 
 ```bash
-code-guru review-all -c .code-guru.yaml --dry-run
-code-guru review-all -c .code-guru.yaml
+code-guru review-all --dry-run
+code-guru review-all
 ```
+
+Both read `~/.config/code-guru.yaml` (or `~/.code-guru.yaml`); name another file with `-c`.
 
 ### Review a single PR
 
@@ -357,7 +360,7 @@ Approve-only adapters run before the others, so a PR that both kinds would claim
 
 ### Configuration
 
-Configure in `.code-guru.yaml`:
+Configure in `~/.config/code-guru.yaml`:
 
 ```yaml
 trivial:
@@ -402,6 +405,9 @@ review runs asynchronously and never blocks the sender.
 ```bash
 code-guru serve --port 8080
 ```
+
+The server reads its configuration from `~/.code-guru.yaml` or `~/.config/code-guru.yaml`, else from the
+`CODE_GURU_*` variables; it does not take `--config`, and warns when one is given.
 
 ### Endpoints
 

@@ -93,3 +93,15 @@ func (r TokenRequestForTest) toTokenRequest() tokenRequest {
 func ResolveSettingsForTest(configPath string) (*entities.Settings, error) {
 	return (&ReviewController{}).resolveSettings(configPath)
 }
+
+// BatchSettingsForTest loads the settings `review-all` and `discover` walk
+// when --config is configPath ("" when the flag is not given).
+func BatchSettingsForTest(configPath string) (*entities.Settings, error) {
+	return batchSettings(configPath)
+}
+
+// WarnAboutUnreadServerSettingsForTest runs the warnings `serve` gives about
+// what it does not read, with configFlag as the value of --config.
+func WarnAboutUnreadServerSettingsForTest(configFlag string) {
+	warnAboutUnreadServerSettings(configFlag)
+}

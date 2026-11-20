@@ -2,6 +2,7 @@ package entities
 
 import (
 	"os"
+	"path/filepath"
 
 	configHelpers "github.com/rios0rios0/gitforge/v4/pkg/config/domain/helpers"
 )
@@ -26,7 +27,13 @@ const settingsFileName = "code-guru"
 // (`providers[].token` expands any variable and reads any file), and whether it
 // approves and merges (`ai.submit_native_review`, `trivial`). A file there is
 // read only when `--config` names it, which is the operator's own choice.
+//
+// A home directory that is not an absolute path (`HOME=.`) is not searched: it
+// would be the working directory again.
 func FindSettingsFile() (string, string) {
+	if home, err := os.UserHomeDir(); err != nil || !filepath.IsAbs(home) {
+		return "", unreadWorkingDirectoryFile("")
+	}
 	path, err := configHelpers.FindGlobalConfigFile(settingsFileName)
 	if err != nil {
 		path = ""

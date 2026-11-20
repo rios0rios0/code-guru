@@ -1,6 +1,5 @@
 # A sample configuration. code-guru never reads a file in the working directory on its own,
-# so it does not read this one where it is: copy it to ~/.config/code-guru.yaml, or name it with
-# --config (code-guru review --config configs/code-guru.yaml <pr-url>).
+# so it does not read this one where it is: copy it to ~/.config/code-guru.yaml and edit it there.
 
 providers:
   - type: 'github'
