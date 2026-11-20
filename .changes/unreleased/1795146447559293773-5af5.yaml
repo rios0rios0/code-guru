@@ -1,3 +1,0 @@
-kind: 'Security'
-body: 'fixed a review on the runner''s own forge credential voting and auto-merging under that person''s account, which a working-directory `.code-guru.yaml` could switch on through `ai.submit_native_review` or `trivial.auto_merge`: such a review now posts its findings and replies, prints its verdict, and never votes or merges'
-time: '2026-11-20T03:47:27.559237229Z'

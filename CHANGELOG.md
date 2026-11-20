@@ -22,6 +22,16 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [1.22.1] - 2026-11-19
+
+### Fixed
+
+- fixed `review-all` and `discover` sending the provider token, the runner's own or a configured one, to whichever host an Azure DevOps `organizations` entry written as an `https://` URL named, such as one in a cloned repository's `.code-guru.yaml`: an Azure DevOps organization must now be its name, `https://dev.azure.com/<name>` or `https://<name>.visualstudio.com`, and anything else is refused before a token is looked up or a request is made
+- fixed a review on the runner's own forge credential keeping one token for a whole `review-all` organization or a long agentic review: each pull request now gets a token obtained for it, and the review obtains another before it posts its results
+- fixed a review on the runner's own forge credential posting the bot's status notices under that person's account, which made later bot runs take the person for the bot and skip the pull request as already reviewed: such a review now posts its findings but no status notice
+- fixed a review on the runner's own forge credential voting and auto-merging under that person's account, which a working-directory `.code-guru.yaml` could switch on through `ai.submit_native_review` or `trivial.auto_merge`: such a review now posts its findings and replies, prints its verdict, and never votes or merges
+- fixed an exported `CODE_GURU_PROVIDER_TOKEN` losing to the runner's own forge credential when the `providers[]` entry of the pull request's type had a token that resolved to nothing, such as `${GITHUB_TOKEN}` with `GITHUB_TOKEN` unset
+
 ## [1.22.0] - 2026-11-19
 
 ### Added
