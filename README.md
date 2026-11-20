@@ -96,7 +96,10 @@ ai:
     # Requires a Claude CLI that supports `--system-prompt-file`. The review
     # instructions are handed over in a file rather than on the command line,
     # because the operating system caps how long a single argument may be and
-    # a multi-language rule set can exceed it.
+    # a multi-language rule set can exceed it. The CLI starts in an empty
+    # directory of its own and loads only your user settings, no MCP server and
+    # no CLAUDE.md, so the `.claude/settings.json`, `.mcp.json` or CLAUDE.md of
+    # a checkout you run code-guru in never runs or steers a review.
     binary_path: 'claude'
     model: 'sonnet'
     max_turns: 1

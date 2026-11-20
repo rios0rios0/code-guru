@@ -1,0 +1,3 @@
+kind: 'Security'
+body: 'stopped the Claude CLI of diff mode, the default `ai.claude.mode`, from loading the project configuration of the directory code-guru runs in: started inside a checkout of a pull request, it loaded the checkout''s `.claude/settings.json`, whose `SessionStart` hook ran as the operator with the provider token in its environment and whose `env` and `apiKeyHelper` applied, as well as its `.mcp.json`. The CLI now starts in an empty directory of its own with `--setting-sources user`, `--strict-mcp-config` and `--no-session-persistence`, and reads no CLAUDE.md (yours included) or auto-memory, as agentic mode already did'
+time: '2026-11-20T16:01:38.184436501Z'
