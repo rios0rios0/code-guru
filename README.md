@@ -50,10 +50,10 @@ Create `~/.config/code-guru.yaml` (or `~/.code-guru.yaml`), or name with `-c`/`-
 part of the code under review; without one, `review` and `serve` take every setting from the `CODE_GURU_*` variables
 (see [Environment Variable Configuration](#environment-variable-configuration)), and `review-all` and `discover` exit
 non-zero. A file in the working directory (`.code-guru.yaml`, `.config/code-guru.yaml`, `configs/code-guru.yaml`) is
-read only when `--config` names it, and code-guru warns about one it skips. The working directory is often a checkout of the code
-under review, where that file is the pull request author's to write: read as configuration, it would choose the program
-code-guru starts (`ai.claude.binary_path`), the token it acts with (a `token` expands any variable and reads any file)
-and whether it approves and merges.
+read only when `--config` names it, and code-guru names every one it skips in a warning. The working directory is
+often a checkout of the code under review, where that file is the pull request author's to write: read as
+configuration, it would choose the program code-guru starts (`ai.claude.binary_path`), the token it acts with (a
+`token` expands any variable and reads any file) and whether it approves and merges.
 
 ```yaml
 providers:
