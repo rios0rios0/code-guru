@@ -44,6 +44,20 @@ spec:
               value: claude
 `
 
+// containerEnvEntries returns the entries of a container's `env` list that set
+// the variable name, and none of the others, so an assertion over the list
+// prints only the variable it checks when it fails: an operator's template can
+// put anything in a container's environment.
+func containerEnvEntries(env []any, name string) []any {
+	var entries []any
+	for _, entry := range env {
+		if variable, ok := entry.(map[string]any); ok && variable["name"] == name {
+			entries = append(entries, variable)
+		}
+	}
+	return entries
+}
+
 func adoReviewRequest() webhooks.ReviewJobRequest {
 	return webhooks.ReviewJobRequest{
 		Provider: "azuredevops",
@@ -288,9 +302,10 @@ func TestReviewJobTemplateRender(t *testing.T) {
 			t, []any{"review", "https://github.com/acme/app/pull/7", "--mentioned", "--job-name", "n"}, review["args"],
 		)
 		env := review["env"].([]any)
-		assert.Contains(t, env, map[string]any{"name": "CODE_GURU_GITHUB_INSTALLATION_ID", "value": "99"})
-		assert.Contains(t, env, map[string]any{"name": "CODE_GURU_BACKEND", "value": "claude"},
-			"the operator's environment is kept")
+		assert.Equal(t, []any{map[string]any{"name": "CODE_GURU_GITHUB_INSTALLATION_ID", "value": "99"}},
+			containerEnvEntries(env, "CODE_GURU_GITHUB_INSTALLATION_ID"))
+		assert.Equal(t, []any{map[string]any{"name": "CODE_GURU_BACKEND", "value": "claude"}},
+			containerEnvEntries(env, "CODE_GURU_BACKEND"), "the operator's environment is kept")
 	})
 
 	t.Run("should refuse a provider the executor cannot build a URL for", func(t *testing.T) {

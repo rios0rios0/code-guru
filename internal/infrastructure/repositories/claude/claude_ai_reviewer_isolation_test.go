@@ -84,32 +84,6 @@ func recordedEnvironments(t *testing.T, record string) []string {
 	return names
 }
 
-// recordedValues returns the values env's NAME=value entries give the variable
-// name, and nothing else, so a failing assertion prints no other variable: the
-// stub records this process's environment, which may hold the developer's own
-// credentials.
-func recordedValues(env []string, name string) []string {
-	var values []string
-	for _, entry := range env {
-		if entryName, value, found := strings.Cut(entry, "="); found && entryName == name {
-			values = append(values, value)
-		}
-	}
-	return values
-}
-
-// codeGuruVariableNames returns the names, never the values, of the
-// CODE_GURU_* variables among env's NAME=value entries.
-func codeGuruVariableNames(env []string) []string {
-	var names []string
-	for _, entry := range env {
-		if name, _, _ := strings.Cut(entry, "="); strings.HasPrefix(name, "CODE_GURU_") {
-			names = append(names, name)
-		}
-	}
-	return names
-}
-
 // writeCheckoutFile writes content to path, creating its directory.
 func writeCheckoutFile(t *testing.T, path, content string) {
 	t.Helper()
@@ -170,9 +144,9 @@ func TestClaudeReviewer_ReviewDiff_IgnoresTheWorkingDirectory(t *testing.T) {
 			assert.Contains(t, argv, "--strict-mcp-config")
 			assert.Contains(t, argv, "--no-session-persistence")
 			env := recordedLines(t, filepath.Join(record, "env.txt"))
-			assert.Equal(t, []string{"1"}, recordedValues(env, "CLAUDE_CODE_DISABLE_CLAUDE_MDS"))
-			assert.Equal(t, []string{"1"}, recordedValues(env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY"))
-			assert.Equal(t, []string{"false"}, recordedValues(env, "ENABLE_CLAUDEAI_MCP_SERVERS"),
+			assert.Equal(t, []string{"1"}, variableValues(env, "CLAUDE_CODE_DISABLE_CLAUDE_MDS"))
+			assert.Equal(t, []string{"1"}, variableValues(env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY"))
+			assert.Equal(t, []string{"false"}, variableValues(env, "ENABLE_CLAUDEAI_MCP_SERVERS"),
 				"the claude.ai connectors stay off even when the caller's environment turns them on")
 		})
 
@@ -198,7 +172,7 @@ func TestClaudeReviewer_ReviewDiff_IgnoresTheWorkingDirectory(t *testing.T) {
 		for _, name := range recordedEnvironments(t, record) {
 			env := recordedLines(t, filepath.Join(record, name))
 			assert.Empty(t, codeGuruVariableNames(env), "%s: code-guru's own variables must not reach the CLI", name)
-			assert.Equal(t, []string{"kept"}, recordedValues(env, "FAKE_KEPT_VARIABLE"),
+			assert.Equal(t, []string{"kept"}, variableValues(env, "FAKE_KEPT_VARIABLE"),
 				"%s: every other variable must still reach the CLI", name)
 		}
 	})
@@ -221,7 +195,7 @@ func TestClaudeReviewer_ReviewDiff_IgnoresTheWorkingDirectory(t *testing.T) {
 			t.Skip("the stub cannot see the environment it was started with without /proc")
 		}
 		startedIn := recordedLines(t, filepath.Join(record, "cwd.txt"))[0]
-		assert.Equal(t, []string{startedIn}, recordedValues(recordedLines(t, initialEnv), "PWD"))
+		assert.Equal(t, []string{startedIn}, variableValues(recordedLines(t, initialEnv), "PWD"))
 	})
 
 	t.Run("should run a binary_path relative to code-guru's working directory when it names a directory",

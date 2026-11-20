@@ -36,6 +36,30 @@ func newOriginRepo(t *testing.T) *originRepo {
 	return origin
 }
 
+// variableNames returns the names of env's NAME=value entries, never their
+// values, and variableValues the values env gives the variable name. An
+// assertion over an environment checks it one variable at a time with them:
+// handed the whole environment, it would print all of it when it fails, and an
+// environment can hold a credential of the shell the tests run in.
+func variableNames(env []string) []string {
+	names := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		names = append(names, name)
+	}
+	return names
+}
+
+func variableValues(env []string, name string) []string {
+	var values []string
+	for _, entry := range env {
+		if entryName, value, found := strings.Cut(entry, "="); found && entryName == name {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
 func (o *originRepo) git(args ...string) string {
 	o.t.Helper()
 	cmd := exec.Command("git", append([]string{
@@ -482,11 +506,11 @@ func TestCloneTargets(t *testing.T) {
 		// then
 		require.NoError(t, err)
 		credentials := base64.StdEncoding.EncodeToString([]byte("x-access-token:fixture-token-placeholder"))
-		assert.Equal(t, []string{
-			"GIT_CONFIG_COUNT=1",
-			"GIT_CONFIG_KEY_0=http.https://github.com/.extraHeader",
-			"GIT_CONFIG_VALUE_0=Authorization: Basic " + credentials,
-		}, env)
+		assert.Equal(t, []string{"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"}, variableNames(env),
+			"the token travels in one extraHeader entry, and nothing else is set")
+		assert.Equal(t, []string{"1"}, variableValues(env, "GIT_CONFIG_COUNT"))
+		assert.Equal(t, []string{"http.https://github.com/.extraHeader"}, variableValues(env, "GIT_CONFIG_KEY_0"))
+		assert.Equal(t, []string{"Authorization: Basic " + credentials}, variableValues(env, "GIT_CONFIG_VALUE_0"))
 	})
 
 	t.Run("should add no auth environment for an empty token", func(t *testing.T) {
@@ -500,7 +524,7 @@ func TestCloneTargets(t *testing.T) {
 
 		// then
 		require.NoError(t, err)
-		assert.Empty(t, env)
+		assert.Empty(t, variableNames(env))
 	})
 }
 

@@ -59,6 +59,7 @@ Controllers are automatically registered as subcommands via the DI container.
 - **Package naming**: Test files use the `_test` suffix on the package name (e.g., `package support_test`).
 - **Framework**: Use `github.com/stretchr/testify/assert` and `github.com/stretchr/testify/require` for assertions.
 - **Structure**: Follow Given-When-Then with `// given`, `// when`, `// then` comments. Use table-driven tests with `t.Run()` subtests. Call `t.Parallel()` at the top of test functions.
+- **Environments**: Never pass a whole environment (one a stub recorded, `os.Environ()`, or a list the code builds for a process) to an assertion: a failing assertion prints all of its argument, credentials included. Check one variable at a time, and compare a credential's value without printing it.
 - **Test doubles**: Place stubs in `test/domain/doubles/repositories/` for domain-contract stubs and `test/infrastructure/doubles/repositories/` for stubs that double infrastructure-only types. Name them with the `Stub` prefix (e.g., `StubAIReviewerRepository`). Stubs store the last request and return canned responses. Keep the layer the stub references on the same side of the import boundary.
 
 ## Logging
