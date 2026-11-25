@@ -1,3 +1,0 @@
-kind: 'Fixed'
-body: 'stopped every command, `version` and `health` included, from logging an error when no configuration file is found and the `CODE_GURU_*` variables do not make valid settings, as for an operator whose only configuration file was in the working directory: the line is now logged at debug level, and `serve`, the one command that runs on those settings, still refuses to start and now names that error instead of reporting a missing `ai.backend`'
-time: '2026-11-20T17:56:14.562144037Z'

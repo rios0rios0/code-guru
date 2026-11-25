@@ -1,3 +1,0 @@
-kind: 'Fixed'
-body: 'fixed the README flag table leaving out that `serve` refuses `-c`/`--config`'
-time: '2026-11-20T18:02:24.054326331Z'

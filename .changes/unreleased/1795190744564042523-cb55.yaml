@@ -1,3 +1,0 @@
-kind: 'Fixed'
-body: 'fixed `review-all` and `discover` exiting 0 when they found no configuration file or could not load it, so a scheduled job that reviewed nothing passed; they now exit 1, as `review` does when it cannot review, and `discover` also exits 1 when discovery itself fails'
-time: '2026-11-20T16:05:44.563983152Z'

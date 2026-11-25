@@ -22,6 +22,33 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-25
+
+### Changed
+
+- **BREAKING CHANGE:** made `serve` refuse to start when it is given `--config`: its settings are loaded before the flags are parsed, so the file went unread and the server ran without what it held, its webhook allowlists included. Move the file to `~/.config/code-guru.yaml`, or configure the server through the `CODE_GURU_*` variables
+- changed the diff and agentic modes of the Claude backend to take the variables that keep the CLI from reading CLAUDE.md files and auto-memory and from loading claude.ai connectors from one shared list instead of two copies, so the modes can no longer drift apart; the environment of neither changed
+- changed the Go module `github.com/rios0rios0/gitforge/v4` from `v4.8.0` to `v4.9.0`
+- changed the Go module `github.com/sashabaranov/go-openai` from `v1.43.0` to `v1.44.0`
+- read `GH_TOKEN` before `GITHUB_TOKEN`, gh's own order, so when both hold different tokens `GH_TOKEN` now wins (gitforge v4.9.0)
+
+### Fixed
+
+- fixed `review-all` and `discover` exiting 0 when they found no configuration file or could not load it, so a scheduled job that reviewed nothing passed; they now exit 1, as `review` does when it cannot review, and `discover` also exits 1 when discovery itself fails
+- fixed the `--help` text of `-c`/`--config`, which said only that it takes a path to a config file: it now names the default files (`~/.code-guru.yaml`, then `~/.config/code-guru.yaml`, never the working directory) and says that `serve` refuses the flag, as the README does
+- fixed the README flag table leaving out that `serve` refuses `-c`/`--config`
+- fixed the warning about a working-directory configuration file that code-guru skips naming only the first one found: it now names every `.code-guru.yaml`, `.code-guru.yml`, `code-guru.yaml` and `code-guru.yml` in the working directory, its `.config` and its `configs`, leaving out a file the home directory search itself looks at, as when code-guru runs in the home directory
+- stopped every command, `version` and `health` included, from logging an error when no configuration file is found and the `CODE_GURU_*` variables do not make valid settings, as for an operator whose only configuration file was in the working directory: the line is now logged at debug level, and `serve`, the one command that runs on those settings, still refuses to start and now names that error instead of reporting a missing `ai.backend`
+
+### Security
+
+- **BREAKING CHANGE:** refused a relative `ai.claude.binary_path` that names a directory (`./bin/claude`): Go resolves it against the directory the Claude CLI starts in, which in agentic mode is the checkout of the pull request under review, so a file the pull request committed could run instead of the CLI. Use an absolute path, or a command name found on PATH
+- **BREAKING CHANGE:** stopped reading a configuration file from the working directory (`.code-guru.yaml`, `.config/code-guru.yaml` or `configs/code-guru.yaml`) unless `--config` names it: code-guru often runs inside a checkout of the code it reviews, where that file is the pull request author's to write, and it could set `ai.claude.binary_path` to make code-guru start a program from the checkout, point a `token` at any variable or file, and switch on votes and merges. The configuration is now read from `--config`, else `~/.code-guru.yaml` or `~/.config/code-guru.yaml`, and `review` and `serve` fall back to the `CODE_GURU_*` variables; a warning names a working-directory file that was skipped. Move it to `~/.config/code-guru.yaml`, or name with `--config` a file that is not part of the code under review
+- stopped sending a GitHub token from the environment to github.com when `GITHUB_SERVER_URL`, `GITHUB_API_URL` or a `*.ghe.com` `GH_HOST` names another GitHub server, ran `gh` without the token variables so it reports only its own login, and recognised an HTTPS remote's forge only by its exact host, so a lookalike such as `github.com.evil.example` or `github.company.com` no longer passes as github.com (gitforge v4.9.0)
+- stopped the Claude CLI of diff mode, the default `ai.claude.mode`, from inheriting code-guru's own `CODE_GURU_*` variables, among them the provider token, the webhook secret, the API keys and the GitHub App private key: the CLI never reads them, so they are now left out of its environment, and every other variable still reaches it
+- stopped the Claude CLI of diff mode, the default `ai.claude.mode`, from loading the project configuration of the directory code-guru runs in: started inside a checkout of a pull request, it loaded the checkout's `.claude/settings.json`, whose `SessionStart` hook ran as the operator with the provider token in its environment and whose `env` and `apiKeyHelper` applied, as well as its `.mcp.json`. The CLI now starts in an empty directory of its own with `--setting-sources user`, `--strict-mcp-config` and `--no-session-persistence`, and reads no CLAUDE.md (yours included) or auto-memory, as agentic mode already did
+- stopped the test suite printing a whole environment when an assertion about it failed: the agentic reviewer, credential handoff, clone authentication and review Job tests compared the recorded or built environment as a whole, so a failing one could put a credential of the shell or CI job running it, such as `ANTHROPIC_AUTH_TOKEN` or a proxy password, in the test output. Every such assertion now checks one variable at a time and compares a credential without printing it, and the agentic tests that read the process environment no longer hand the shell's own model credentials to the fake CLI
+
 ## [1.22.1] - 2026-11-19
 
 ### Fixed
