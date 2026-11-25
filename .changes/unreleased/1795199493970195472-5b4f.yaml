@@ -1,3 +1,0 @@
-kind: 'Fixed'
-body: 'fixed the `--help` text of `-c`/`--config`, which said only that it takes a path to a config file: it now names the default files (`~/.code-guru.yaml`, then `~/.config/code-guru.yaml`, never the working directory) and says that `serve` refuses the flag, as the README does'
-time: '2026-11-20T18:31:33.970114567Z'

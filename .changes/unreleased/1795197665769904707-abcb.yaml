@@ -1,3 +1,0 @@
-kind: 'Fixed'
-body: 'fixed the warning about a working-directory configuration file that code-guru skips naming only the first one found: it now names every `.code-guru.yaml`, `.code-guru.yml`, `code-guru.yaml` and `code-guru.yml` in the working directory, its `.config` and its `configs`, leaving out a file the home directory search itself looks at, as when code-guru runs in the home directory'
-time: '2026-11-20T18:01:05.76985127Z'

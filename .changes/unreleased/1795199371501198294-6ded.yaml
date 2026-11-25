@@ -1,3 +1,0 @@
-kind: 'Security'
-body: 'stopped the test suite printing a whole environment when an assertion about it failed: the agentic reviewer, credential handoff, clone authentication and review Job tests compared the recorded or built environment as a whole, so a failing one could put a credential of the shell or CI job running it, such as `ANTHROPIC_AUTH_TOKEN` or a proxy password, in the test output. Every such assertion now checks one variable at a time and compares a credential without printing it, and the agentic tests that read the process environment no longer hand the shell''s own model credentials to the fake CLI'
-time: '2026-11-20T18:29:31.501126197Z'

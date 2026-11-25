@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'changed the Go module `github.com/sashabaranov/go-openai` from `v1.43.0` to `v1.44.0`'
-time: '2026-11-24T09:08:16.689665278Z'

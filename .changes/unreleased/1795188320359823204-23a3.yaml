@@ -1,4 +1,0 @@
-kind: 'Security'
-body: 'stopped reading a configuration file from the working directory (`.code-guru.yaml`, `.config/code-guru.yaml` or `configs/code-guru.yaml`) unless `--config` names it: code-guru often runs inside a checkout of the code it reviews, where that file is the pull request author''s to write, and it could set `ai.claude.binary_path` to make code-guru start a program from the checkout, point a `token` at any variable or file, and switch on votes and merges. The configuration is now read from `--config`, else `~/.code-guru.yaml` or `~/.config/code-guru.yaml`, and `review` and `serve` fall back to the `CODE_GURU_*` variables; a warning names a working-directory file that was skipped. Move it to `~/.config/code-guru.yaml`, or name with `--config` a file that is not part of the code under review'
-breaking: true
-time: '2026-11-20T15:25:20.359760846Z'
